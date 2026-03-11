@@ -1,0 +1,23 @@
+services:
+  server:
+    build: ./server
+    container_name: data-analysis-server
+    restart: unless-stopped
+    env_file: ./server/.env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - uploads:/app/uploads
+
+  client:
+    build: ./client
+    container_name: data-analysis-client
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+
+volumes:
+  uploads:

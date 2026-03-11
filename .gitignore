@@ -1,0 +1,24 @@
+# Dependencies
+server/vendor/
+client/node_modules/
+
+# Build output
+client/dist/
+server/server
+
+# Environment
+server/.env
+
+# Data cache
+server/data/cache/*.db
+server/uploads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

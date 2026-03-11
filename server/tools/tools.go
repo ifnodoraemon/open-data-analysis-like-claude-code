@@ -1,0 +1,216 @@
+package tools
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
+)
+
+// LoadDataTool 加载数据文件到 SQLite
+type LoadDataTool struct {
+	Ingester *data.Ingester
+}
+
+func (t *LoadDataTool) Name() string { return "load_data" }
+func (t *LoadDataTool) Description() string {
+	return "加载用户上传的数据文件 (CSV/Excel) 到内部数据库，返回行数、列数和表名。大数据文件也可以处理。"
+}
+func (t *LoadDataTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"filename": {"type": "string", "description": "上传的文件名"}
+		},
+		"required": ["filename"]
+	}`)
+}
+
+func (t *LoadDataTool) Execute(args json.RawMessage) (string, error) {
+	var params struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+
+	tableName, rowCount, colCount, err := t.Ingester.ImportFile(params.Filename)
+	if err != nil {
+		return "", err
+	}
+
+	result := fmt.Sprintf("数据已成功导入。表名: %s, 行数: %d, 列数: %d", tableName, rowCount, colCount)
+	return result, nil
+}
+
+// DescribeDataTool 获取数据 Schema 和统计摘要
+type DescribeDataTool struct {
+	Ingester *data.Ingester
+}
+
+func (t *DescribeDataTool) Name() string { return "describe_data" }
+func (t *DescribeDataTool) Description() string {
+	return "获取指定数据表的 Schema 元信息和统计摘要，包括列名、数据类型、非空率、唯一值数、数值列的min/max/avg、以及采样值。对于大数据集，这比直接查看数据更高效。"
+}
+func (t *DescribeDataTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"table_name": {"type": "string", "description": "表名"}
+		},
+		"required": ["table_name"]
+	}`)
+}
+
+func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
+	var params struct {
+		TableName string `json:"table_name"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+
+	db := t.Ingester.GetDB()
+	if db == nil {
+		return "", fmt.Errorf("数据库未初始化")
+	}
+
+	schema, err := data.ExtractSchema(db, params.TableName)
+	if err != nil {
+		return "", err
+	}
+
+	result, _ := json.MarshalIndent(schema, "", "  ")
+	return string(result), nil
+}
+
+// QueryDataTool 执行 SQL 查询
+type QueryDataTool struct {
+	Ingester *data.Ingester
+}
+
+func (t *QueryDataTool) Name() string { return "query_data" }
+func (t *QueryDataTool) Description() string {
+	return "在数据库上执行 SQL SELECT 查询。用于分析大数据集时不需要加载全量数据，而是通过 SQL 聚合查询获取所需信息。结果限制在 200 行以内。"
+}
+func (t *QueryDataTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"sql": {"type": "string", "description": "要执行的 SQL SELECT 查询语句"}
+		},
+		"required": ["sql"]
+	}`)
+}
+
+func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
+	var params struct {
+		SQL string `json:"sql"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+
+	db := t.Ingester.GetDB()
+	if db == nil {
+		return "", fmt.Errorf("数据库未初始化")
+	}
+
+	rows, err := data.ExecuteQuery(db, params.SQL)
+	if err != nil {
+		return "", err
+	}
+
+	result, _ := json.MarshalIndent(rows, "", "  ")
+	return string(result), nil
+}
+
+// WriteSectionTool 向研报写入章节
+type WriteSectionTool struct {
+	ReportSections *[]ReportSection
+}
+
+type ReportSection struct {
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+func (t *WriteSectionTool) Name() string { return "write_section" }
+func (t *WriteSectionTool) Description() string {
+	return "向研究报告中追加一个章节。支持的章节类型: title(报告标题), summary(执行摘要), overview(数据概述), analysis(分析章节), chart(图表描述), conclusion(结论与建议)。内容使用 Markdown 格式。"
+}
+func (t *WriteSectionTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"section_type": {"type": "string", "enum": ["title", "summary", "overview", "analysis", "chart", "conclusion"], "description": "章节类型"},
+			"title": {"type": "string", "description": "章节标题"},
+			"content": {"type": "string", "description": "章节内容 (Markdown 格式)"}
+		},
+		"required": ["section_type", "title", "content"]
+	}`)
+}
+
+func (t *WriteSectionTool) Execute(args json.RawMessage) (string, error) {
+	var section ReportSection
+	if err := json.Unmarshal(args, &section); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+
+	// 从 JSON 字段映射
+	var params struct {
+		SectionType string `json:"section_type"`
+		Title       string `json:"title"`
+		Content     string `json:"content"`
+	}
+	json.Unmarshal(args, &params)
+	section.Type = params.SectionType
+	section.Title = params.Title
+	section.Content = params.Content
+
+	*t.ReportSections = append(*t.ReportSections, section)
+	return fmt.Sprintf("已添加章节: [%s] %s", section.Type, section.Title), nil
+}
+
+// FinalizeReportTool 生成最终报告
+type FinalizeReportTool struct {
+	ReportSections *[]ReportSection
+	OnReport       func(html string) // 回调: 报告生成完成
+}
+
+func (t *FinalizeReportTool) Name() string { return "finalize_report" }
+func (t *FinalizeReportTool) Description() string {
+	return "生成最终的完整研究报告 HTML 文件。会将之前通过 write_section 添加的所有章节汇总，生成带封面、目录的完整研报。"
+}
+func (t *FinalizeReportTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"report_title": {"type": "string", "description": "报告标题"},
+			"author": {"type": "string", "description": "作者/分析师名称", "default": "AI 数据分析师"}
+		},
+		"required": ["report_title"]
+	}`)
+}
+
+func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
+	var params struct {
+		ReportTitle string `json:"report_title"`
+		Author      string `json:"author"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+	if params.Author == "" {
+		params.Author = "AI 数据分析师"
+	}
+
+	html := generateReportHTML(params.ReportTitle, params.Author, *t.ReportSections)
+
+	if t.OnReport != nil {
+		t.OnReport(html)
+	}
+
+	return "研究报告已生成完成", nil
+}
