@@ -2,12 +2,18 @@ package tools
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
 
-// generateReportHTML 生成完整的研报 HTML
+// generateReportHTML 生成完整的研报 HTML（含 ECharts 图表）
 func generateReportHTML(title, author string, sections []ReportSection) string {
+	return generateReportHTMLWithCharts(title, author, sections, nil)
+}
+
+// generateReportHTMLWithCharts 生成研报 HTML（含 ECharts 图表支持）
+func generateReportHTMLWithCharts(title, author string, sections []ReportSection, charts []ChartData) string {
 	now := time.Now().Format("2006年01月02日")
 
 	var tocHTML strings.Builder
@@ -17,7 +23,6 @@ func generateReportHTML(title, author string, sections []ReportSection) string {
 	for _, sec := range sections {
 		switch sec.Type {
 		case "title":
-			// 标题在封面显示
 			continue
 		case "summary":
 			chapterNum++
@@ -26,7 +31,7 @@ func generateReportHTML(title, author string, sections []ReportSection) string {
 				<div class="section summary" id="section-%d">
 					<h2>%s</h2>
 					<div class="summary-box">%s</div>
-				</div>`, chapterNum, sec.Title, markdownToHTML(sec.Content)))
+				</div>`, chapterNum, sec.Title, processContent(sec.Content, charts)))
 		case "overview", "analysis":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
@@ -34,15 +39,15 @@ func generateReportHTML(title, author string, sections []ReportSection) string {
 				<div class="section" id="section-%d">
 					<h2>%d. %s</h2>
 					<div class="content">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, markdownToHTML(sec.Content)))
+				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, charts)))
 		case "chart":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
 			bodyHTML.WriteString(fmt.Sprintf(`
 				<div class="section chart-section" id="section-%d">
 					<h2>%d. %s</h2>
-					<div class="chart-container">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, sec.Content))
+					<div class="content">%s</div>
+				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, charts)))
 		case "conclusion":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
@@ -50,8 +55,30 @@ func generateReportHTML(title, author string, sections []ReportSection) string {
 				<div class="section conclusion" id="section-%d">
 					<h2>%d. %s</h2>
 					<div class="conclusion-box">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, markdownToHTML(sec.Content)))
+				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, charts)))
 		}
+	}
+
+	// 生成图表初始化脚本
+	var chartScripts strings.Builder
+	if len(charts) > 0 {
+		chartScripts.WriteString("<script>\ndocument.addEventListener('DOMContentLoaded', function() {\n")
+		for _, ch := range charts {
+			chartScripts.WriteString(fmt.Sprintf(`
+  (function() {
+    var el = document.getElementById('%s');
+    if (el) {
+      var chart = echarts.init(el);
+      var option = %s;
+      if (!option.tooltip) option.tooltip = {trigger: 'axis'};
+      if (!option.grid) option.grid = {left:'3%%',right:'4%%',bottom:'3%%',containLabel:true};
+      chart.setOption(option);
+      window.addEventListener('resize', function() { chart.resize(); });
+    }
+  })();
+`, ch.ID, string(ch.Option)))
+		}
+		chartScripts.WriteString("});\n</script>")
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -138,6 +165,14 @@ body {
   border-radius: 8px;
   margin: 1rem 0;
 }
+.chart-box {
+  width: 100%%;
+  height: 400px;
+  margin: 1.5rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
 table {
   width: 100%%;
   border-collapse: collapse;
@@ -154,7 +189,6 @@ th {
 td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); }
 tr:nth-child(even) { background: var(--bg-alt); }
 tr:hover { background: #edf2f7; }
-.chart-container { margin: 1rem 0; min-height: 300px; }
 .footer {
   max-width: 800px;
   margin: 3rem auto;
@@ -188,8 +222,33 @@ tr:hover { background: #edf2f7; }
 <div class="footer">
   <p>本报告由 AI 数据分析智能体自动生成 | %s</p>
 </div>
+%s
 </body>
-</html>`, title, title, author, now, tocHTML.String(), bodyHTML.String(), now)
+</html>`, title, title, author, now, tocHTML.String(), bodyHTML.String(), now, chartScripts.String())
+}
+
+// processContent 处理内容：Markdown 转 HTML + 替换图表占位符
+func processContent(content string, charts []ChartData) string {
+	html := markdownToHTML(content)
+
+	// 替换 {{chart:chart_id}} 占位符为 ECharts 容器
+	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
+	html = re.ReplaceAllStringFunc(html, func(match string) string {
+		chartID := re.FindStringSubmatch(match)[1]
+		// 查找对应图表
+		for _, ch := range charts {
+			if ch.ID == chartID {
+				height := ch.Height
+				if height == "" {
+					height = "400px"
+				}
+				return fmt.Sprintf(`<div id="%s" class="chart-box" style="height:%s;"></div>`, ch.ID, height)
+			}
+		}
+		return fmt.Sprintf(`<div class="chart-box" style="display:flex;align-items:center;justify-content:center;color:#999;">图表 %s 未找到</div>`, chartID)
+	})
+
+	return html
 }
 
 // markdownToHTML 简单的 Markdown → HTML 转换
@@ -225,7 +284,7 @@ func markdownToHTML(md string) string {
 			continue
 		}
 		if inTable && strings.Contains(trimmed, "---") {
-			continue // 跳过表格分隔行
+			continue
 		}
 		if inTable && strings.Contains(trimmed, "|") {
 			html.WriteString("<tr>")
@@ -243,7 +302,7 @@ func markdownToHTML(md string) string {
 				html.WriteString("<ul>\n")
 				inList = true
 			}
-			html.WriteString(fmt.Sprintf("<li>%s</li>\n", trimmed[2:]))
+			html.WriteString(fmt.Sprintf("<li>%s</li>\n", formatInline(trimmed[2:])))
 			continue
 		}
 
@@ -253,14 +312,13 @@ func markdownToHTML(md string) string {
 			continue
 		}
 
-		// 加粗
-		processed := trimmed
-		for strings.Contains(processed, "**") {
-			processed = strings.Replace(processed, "**", "<strong>", 1)
-			processed = strings.Replace(processed, "**", "</strong>", 1)
+		// 图表占位符 - 保持原样，让 processContent 处理
+		if strings.Contains(trimmed, "{{chart:") {
+			html.WriteString(trimmed + "\n")
+			continue
 		}
 
-		html.WriteString(fmt.Sprintf("<p>%s</p>\n", processed))
+		html.WriteString(fmt.Sprintf("<p>%s</p>\n", formatInline(trimmed)))
 	}
 
 	if inList {
@@ -271,4 +329,13 @@ func markdownToHTML(md string) string {
 	}
 
 	return html.String()
+}
+
+// formatInline 处理行内格式（加粗）
+func formatInline(text string) string {
+	for strings.Contains(text, "**") {
+		text = strings.Replace(text, "**", "<strong>", 1)
+		text = strings.Replace(text, "**", "</strong>", 1)
+	}
+	return text
 }

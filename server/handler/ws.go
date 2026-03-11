@@ -45,8 +45,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 研报章节存储
+	// 研报章节存储 & 图表存储
 	var reportSections []tools.ReportSection
+	var charts []tools.ChartData
 
 	// 创建工具注册表
 	registry := tools.NewRegistry()
@@ -54,9 +55,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	registry.Register(&tools.ListTablesTool{Ingester: ingester})
 	registry.Register(&tools.DescribeDataTool{Ingester: ingester})
 	registry.Register(&tools.QueryDataTool{Ingester: ingester})
+	registry.Register(&tools.CreateChartTool{Charts: &charts})
 	registry.Register(&tools.WriteSectionTool{ReportSections: &reportSections})
 	registry.Register(&tools.FinalizeReportTool{
 		ReportSections: &reportSections,
+		Charts:         &charts,
 		OnReport: func(html string) {
 			sendEvent(conn, &writeMu, agent.WSEvent{
 				Type: agent.EventReportFinal,
@@ -80,6 +83,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// 同一 session 复用 Engine 实例（多轮对话记忆）
+	var engine *agent.Engine
 
 	// 读取消息循环
 	for {
@@ -112,9 +118,13 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				userContent = fmt.Sprintf("用户已上传以下数据文件: [%s]\n\n用户指令: %s", fileList, userMsg.Content)
 			}
 
+			// 首次创建 Engine 或复用已有实例
+			if engine == nil {
+				engine = agent.NewEngine(registry, emitter)
+			}
+
 			// 在 goroutine 中运行 Agent
 			go func() {
-				engine := agent.NewEngine(registry, emitter)
 				engine.Run(ctx, userContent)
 			}()
 

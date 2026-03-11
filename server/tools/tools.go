@@ -224,12 +224,13 @@ func (t *WriteSectionTool) Execute(args json.RawMessage) (string, error) {
 // FinalizeReportTool 生成最终报告
 type FinalizeReportTool struct {
 	ReportSections *[]ReportSection
+	Charts         *[]ChartData     // ECharts 图表数据
 	OnReport       func(html string) // 回调: 报告生成完成
 }
 
 func (t *FinalizeReportTool) Name() string { return "finalize_report" }
 func (t *FinalizeReportTool) Description() string {
-	return "生成最终的完整研究报告 HTML 文件。会将之前通过 write_section 添加的所有章节汇总，生成带封面、目录的完整研报。"
+	return "生成最终的完整研究报告 HTML 文件。会将之前通过 write_section 添加的所有章节和 create_chart 创建的图表汇总，生成带封面、目录、交互式图表的完整研报。"
 }
 func (t *FinalizeReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -254,11 +255,18 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		params.Author = "AI 数据分析师"
 	}
 
-	html := generateReportHTML(params.ReportTitle, params.Author, *t.ReportSections)
+	var charts []ChartData
+	if t.Charts != nil {
+		charts = *t.Charts
+	}
+
+	html := generateReportHTMLWithCharts(params.ReportTitle, params.Author, *t.ReportSections, charts)
 
 	if t.OnReport != nil {
 		t.OnReport(html)
 	}
 
-	return "研究报告已生成完成", nil
+	chartCount := len(charts)
+	sectionCount := len(*t.ReportSections)
+	return fmt.Sprintf("研究报告已生成完成（%d 个章节，%d 个交互式图表）", sectionCount, chartCount), nil
 }

@@ -11,7 +11,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-const MaxIterations = 20
+const MaxIterations = 25
 
 // Engine Agent 主循环引擎
 type Engine struct {
@@ -21,7 +21,7 @@ type Engine struct {
 	messages []openai.ChatCompletionMessage
 }
 
-// NewEngine 创建 Agent 引擎
+// NewEngine 创建 Agent 引擎（支持多轮对话）
 func NewEngine(registry *tools.Registry, emitter func(event WSEvent)) *Engine {
 	return &Engine{
 		llm:      NewLLMClient(),
@@ -55,7 +55,7 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 		}
 
 		// 通知前端: 正在思考
-		e.emitter(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "正在分析..."}})
+		e.emitter(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i+1)}})
 
 		// 调用 LLM
 		resp, err := e.llm.ChatWithTools(ctx, e.messages, oaiTools)
@@ -71,14 +71,22 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 
 		choice := resp.Choices[0]
 
-		// 如果有文本回复 (非工具调用)
-		if choice.Message.Content != "" && len(choice.Message.ToolCalls) == 0 {
-			e.emitter(WSEvent{Type: EventComplete, Data: CompleteData{Summary: choice.Message.Content}})
-			return
+		// 有文本内容时，推送 LLM 的实际思考（而不是固定文字）
+		if choice.Message.Content != "" {
+			if len(choice.Message.ToolCalls) > 0 {
+				// 有文本 + 有工具调用 → 推送思考内容
+				e.emitter(WSEvent{Type: EventThinking, Data: ThinkingData{Content: choice.Message.Content}})
+			} else {
+				// 有文本 + 无工具调用 → 最终回复
+				e.messages = append(e.messages, choice.Message)
+				e.emitter(WSEvent{Type: EventComplete, Data: CompleteData{Summary: choice.Message.Content}})
+				return
+			}
 		}
 
 		// 如果 finish_reason 是 stop 且没有工具调用，结束
 		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
+			e.messages = append(e.messages, choice.Message)
 			e.emitter(WSEvent{Type: EventComplete, Data: CompleteData{Summary: choice.Message.Content}})
 			return
 		}
