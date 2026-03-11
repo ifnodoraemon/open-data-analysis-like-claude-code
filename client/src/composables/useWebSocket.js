@@ -1,39 +1,44 @@
 import { ref } from 'vue'
 import { useAgentStore } from '../stores/agent'
 
+// 单例 WebSocket
+let wsInstance = null
+const connected = ref(false)
+
 export function useWebSocket() {
-  const ws = ref(null)
-  const connected = ref(false)
   const store = useAgentStore()
 
   function connect() {
+    if (wsInstance && wsInstance.readyState === WebSocket.OPEN) return
+
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${location.host}/ws`
-    ws.value = new WebSocket(url)
+    wsInstance = new WebSocket(url)
 
-    ws.value.onopen = () => {
+    wsInstance.onopen = () => {
       connected.value = true
       console.log('WebSocket 已连接')
     }
 
-    ws.value.onmessage = (event) => {
+    wsInstance.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      handleEvent(data)
+      handleEvent(data, store)
     }
 
-    ws.value.onclose = () => {
+    wsInstance.onclose = () => {
       connected.value = false
+      wsInstance = null
       store.setRunning(false)
       console.log('WebSocket 断开，3 秒后重连...')
       setTimeout(connect, 3000)
     }
 
-    ws.value.onerror = (err) => {
+    wsInstance.onerror = (err) => {
       console.error('WebSocket 错误:', err)
     }
   }
 
-  function handleEvent(event) {
+  function handleEvent(event, store) {
     switch (event.type) {
       case 'thinking':
         store.addMessage({ type: 'thinking', content: event.data.content })
@@ -61,7 +66,7 @@ export function useWebSocket() {
         break
       case 'report_final':
         store.updateReport(event.data.html)
-        store.addMessage({ type: 'complete', content: '研究报告已生成完成' })
+        store.addMessage({ type: 'complete', content: '✅ 研究报告已生成完成，可点击右上角导出。' })
         store.setRunning(false)
         break
       case 'complete':
@@ -76,8 +81,8 @@ export function useWebSocket() {
   }
 
   function send(type, data) {
-    if (ws.value?.readyState === WebSocket.OPEN) {
-      ws.value.send(JSON.stringify({ type, data }))
+    if (wsInstance?.readyState === WebSocket.OPEN) {
+      wsInstance.send(JSON.stringify({ type, data }))
     }
   }
 

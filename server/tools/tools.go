@@ -3,13 +3,15 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
 )
 
 // LoadDataTool 加载数据文件到 SQLite
 type LoadDataTool struct {
-	Ingester *data.Ingester
+	Ingester  *data.Ingester
+	UploadDir string
 }
 
 func (t *LoadDataTool) Name() string { return "load_data" }
@@ -34,12 +36,59 @@ func (t *LoadDataTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
-	tableName, rowCount, colCount, err := t.Ingester.ImportFile(params.Filename)
+	// 拼接上传目录的完整路径
+	fullPath := filepath.Join(t.UploadDir, params.Filename)
+
+	tableName, rowCount, colCount, err := t.Ingester.ImportFile(fullPath)
 	if err != nil {
 		return "", err
 	}
 
-	result := fmt.Sprintf("数据已成功导入。表名: %s, 行数: %d, 列数: %d", tableName, rowCount, colCount)
+	result := fmt.Sprintf("数据已成功导入。表名: %s, 行数: %d, 列数: %d\n可使用 describe_data 查看表结构，或使用 query_data 执行 SQL 查询。", tableName, rowCount, colCount)
+	return result, nil
+}
+
+// ListTablesTool 列出所有已导入的表
+type ListTablesTool struct {
+	Ingester *data.Ingester
+}
+
+func (t *ListTablesTool) Name() string { return "list_tables" }
+func (t *ListTablesTool) Description() string {
+	return "列出当前数据库中所有已导入的数据表名称和基本信息。"
+}
+func (t *ListTablesTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type": "object", "properties": {}}`)
+}
+
+func (t *ListTablesTool) Execute(args json.RawMessage) (string, error) {
+	db := t.Ingester.GetDB()
+	if db == nil {
+		return "", fmt.Errorf("数据库未初始化")
+	}
+
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	if err != nil {
+		return "", fmt.Errorf("查询表列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			tables = append(tables, name)
+		}
+	}
+
+	if len(tables) == 0 {
+		return "当前没有已导入的数据表。请先使用 load_data 加载数据文件。", nil
+	}
+
+	result := fmt.Sprintf("已导入 %d 张表:\n", len(tables))
+	for _, t := range tables {
+		result += fmt.Sprintf("  - %s\n", t)
+	}
 	return result, nil
 }
 
@@ -153,21 +202,20 @@ func (t *WriteSectionTool) Parameters() json.RawMessage {
 }
 
 func (t *WriteSectionTool) Execute(args json.RawMessage) (string, error) {
-	var section ReportSection
-	if err := json.Unmarshal(args, &section); err != nil {
-		return "", fmt.Errorf("参数解析失败: %w", err)
-	}
-
-	// 从 JSON 字段映射
 	var params struct {
 		SectionType string `json:"section_type"`
 		Title       string `json:"title"`
 		Content     string `json:"content"`
 	}
-	json.Unmarshal(args, &params)
-	section.Type = params.SectionType
-	section.Title = params.Title
-	section.Content = params.Content
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+
+	section := ReportSection{
+		Type:    params.SectionType,
+		Title:   params.Title,
+		Content: params.Content,
+	}
 
 	*t.ReportSections = append(*t.ReportSections, section)
 	return fmt.Sprintf("已添加章节: [%s] %s", section.Type, section.Title), nil

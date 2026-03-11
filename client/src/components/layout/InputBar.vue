@@ -1,5 +1,13 @@
 <template>
   <div class="input-bar">
+    <!-- 内置提示词模板 -->
+    <div class="prompt-templates" v-if="!isRunning && messages.length === 0">
+      <span class="template-label">💡 快捷分析:</span>
+      <button v-for="tpl in templates" :key="tpl.text" class="template-btn" @click="useTemplate(tpl.text)">
+        {{ tpl.icon }} {{ tpl.label }}
+      </button>
+    </div>
+
     <div class="upload-area" v-if="uploadedFiles.length > 0">
       <span v-for="file in uploadedFiles" :key="file.name" class="file-tag">
         📎 {{ file.name }}
@@ -14,7 +22,7 @@
       <textarea
         v-model="input"
         class="input-field"
-        placeholder="输入数据分析需求，例如：分析销售数据的趋势和构成..."
+        placeholder="上传数据文件后，输入分析需求..."
         @keydown.enter.exact="handleSend"
         rows="1"
         :disabled="isRunning"
@@ -39,6 +47,19 @@ const store = useAgentStore()
 const input = ref('')
 const isRunning = computed(() => store.isRunning)
 const uploadedFiles = computed(() => store.uploadedFiles)
+const messages = computed(() => store.messages)
+
+const templates = [
+  { icon: '📊', label: '全面分析', text: '请对数据进行全面分析，包括：数据概览、各维度分布、趋势变化、关键发现和建议，并生成完整的研究报告。' },
+  { icon: '📈', label: '趋势分析', text: '请分析数据的时间趋势变化，找出增长/下降的关键转折点和驱动因素。' },
+  { icon: '🔍', label: '对比分析', text: '请按不同维度（如地区、产品、客户类型等）拆解对比分析，找出表现最好和最差的类别及原因。' },
+  { icon: '⚠️', label: '异常检测', text: '请检查数据质量，识别异常值、缺失值和潜在的数据问题，并给出处理建议。' },
+  { icon: '💰', label: '营收分析', text: '请重点分析营收/销售相关指标，包括总量、构成、趋势和同环比变化。' },
+]
+
+function useTemplate(text) {
+  input.value = text
+}
 
 async function handleFile(e) {
   const file = e.target.files[0]
@@ -80,6 +101,38 @@ function formatSize(bytes) {
   background: var(--bg-secondary);
   padding: 8px 16px;
   flex-shrink: 0;
+}
+
+.prompt-templates {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.template-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.template-btn {
+  font-size: 0.72rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.template-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
 }
 
 .upload-area {

@@ -3,10 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
@@ -30,9 +33,13 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// 每个连接独立的 session ID
+	sessionID := uuid.New().String()[:8]
+	log.Printf("新会话: %s", sessionID)
+
 	// 初始化数据导入引擎
+	uploadDir := "./uploads"
 	ingester := data.NewIngester("./data/cache")
-	sessionID := "session_default" // TODO: 生成唯一 session ID
 	if err := ingester.InitDB(sessionID); err != nil {
 		log.Printf("数据库初始化失败: %v", err)
 		return
@@ -40,19 +47,17 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 研报章节存储
 	var reportSections []tools.ReportSection
-	var finalReportHTML string
 
 	// 创建工具注册表
 	registry := tools.NewRegistry()
-	registry.Register(&tools.LoadDataTool{Ingester: ingester})
+	registry.Register(&tools.LoadDataTool{Ingester: ingester, UploadDir: uploadDir})
+	registry.Register(&tools.ListTablesTool{Ingester: ingester})
 	registry.Register(&tools.DescribeDataTool{Ingester: ingester})
 	registry.Register(&tools.QueryDataTool{Ingester: ingester})
 	registry.Register(&tools.WriteSectionTool{ReportSections: &reportSections})
 	registry.Register(&tools.FinalizeReportTool{
 		ReportSections: &reportSections,
 		OnReport: func(html string) {
-			finalReportHTML = html
-			// 推送最终报告
 			sendEvent(conn, &writeMu, agent.WSEvent{
 				Type: agent.EventReportFinal,
 				Data: agent.ReportUpdateData{HTML: html},
@@ -81,9 +86,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Println("WebSocket 连接关闭")
+				log.Printf("会话 %s: WebSocket 连接关闭", sessionID)
 			} else {
-				log.Printf("读取消息失败: %v", err)
+				log.Printf("会话 %s: 读取消息失败: %v", sessionID, err)
 			}
 			break
 		}
@@ -100,10 +105,17 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			var userMsg agent.UserMessage
 			json.Unmarshal(dataBytes, &userMsg)
 
+			// 构建用户指令（含文件上下文）
+			userContent := userMsg.Content
+			if len(userMsg.Files) > 0 {
+				fileList := strings.Join(userMsg.Files, ", ")
+				userContent = fmt.Sprintf("用户已上传以下数据文件: [%s]\n\n用户指令: %s", fileList, userMsg.Content)
+			}
+
 			// 在 goroutine 中运行 Agent
 			go func() {
 				engine := agent.NewEngine(registry, emitter)
-				engine.Run(ctx, userMsg.Content)
+				engine.Run(ctx, userContent)
 			}()
 
 		case agent.EventStop:
@@ -114,8 +126,6 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("未知事件类型: %s", event.Type)
 		}
 	}
-
-	_ = finalReportHTML // 保留引用
 }
 
 func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
@@ -142,8 +152,6 @@ func generatePartialReport(sections []tools.ReportSection) string {
 		}
 	}
 
-	// 重用 report_html.go 中的 generateReportHTML
-	// 但这里我们简单生成一个预览版本
 	var html string
 	html = "<html><body style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem;'>"
 	html += "<h1 style='color: #1a365d;'>" + title + "</h1><hr>"
