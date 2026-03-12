@@ -4,6 +4,8 @@ Interactive, Claude-Code-style data analysis for tabular files. Upload CSV or Ex
 
 面向表格数据的交互式智能分析工具，交互方式类似 Claude Code。上传 CSV 或 Excel 文件后，Agent 会自主检查、查询、分析数据，并生成带交互图表的研报。
 
+![数据分析智能体界面](docs/images/screenshot.png)
+
 ## Highlights / 功能概览
 
 - Agent-driven workflow with tool calling, not a fixed DAG
