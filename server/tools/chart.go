@@ -15,7 +15,7 @@ type ChartData struct {
 
 // CreateChartTool 创建 ECharts 图表
 type CreateChartTool struct {
-	Charts *[]ChartData
+	ReportState *ReportState
 }
 
 func (t *CreateChartTool) Name() string { return "create_chart" }
@@ -64,7 +64,7 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		Height: "400px",
 	}
 
-	*t.Charts = append(*t.Charts, chart)
+	t.ReportState.Charts = append(t.ReportState.Charts, chart)
 
 	return fmt.Sprintf("图表 [%s] '%s' 已创建。可在 write_section 的 content 中使用 {{chart:%s}} 来引用此图表。", params.ChartID, params.Title, params.ChartID), nil
 }

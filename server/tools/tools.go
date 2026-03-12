@@ -3,15 +3,29 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
 )
 
+type FileReference struct {
+	FileID      string `json:"fileId"`
+	DisplayName string `json:"displayName"`
+	StoredPath  string `json:"storedPath"`
+}
+
+type FileMaterializer func(fileID string) (*FileReference, error)
+
+type ReportState struct {
+	Sections    []ReportSection `json:"sections"`
+	Charts      []ChartData     `json:"charts"`
+	FinalTitle  string          `json:"finalTitle,omitempty"`
+	FinalAuthor string          `json:"finalAuthor,omitempty"`
+}
+
 // LoadDataTool 加载数据文件到 SQLite
 type LoadDataTool struct {
-	Ingester  *data.Ingester
-	UploadDir string
+	Ingester         *data.Ingester
+	FileMaterializer FileMaterializer
 }
 
 func (t *LoadDataTool) Name() string { return "load_data" }
@@ -22,29 +36,34 @@ func (t *LoadDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"filename": {"type": "string", "description": "上传的文件名"}
+			"file_id": {"type": "string", "description": "上传文件的唯一标识"}
 		},
-		"required": ["filename"]
+		"required": ["file_id"]
 	}`)
 }
 
 func (t *LoadDataTool) Execute(args json.RawMessage) (string, error) {
 	var params struct {
-		Filename string `json:"filename"`
+		FileID string `json:"file_id"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
+	if t.FileMaterializer == nil {
+		return "", fmt.Errorf("文件物化器未配置")
+	}
 
-	// 拼接上传目录的完整路径
-	fullPath := filepath.Join(t.UploadDir, params.Filename)
-
-	tableName, rowCount, colCount, err := t.Ingester.ImportFile(fullPath)
+	fileRef, err := t.FileMaterializer(params.FileID)
 	if err != nil {
 		return "", err
 	}
 
-	result := fmt.Sprintf("数据已成功导入。表名: %s, 行数: %d, 列数: %d\n可使用 describe_data 查看表结构，或使用 query_data 执行 SQL 查询。", tableName, rowCount, colCount)
+	tableName, rowCount, colCount, err := t.Ingester.ImportFile(fileRef.StoredPath)
+	if err != nil {
+		return "", err
+	}
+
+	result := fmt.Sprintf("数据已成功导入。文件: %s (%s), 表名: %s, 行数: %d, 列数: %d\n可使用 describe_data 查看表结构，或使用 query_data 执行 SQL 查询。", fileRef.DisplayName, fileRef.FileID, tableName, rowCount, colCount)
 	return result, nil
 }
 
@@ -176,7 +195,7 @@ func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
 
 // WriteSectionTool 向研报写入章节
 type WriteSectionTool struct {
-	ReportSections *[]ReportSection
+	ReportState *ReportState
 }
 
 type ReportSection struct {
@@ -217,15 +236,13 @@ func (t *WriteSectionTool) Execute(args json.RawMessage) (string, error) {
 		Content: params.Content,
 	}
 
-	*t.ReportSections = append(*t.ReportSections, section)
+	t.ReportState.Sections = append(t.ReportState.Sections, section)
 	return fmt.Sprintf("已添加章节: [%s] %s", section.Type, section.Title), nil
 }
 
 // FinalizeReportTool 生成最终报告
 type FinalizeReportTool struct {
-	ReportSections *[]ReportSection
-	Charts         *[]ChartData     // ECharts 图表数据
-	OnReport       func(html string) // 回调: 报告生成完成
+	ReportState *ReportState
 }
 
 func (t *FinalizeReportTool) Name() string { return "finalize_report" }
@@ -255,18 +272,10 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		params.Author = "AI 数据分析师"
 	}
 
-	var charts []ChartData
-	if t.Charts != nil {
-		charts = *t.Charts
-	}
+	t.ReportState.FinalTitle = params.ReportTitle
+	t.ReportState.FinalAuthor = params.Author
 
-	html := generateReportHTMLWithCharts(params.ReportTitle, params.Author, *t.ReportSections, charts)
-
-	if t.OnReport != nil {
-		t.OnReport(html)
-	}
-
-	chartCount := len(charts)
-	sectionCount := len(*t.ReportSections)
+	chartCount := len(t.ReportState.Charts)
+	sectionCount := len(t.ReportState.Sections)
 	return fmt.Sprintf("研究报告已生成完成（%d 个章节，%d 个交互式图表）", sectionCount, chartCount), nil
 }

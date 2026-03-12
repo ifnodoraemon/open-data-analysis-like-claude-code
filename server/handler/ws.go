@@ -1,18 +1,14 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
 )
 
@@ -30,72 +26,42 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	var writeMu sync.Mutex
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 
-	// 每个连接独立的 session ID
-	sessionID := uuid.New().String()[:8]
-	log.Printf("新会话: %s", sessionID)
-
-	// 初始化数据导入引擎
-	uploadDir := "./uploads"
-	ingester := data.NewIngester("./data/cache")
-	if err := ingester.InitDB(sessionID); err != nil {
-		log.Printf("数据库初始化失败: %v", err)
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	sess, _, err := sessionManager.GetOrCreate(sessionID)
+	if err != nil {
+		log.Printf("创建会话失败: %v", err)
 		return
 	}
 
-	// 研报章节存储 & 图表存储
-	var reportSections []tools.ReportSection
-	var charts []tools.ChartData
+	sess.SetEmitter(func(event agent.WSEvent) {
+		sendSessionEvent(conn, &writeMu, sess.ID, "", event)
+	})
 
-	// 创建工具注册表
-	registry := tools.NewRegistry()
-	registry.Register(&tools.LoadDataTool{Ingester: ingester, UploadDir: uploadDir})
-	registry.Register(&tools.ListTablesTool{Ingester: ingester})
-	registry.Register(&tools.DescribeDataTool{Ingester: ingester})
-	registry.Register(&tools.QueryDataTool{Ingester: ingester})
-	registry.Register(&tools.CreateChartTool{Charts: &charts})
-	registry.Register(&tools.RunPythonTool{})
-	registry.Register(&tools.WriteSectionTool{ReportSections: &reportSections})
-	registry.Register(&tools.FinalizeReportTool{
-		ReportSections: &reportSections,
-		Charts:         &charts,
-		OnReport: func(html string) {
-			sendEvent(conn, &writeMu, agent.WSEvent{
-				Type: agent.EventReportFinal,
-				Data: agent.ReportUpdateData{HTML: html},
-			})
+	sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+		Type: agent.EventSessionReady,
+		Data: agent.SessionReadyData{
+			SessionID: sess.ID,
+			Files:     sess.FilesForClient(),
 		},
 	})
 
-	// 事件发射器
-	emitter := func(event agent.WSEvent) {
-		sendEvent(conn, &writeMu, event)
-
-		// 如果是 write_section 的结果，推送研报增量更新
-		if event.Type == agent.EventToolResult {
-			if result, ok := event.Data.(agent.ToolResultData); ok && result.Name == "write_section" {
-				partialHTML := generatePartialReport(reportSections)
-				sendEvent(conn, &writeMu, agent.WSEvent{
-					Type: agent.EventReportUpdate,
-					Data: agent.ReportUpdateData{HTML: partialHTML},
-				})
-			}
-		}
+	if len(sess.ReportState.Sections) > 0 {
+		sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+			Type: agent.EventReportUpdate,
+			Data: agent.ReportUpdateData{
+				HTML: tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState),
+			},
+		})
 	}
 
-	// 同一 session 复用 Engine 实例（多轮对话记忆）
-	var engine *agent.Engine
-
-	// 读取消息循环
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("会话 %s: WebSocket 连接关闭", sessionID)
+				log.Printf("会话 %s: WebSocket 连接关闭", sess.ID)
 			} else {
-				log.Printf("会话 %s: 读取消息失败: %v", sessionID, err)
+				log.Printf("会话 %s: 读取消息失败: %v", sess.ID, err)
 			}
 			break
 		}
@@ -110,33 +76,115 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		case agent.EventUserMessage:
 			dataBytes, _ := json.Marshal(event.Data)
 			var userMsg agent.UserMessage
-			json.Unmarshal(dataBytes, &userMsg)
-
-			// 构建用户指令（含文件上下文）
-			userContent := userMsg.Content
-			if len(userMsg.Files) > 0 {
-				fileList := strings.Join(userMsg.Files, ", ")
-				userContent = fmt.Sprintf("用户已上传以下数据文件: [%s]\n\n用户指令: %s", fileList, userMsg.Content)
+			if err := json.Unmarshal(dataBytes, &userMsg); err != nil {
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: "用户消息解析失败"},
+				})
+				continue
 			}
 
-			// 首次创建 Engine 或复用已有实例
-			if engine == nil {
-				engine = agent.NewEngine(registry, emitter)
+			runID, ctx, err := sess.StartRun(r.Context())
+			if err != nil {
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: err.Error()},
+				})
+				continue
 			}
 
-			// 在 goroutine 中运行 Agent
-			go func() {
-				engine.Run(ctx, userContent)
-			}()
+			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+				Type: agent.EventRunStarted,
+				Data: agent.RunStartedData{RunID: runID},
+			})
+
+			runEmitter := func(runID string) func(agent.WSEvent) {
+				return func(ev agent.WSEvent) {
+					sendSessionEvent(conn, &writeMu, sess.ID, runID, ev)
+
+					if ev.Type == agent.EventToolResult {
+						if result, ok := ev.Data.(agent.ToolResultData); ok {
+							switch result.Name {
+							case "write_section":
+								sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+									Type: agent.EventReportUpdate,
+									Data: agent.ReportUpdateData{
+										HTML: tools.RenderReportHTML("", "", sess.ReportState),
+									},
+								})
+							case "finalize_report":
+								sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+									Type: agent.EventReportFinal,
+									Data: agent.ReportUpdateData{
+										HTML: tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState),
+									},
+								})
+							}
+						}
+					}
+
+					switch ev.Type {
+					case agent.EventRunCompleted:
+						sess.FinishRun(runID, "completed")
+					case agent.EventRunCancelled:
+						sess.FinishRun(runID, "cancelled")
+					case agent.EventError:
+						sess.FinishRun(runID, "failed")
+					}
+				}
+			}(runID)
+
+			sess.SetEmitter(runEmitter)
+
+			userContent := strings.TrimSpace(userMsg.Content)
+			if fileContext := sess.BuildFileContext(); fileContext != "" {
+				userContent = fileContext + "\n用户指令: " + userContent
+			}
+
+			go sess.Engine.Run(ctx, userContent)
 
 		case agent.EventStop:
-			cancel()
-			ctx, cancel = context.WithCancel(r.Context())
+			dataBytes, _ := json.Marshal(event.Data)
+			var req agent.StopRunRequest
+			_ = json.Unmarshal(dataBytes, &req)
+			if !sess.CancelRun(req.RunID) {
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: "当前没有可停止的任务"},
+				})
+			}
+
+		case agent.EventReset:
+			dataBytes, _ := json.Marshal(event.Data)
+			req := agent.ResetSessionRequest{KeepFiles: true}
+			_ = json.Unmarshal(dataBytes, &req)
+			if err := sess.Reset(req.KeepFiles); err != nil {
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: err.Error()},
+				})
+				continue
+			}
+			sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+				Type: agent.EventSessionReset,
+				Data: agent.SessionResetData{
+					KeepFiles: req.KeepFiles,
+					Files:     sess.FilesForClient(),
+				},
+			})
 
 		default:
 			log.Printf("未知事件类型: %s", event.Type)
 		}
 	}
+}
+
+func sendSessionEvent(conn *websocket.Conn, mu *sync.Mutex, sessionID, runID string, event agent.WSEvent) {
+	event.SessionID = sessionID
+	if runID != "" && event.RunID == "" {
+		event.RunID = runID
+	}
+	sendEvent(conn, mu, event)
 }
 
 func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
@@ -152,27 +200,4 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		log.Printf("发送事件失败: %v", err)
 	}
-}
-
-func generatePartialReport(sections []tools.ReportSection) string {
-	title := "数据分析报告"
-	for _, s := range sections {
-		if s.Type == "title" {
-			title = s.Title
-			break
-		}
-	}
-
-	var html string
-	html = "<html><body style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem;'>"
-	html += "<h1 style='color: #1a365d;'>" + title + "</h1><hr>"
-	for _, sec := range sections {
-		if sec.Type == "title" {
-			continue
-		}
-		html += "<h2 style='color: #2a4a7f; margin-top: 2rem;'>" + sec.Title + "</h2>"
-		html += "<div style='line-height: 1.8;'>" + sec.Content + "</div>"
-	}
-	html += "</body></html>"
-	return html
 }

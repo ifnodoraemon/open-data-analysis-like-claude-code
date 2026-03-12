@@ -15,10 +15,10 @@ type SchemaInfo struct {
 
 // ColumnInfo 列信息
 type ColumnInfo struct {
-	Name        string  `json:"name"`
-	Type        string  `json:"type"`
-	NonNullRate float64 `json:"nonNullRate"`
-	UniqueCount int     `json:"uniqueCount"`
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	NonNullRate  float64  `json:"nonNullRate"`
+	UniqueCount  int      `json:"uniqueCount"`
 	SampleValues []string `json:"sampleValues"`
 	// 数值列统计
 	Min    *float64 `json:"min,omitempty"`

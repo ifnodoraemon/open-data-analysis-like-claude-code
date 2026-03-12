@@ -15,12 +15,14 @@ import (
 func main() {
 	// 加载配置
 	config.Load()
+	handler.Initialize()
 
 	r := chi.NewRouter()
 
 	// 中间件
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(handler.AuthMiddleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -29,6 +31,7 @@ func main() {
 	}))
 
 	// REST 接口
+	r.Get("/api/bootstrap", handler.BootstrapHandler)
 	r.Post("/api/upload", handler.UploadHandler)
 
 	// WebSocket 接口

@@ -33,6 +33,9 @@ func (ing *Ingester) GetDB() *sql.DB {
 
 // InitDB 初始化 SQLite 缓存数据库
 func (ing *Ingester) InitDB(sessionID string) error {
+	if err := os.MkdirAll(ing.CacheDir, 0o755); err != nil {
+		return fmt.Errorf("创建缓存目录失败: %w", err)
+	}
 	dbPath := filepath.Join(ing.CacheDir, sessionID+".db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -41,6 +44,18 @@ func (ing *Ingester) InitDB(sessionID string) error {
 	ing.db = db
 	ing.dbPath = dbPath
 	return nil
+}
+
+func (ing *Ingester) ResetDB(sessionID string) error {
+	if ing.db != nil {
+		_ = ing.db.Close()
+		ing.db = nil
+	}
+	dbPath := filepath.Join(ing.CacheDir, sessionID+".db")
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("删除旧数据库失败: %w", err)
+	}
+	return ing.InitDB(sessionID)
 }
 
 // ImportFile 导入文件到 SQLite

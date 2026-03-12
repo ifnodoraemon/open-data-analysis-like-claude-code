@@ -3,16 +3,33 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"strings"
+
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
 )
 
 // UploadHandler 文件上传处理
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		http.Error(w, "缺少 session_id", http.StatusBadRequest)
+		return
+	}
+
+	sess, err := sessionManager.Get(sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	identity, _ := auth.FromContext(r.Context())
+
 	// 限制文件大小 100MB
-	r.ParseMultipartForm(100 << 20)
+	if err := r.ParseMultipartForm(100 << 20); err != nil {
+		http.Error(w, "解析上传请求失败", http.StatusBadRequest)
+		return
+	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
@@ -21,32 +38,27 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// 确保上传目录存在
-	uploadDir := "./uploads"
-	os.MkdirAll(uploadDir, 0755)
-
-	// 保存文件
-	destPath := filepath.Join(uploadDir, fileHeader.Filename)
-	dest, err := os.Create(destPath)
+	uploaded, err := fileService.Upload(r.Context(), service.UploadFileInput{
+		UserID:      identity.UserID,
+		WorkspaceID: sess.WorkspaceID,
+		SessionID:   sess.ID,
+		FileName:    fileHeader.Filename,
+		ContentType: fileHeader.Header.Get("Content-Type"),
+		Size:        fileHeader.Size,
+		Body:        file,
+	})
 	if err != nil {
-		http.Error(w, "保存文件失败", http.StatusInternalServerError)
-		return
-	}
-	defer dest.Close()
-
-	written, err := io.Copy(dest, file)
-	if err != nil {
-		http.Error(w, "写入文件失败", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	resp := map[string]interface{}{
-		"filename": fileHeader.Filename,
-		"size":     written,
-		"path":     destPath,
-		"message":  fmt.Sprintf("文件 %s 上传成功 (%.2f MB)", fileHeader.Filename, float64(written)/(1024*1024)),
+		"file_id":  uploaded.ID,
+		"filename": uploaded.DisplayName,
+		"size":     uploaded.SizeBytes,
+		"message":  fmt.Sprintf("文件 %s 上传成功 (%.2f MB)", uploaded.DisplayName, float64(uploaded.SizeBytes)/(1024*1024)),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }

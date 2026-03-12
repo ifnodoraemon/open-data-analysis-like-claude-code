@@ -1,0 +1,184 @@
+package memory
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+)
+
+type UserRepository struct {
+	mu    sync.Mutex
+	users map[string]*domain.User
+}
+
+func NewUserRepository() *UserRepository {
+	return &UserRepository{users: make(map[string]*domain.User)}
+}
+
+func (r *UserRepository) GetByID(ctx context.Context, userID string) (*domain.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	user, ok := r.users[userID]
+	if !ok {
+		return nil, fmt.Errorf("用户不存在: %s", userID)
+	}
+	copy := *user
+	return &copy, nil
+}
+
+func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *user
+	r.users[user.ID] = &copy
+	return nil
+}
+
+type WorkspaceRepository struct {
+	mu         sync.Mutex
+	workspaces map[string]*domain.Workspace
+	members    map[string]map[string]domain.WorkspaceRole
+}
+
+func NewWorkspaceRepository() *WorkspaceRepository {
+	return &WorkspaceRepository{
+		workspaces: make(map[string]*domain.Workspace),
+		members:    make(map[string]map[string]domain.WorkspaceRole),
+	}
+}
+
+func (r *WorkspaceRepository) GetByID(ctx context.Context, workspaceID string) (*domain.Workspace, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	workspace, ok := r.workspaces[workspaceID]
+	if !ok {
+		return nil, fmt.Errorf("工作区不存在: %s", workspaceID)
+	}
+	copy := *workspace
+	return &copy, nil
+}
+
+func (r *WorkspaceRepository) IsMember(ctx context.Context, workspaceID, userID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	roles, ok := r.members[workspaceID]
+	if !ok {
+		return false, nil
+	}
+	_, ok = roles[userID]
+	return ok, nil
+}
+
+func (r *WorkspaceRepository) CreateWorkspace(ctx context.Context, workspace *domain.Workspace) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *workspace
+	r.workspaces[workspace.ID] = &copy
+	return nil
+}
+
+func (r *WorkspaceRepository) AddMember(ctx context.Context, member *domain.WorkspaceMember) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.members[member.WorkspaceID]; !ok {
+		r.members[member.WorkspaceID] = make(map[string]domain.WorkspaceRole)
+	}
+	r.members[member.WorkspaceID][member.UserID] = member.Role
+	return nil
+}
+
+type FileRepository struct {
+	mu       sync.Mutex
+	files    map[string]*domain.File
+	sessions map[string][]string
+}
+
+func NewFileRepository() *FileRepository {
+	return &FileRepository{
+		files:    make(map[string]*domain.File),
+		sessions: make(map[string][]string),
+	}
+}
+
+func (r *FileRepository) Create(ctx context.Context, file *domain.File) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *file
+	r.files[file.ID] = &copy
+	return nil
+}
+
+func (r *FileRepository) GetByID(ctx context.Context, fileID string) (*domain.File, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	file, ok := r.files[fileID]
+	if !ok {
+		return nil, fmt.Errorf("文件不存在: %s", fileID)
+	}
+	copy := *file
+	return &copy, nil
+}
+
+func (r *FileRepository) ListBySession(ctx context.Context, sessionID string) ([]domain.File, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	fileIDs := r.sessions[sessionID]
+	files := make([]domain.File, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		if file, ok := r.files[fileID]; ok {
+			files = append(files, *file)
+		}
+	}
+	return files, nil
+}
+
+func (r *FileRepository) AttachFilesToSession(ctx context.Context, sessionID string, fileIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.sessions[sessionID] = append(r.sessions[sessionID], fileIDs...)
+	return nil
+}
+
+type RunRepository struct {
+	mu   sync.Mutex
+	runs map[string]*domain.AnalysisRun
+}
+
+func NewRunRepository() *RunRepository {
+	return &RunRepository{runs: make(map[string]*domain.AnalysisRun)}
+}
+
+func (r *RunRepository) Create(ctx context.Context, run *domain.AnalysisRun) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *run
+	r.runs[run.ID] = &copy
+	return nil
+}
+
+func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.AnalysisRun, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[runID]
+	if !ok {
+		return nil, fmt.Errorf("任务不存在: %s", runID)
+	}
+	copy := *run
+	return &copy, nil
+}
+
+func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[runID]
+	if !ok {
+		return fmt.Errorf("任务不存在: %s", runID)
+	}
+	run.Status = status
+	run.ErrorMessage = errMsg
+	return nil
+}

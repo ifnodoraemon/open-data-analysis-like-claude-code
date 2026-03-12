@@ -16,7 +16,15 @@ type Config struct {
 	LLMModel    string
 
 	// 服务配置
-	ServerPort string
+	ServerPort           string
+	StorageRoot          string
+	CacheRoot            string
+	TempDir              string
+	DefaultUserID        string
+	DefaultUserEmail     string
+	DefaultUserName      string
+	DefaultWorkspaceID   string
+	DefaultWorkspaceName string
 }
 
 var Cfg *Config
@@ -38,11 +46,19 @@ func Load() {
 	}
 
 	Cfg = &Config{
-		LLMProvider: provider,
-		LLMBaseURL:  getEnv("LLM_BASE_URL", defaultBaseURL),
-		LLMAPIKey:   getEnv("LLM_API_KEY", ""),
-		LLMModel:    getEnv("LLM_MODEL", defaultModel),
-		ServerPort:  getEnv("SERVER_PORT", "8080"),
+		LLMProvider:          provider,
+		LLMBaseURL:           getEnv("LLM_BASE_URL", defaultBaseURL),
+		LLMAPIKey:            getEnv("LLM_API_KEY", ""),
+		LLMModel:             getEnv("LLM_MODEL", defaultModel),
+		ServerPort:           getEnv("SERVER_PORT", "8080"),
+		StorageRoot:          getEnv("STORAGE_ROOT", "./storage"),
+		CacheRoot:            getEnv("CACHE_ROOT", "./data/cache"),
+		TempDir:              getEnv("TEMP_DIR", "./tmp"),
+		DefaultUserID:        getEnv("DEFAULT_USER_ID", "u_demo"),
+		DefaultUserEmail:     getEnv("DEFAULT_USER_EMAIL", "demo@example.com"),
+		DefaultUserName:      getEnv("DEFAULT_USER_NAME", "Demo User"),
+		DefaultWorkspaceID:   getEnv("DEFAULT_WORKSPACE_ID", "w_demo"),
+		DefaultWorkspaceName: getEnv("DEFAULT_WORKSPACE_NAME", "Default Workspace"),
 	}
 
 	if Cfg.LLMAPIKey == "" {

@@ -7,20 +7,35 @@ import (
 	"time"
 )
 
-// generateReportHTML 生成完整的研报 HTML（含 ECharts 图表）
-func generateReportHTML(title, author string, sections []ReportSection) string {
-	return generateReportHTMLWithCharts(title, author, sections, nil)
+// ResolveReportTitle 从章节中解析报告标题
+func ResolveReportTitle(sections []ReportSection, fallback string) string {
+	for _, sec := range sections {
+		if sec.Type == "title" && sec.Title != "" {
+			return sec.Title
+		}
+	}
+	return fallback
 }
 
-// generateReportHTMLWithCharts 生成研报 HTML（含 ECharts 图表支持）
-func generateReportHTMLWithCharts(title, author string, sections []ReportSection, charts []ChartData) string {
+// RenderReportHTML 生成完整的研报 HTML（含 ECharts 图表支持）
+func RenderReportHTML(title, author string, state *ReportState) string {
+	if state == nil {
+		state = &ReportState{}
+	}
+	if title == "" {
+		title = ResolveReportTitle(state.Sections, "数据分析报告")
+	}
+	if author == "" {
+		author = "AI 数据分析师"
+	}
+
 	now := time.Now().Format("2006年01月02日")
 
 	var tocHTML strings.Builder
 	var bodyHTML strings.Builder
 	chapterNum := 0
 
-	for _, sec := range sections {
+	for _, sec := range state.Sections {
 		switch sec.Type {
 		case "title":
 			continue
@@ -31,7 +46,7 @@ func generateReportHTMLWithCharts(title, author string, sections []ReportSection
 				<div class="section summary" id="section-%d">
 					<h2>%s</h2>
 					<div class="summary-box">%s</div>
-				</div>`, chapterNum, sec.Title, processContent(sec.Content, charts)))
+				</div>`, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
 		case "overview", "analysis":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
@@ -39,7 +54,7 @@ func generateReportHTMLWithCharts(title, author string, sections []ReportSection
 				<div class="section" id="section-%d">
 					<h2>%d. %s</h2>
 					<div class="content">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, charts)))
+				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
 		case "chart":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
@@ -47,7 +62,7 @@ func generateReportHTMLWithCharts(title, author string, sections []ReportSection
 				<div class="section chart-section" id="section-%d">
 					<h2>%d. %s</h2>
 					<div class="content">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, charts)))
+				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
 		case "conclusion":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
@@ -55,15 +70,15 @@ func generateReportHTMLWithCharts(title, author string, sections []ReportSection
 				<div class="section conclusion" id="section-%d">
 					<h2>%d. %s</h2>
 					<div class="conclusion-box">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, charts)))
+				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
 		}
 	}
 
 	// 生成图表初始化脚本
 	var chartScripts strings.Builder
-	if len(charts) > 0 {
+	if len(state.Charts) > 0 {
 		chartScripts.WriteString("<script>\ndocument.addEventListener('DOMContentLoaded', function() {\n")
-		for _, ch := range charts {
+		for _, ch := range state.Charts {
 			chartScripts.WriteString(fmt.Sprintf(`
   (function() {
     var el = document.getElementById('%s');
