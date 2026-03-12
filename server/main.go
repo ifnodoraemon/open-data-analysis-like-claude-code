@@ -53,7 +53,7 @@ func main() {
 	fmt.Printf("🚀 数据分析智能体后端启动在 http://localhost:%s\n", port)
 	fmt.Printf("   WebSocket: ws://localhost:%s/ws\n", port)
 	fmt.Printf("   LLM Model: %s\n", config.Cfg.LLMModel)
-	fmt.Printf("   LLM Base URL: %s\n", config.Cfg.LLMBaseURL)
+	fmt.Printf("   LLM API Endpoint: %s\n", config.Cfg.LLMAPIEndpoint)
 
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -10,10 +10,11 @@ import (
 
 type Config struct {
 	// LLM 配置
-	LLMProvider string // "openai" 或 "anthropic"
-	LLMBaseURL  string
-	LLMAPIKey   string
-	LLMModel    string
+	LLMProvider    string // "openai" 或 "anthropic"
+	LLMBaseURL     string
+	LLMAPIEndpoint string
+	LLMAPIKey      string
+	LLMModel       string
 
 	// 服务配置
 	ServerPort           string
@@ -41,16 +42,19 @@ func Load() {
 	provider := strings.ToLower(getEnv("LLM_PROVIDER", "openai"))
 
 	// 根据 Provider 设置默认值
-	defaultBaseURL := "https://api.openai.com/v1"
+	defaultBaseURL := "https://api.openai.com"
+	defaultAPIEndpoint := "https://api.openai.com/v1/responses"
 	defaultModel := "gpt-4o"
 	if provider == "anthropic" {
 		defaultBaseURL = "https://api.anthropic.com"
+		defaultAPIEndpoint = "https://api.anthropic.com/v1/messages"
 		defaultModel = "claude-sonnet-4-20250514"
 	}
 
 	Cfg = &Config{
 		LLMProvider:          provider,
 		LLMBaseURL:           getEnv("LLM_BASE_URL", defaultBaseURL),
+		LLMAPIEndpoint:       getEnv("LLM_API_ENDPOINT", defaultAPIEndpoint),
 		LLMAPIKey:            getEnv("LLM_API_KEY", ""),
 		LLMModel:             getEnv("LLM_MODEL", defaultModel),
 		ServerPort:           getEnv("SERVER_PORT", "8080"),
@@ -71,7 +75,7 @@ func Load() {
 		log.Println("Warning: LLM_API_KEY is not set")
 	}
 
-	log.Printf("LLM Provider: %s, Model: %s, Base URL: %s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMBaseURL)
+	log.Printf("LLM Provider: %s, Model: %s, Endpoint: %s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMAPIEndpoint)
 }
 
 func getEnv(key, fallback string) string {
