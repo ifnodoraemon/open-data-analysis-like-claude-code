@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -35,19 +34,11 @@ func TestCompactAssistantMessage(t *testing.T) {
 	}
 
 	compacted := compactAssistantMessage(message)
-	if compacted.ToolCalls[0].Function.Arguments == message.ToolCalls[0].Function.Arguments {
-		t.Fatal("expected create_chart arguments to be compacted")
+	if compacted.ToolCalls[0].Function.Arguments != message.ToolCalls[0].Function.Arguments {
+		t.Fatal("expected create_chart arguments to stay unchanged")
 	}
 	if compacted.ToolCalls[1].Function.Arguments == message.ToolCalls[1].Function.Arguments {
 		t.Fatal("expected write_section arguments to be compacted")
-	}
-
-	var chartPayload map[string]interface{}
-	if err := json.Unmarshal([]byte(compacted.ToolCalls[0].Function.Arguments), &chartPayload); err != nil {
-		t.Fatalf("unmarshal compacted chart payload: %v", err)
-	}
-	if chartPayload["option_note"] != "compacted_for_history" {
-		t.Fatalf("unexpected chart payload: %#v", chartPayload)
 	}
 }
 

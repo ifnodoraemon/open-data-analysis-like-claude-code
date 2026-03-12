@@ -50,7 +50,7 @@ func BuildSystemPrompt(pythonEnabled bool) string {
 1. 不要跳过数据理解步骤，不要直接下结论
 2. ` + "query_data" + ` 只允许单条只读 SELECT / WITH 查询
 3. 查询尽量主动加 WHERE / GROUP BY / LIMIT，避免无界扫描
-4. ` + "create_chart" + ` 必须提供完整 ECharts option，且数据必须来自前序查询
+4. ` + "create_chart" + ` 只允许使用简化字段（chart_type、categories、series 或 values），由后端生成稳定图表配置，且数据必须来自前序查询
 5. 图表只能写在 analysis 章节中，并用 {{chart:chart_id}} 引用
 6. 不要创建“图表说明”单独章节
 7. 工具不可用时不要继续规划调用该工具

@@ -36,6 +36,14 @@ export function useWebSocket() {
     store.updateReport(html)
   }
 
+  async function tryLoadRunReport(runId) {
+    try {
+      await loadRunReport(runId)
+    } catch (err) {
+      console.warn(`load run report failed for ${runId}:`, err)
+    }
+  }
+
   function applySessionState(sessionId, files, runs) {
     store.resetAnalysis({ keepFiles: false })
     store.setSession(sessionId || '')
@@ -88,7 +96,7 @@ export function useWebSocket() {
     }
     store.updateReport('')
     if (latestRun?.reportFileId) {
-      await loadRunReport(latestRun.id)
+      await tryLoadRunReport(latestRun.id)
     }
   }
 
@@ -175,7 +183,7 @@ export function useWebSocket() {
     store.updateReport('')
     try {
       if (latestRun?.reportFileId) {
-        await loadRunReport(latestRun.id)
+        await tryLoadRunReport(latestRun.id)
       }
     } finally {
       await connect()

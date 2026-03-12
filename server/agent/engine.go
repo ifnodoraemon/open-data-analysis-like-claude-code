@@ -260,20 +260,9 @@ func compactToolArguments(toolName, raw string) string {
 
 	switch toolName {
 	case "create_chart":
-		var payload struct {
-			ChartID string `json:"chart_id"`
-			Title   string `json:"title"`
-			Option  any    `json:"option"`
-		}
-		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
-			summary, _ := json.Marshal(map[string]interface{}{
-				"chart_id":     payload.ChartID,
-				"title":        payload.Title,
-				"option_note":  "compacted_for_history",
-				"option_chars": len([]rune(raw)),
-			})
-			return string(summary)
-		}
+		// create_chart 的参数结构会直接影响后续轮次的工具调用，
+		// 这里保留原始参数，避免把摘要字段误导回模型。
+		return raw
 	case "write_section":
 		var payload struct {
 			SectionType string `json:"section_type"`

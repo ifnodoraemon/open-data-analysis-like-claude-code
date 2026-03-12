@@ -18,14 +18,14 @@
         <div class="empty-icon">📊</div>
         <p>研究报告将在这里实时渲染</p>
       </div>
-      <iframe v-else-if="mode === 'preview'" :srcdoc="reportHTML" class="report-iframe" sandbox="allow-scripts allow-same-origin"></iframe>
+      <iframe v-else-if="mode === 'preview'" :src="reportURL" class="report-iframe" sandbox="allow-scripts allow-same-origin"></iframe>
       <pre v-else class="source-code">{{ reportHTML }}</pre>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
@@ -35,6 +35,7 @@ const reportHTML = computed(() => store.reportHTML)
 const selectedRun = computed(() => store.runs.find(run => run.id === store.selectedRunId) || null)
 const activeRun = computed(() => store.runs.find(run => run.id === store.activeRunId) || null)
 const selectedReport = computed(() => selectedRun.value?.report || null)
+const reportURL = ref('')
 const runMetaLabel = computed(() => {
   if (selectedReport.value?.title) {
     const suffix = selectedReport.value.author ? ` · ${selectedReport.value.author}` : ''
@@ -52,6 +53,21 @@ const runMetaLabel = computed(() => {
   return ''
 })
 const mode = ref('preview')
+
+watch(reportHTML, (html) => {
+  if (reportURL.value) {
+    URL.revokeObjectURL(reportURL.value)
+    reportURL.value = ''
+  }
+  if (!html) return
+  reportURL.value = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  if (reportURL.value) {
+    URL.revokeObjectURL(reportURL.value)
+  }
+})
 
 async function handleExport() {
   if (selectedRun.value?.reportFileId) {

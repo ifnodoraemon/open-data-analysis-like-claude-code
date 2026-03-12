@@ -15,6 +15,10 @@ type Tool interface {
 	Execute(args json.RawMessage) (string, error)
 }
 
+type StrictTool interface {
+	Strict() bool
+}
+
 // Registry 工具注册表
 type Registry struct {
 	tools map[string]Tool
@@ -46,11 +50,16 @@ func (r *Registry) GetOpenAITools() []openai.Tool {
 	var oaiTools []openai.Tool
 	for _, tool := range r.tools {
 		params := tool.Parameters()
+		strict := false
+		if strictTool, ok := tool.(StrictTool); ok {
+			strict = strictTool.Strict()
+		}
 		oaiTools = append(oaiTools, openai.Tool{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
 				Name:        tool.Name(),
 				Description: tool.Description(),
+				Strict:      strict,
 				Parameters:  params,
 			},
 		})

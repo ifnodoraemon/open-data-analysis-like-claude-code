@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -87,6 +89,10 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.Copy(w, reader)
 			return
 		}
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "任务报告文件不存在", http.StatusNotFound)
+			return
+		}
 	}
 	if reportErr != nil && reportErr != sql.ErrNoRows {
 		http.Error(w, reportErr.Error(), http.StatusInternalServerError)
@@ -99,6 +105,10 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 
 	reader, file, err := fileService.OpenForDownload(r.Context(), identity.UserID, identity.WorkspaceID, *run.ReportFileID)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "任务报告文件不存在", http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -52,7 +52,7 @@
             <div class="msg-icon">👤</div>
             <div class="msg-body">
               <div class="msg-label">用户指令</div>
-              <div class="msg-content">{{ msg.content }}</div>
+              <div class="msg-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </template>
 
@@ -61,7 +61,7 @@
             <div class="msg-icon">🧠</div>
             <div class="msg-body">
               <div class="msg-label">思考中</div>
-              <div class="msg-content thinking">{{ msg.content }}</div>
+              <div class="msg-content markdown-body thinking" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </template>
 
@@ -99,7 +99,7 @@
             <div class="msg-icon">🎉</div>
             <div class="msg-body">
               <div class="msg-label complete-label">分析完成</div>
-              <div class="msg-content">{{ msg.content }}</div>
+              <div class="msg-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </template>
 
@@ -107,7 +107,7 @@
             <div class="msg-icon">⏹</div>
             <div class="msg-body">
               <div class="msg-label">任务已停止</div>
-              <div class="msg-content">{{ msg.content }}</div>
+              <div class="msg-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </template>
 
@@ -116,7 +116,7 @@
             <div class="msg-icon">❌</div>
             <div class="msg-body">
               <div class="msg-label error-label">错误</div>
-              <div class="msg-content error-content">{{ msg.content }}</div>
+              <div class="msg-content markdown-body error-content" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </template>
 
@@ -135,6 +135,8 @@
 
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue'
+import { marked } from 'marked'
+import hljs from 'highlight.js'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
@@ -150,6 +152,17 @@ const currentSessionId = computed(() => store.sessionId || '')
 const selectedRun = computed(() => runs.value.find(run => run.id === selectedRunId.value) || null)
 const activeRun = computed(() => runs.value.find(run => run.id === activeRunId.value) || null)
 const messagesEl = ref(null)
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  highlight(code, language) {
+    if (language && hljs.getLanguage(language)) {
+      return hljs.highlight(code, { language }).value
+    }
+    return hljs.highlightAuto(code).value
+  },
+})
 
 watch(messages, async () => {
   await nextTick()
@@ -172,6 +185,10 @@ function truncate(str, max) {
 function formatSessionLabel(session) {
   const date = session.lastSeenAt ? new Date(session.lastSeenAt).toLocaleDateString() : ''
   return `${session.title || session.id}${date ? ` · ${date}` : ''}`
+}
+
+function renderMarkdown(content) {
+  return marked.parse(String(content || ''))
 }
 
 async function handleSessionChange(event) {
@@ -363,6 +380,66 @@ async function handleRunClick(runId) {
   font-size: 0.85rem;
   line-height: 1.5;
   color: var(--text-primary);
+}
+
+.markdown-body :deep(p),
+.markdown-body :deep(ul),
+.markdown-body :deep(ol),
+.markdown-body :deep(blockquote),
+.markdown-body :deep(pre) {
+  margin: 0 0 0.75rem;
+}
+
+.markdown-body :deep(p:last-child),
+.markdown-body :deep(ul:last-child),
+.markdown-body :deep(ol:last-child),
+.markdown-body :deep(blockquote:last-child),
+.markdown-body :deep(pre:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  padding-left: 1.25rem;
+}
+
+.markdown-body :deep(li + li) {
+  margin-top: 0.2rem;
+}
+
+.markdown-body :deep(code) {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8em;
+  background: rgba(139, 148, 158, 0.14);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.markdown-body :deep(pre) {
+  overflow-x: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+
+.markdown-body :deep(pre code) {
+  background: transparent;
+  padding: 0;
+}
+
+.markdown-body :deep(blockquote) {
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.markdown-body :deep(a) {
+  color: var(--accent-blue);
+}
+
+.markdown-body :deep(strong) {
+  font-weight: 700;
 }
 
 .msg-time {
