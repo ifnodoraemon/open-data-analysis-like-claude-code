@@ -212,6 +212,17 @@ func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status d
 	return nil
 }
 
+func (r *RunRepository) UpdateSummary(ctx context.Context, runID, summary string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[runID]
+	if !ok {
+		return fmt.Errorf("任务不存在: %s", runID)
+	}
+	run.Summary = summary
+	return nil
+}
+
 func (r *RunRepository) BindReportFile(ctx context.Context, runID, reportFileID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -43,6 +43,12 @@ export function useWebSocket() {
     return latestRun
   }
 
+  function deriveSessionTitle(input) {
+    const value = String(input || '').trim().replace(/\s+/g, ' ')
+    if (!value) return '未命名分析'
+    return value.length > 28 ? `${value.slice(0, 28)}...` : value
+  }
+
   function restoreBootstrapState(data) {
     const nextSessionId = data.session?.id || ''
     store.setSessions(data.sessions || [])
@@ -165,6 +171,13 @@ export function useWebSocket() {
         break
       case 'run_started':
         store.startRun(event.data.runId)
+        store.upsertRun({
+          id: event.data.runId,
+          sessionId: store.sessionId,
+          status: 'running',
+          inputMessage: store.messages.filter(msg => msg.type === 'user').at(-1)?.content || '',
+          createdAt: new Date().toISOString(),
+        })
         break
       case 'thinking':
         store.addMessage({ type: 'thinking', content: event.data.content })
@@ -192,17 +205,43 @@ export function useWebSocket() {
         break
       case 'report_final':
         store.updateReport(event.data.html)
+        if (event.data.title && store.sessionId) {
+          store.upsertSession({
+            id: store.sessionId,
+            title: event.data.title,
+            lastSeenAt: new Date().toISOString(),
+          })
+        }
         store.addMessage({ type: 'complete', content: '✅ 研究报告已生成完成，可点击右上角导出。' })
         break
       case 'run_completed':
+        store.upsertRun({
+          id: event.runId,
+          status: 'completed',
+          summary: event.data.summary,
+          updatedAt: new Date().toISOString(),
+        })
         store.addMessage({ type: 'complete', content: event.data.summary })
         store.finishRun(event.runId)
         break
       case 'run_cancelled':
+        store.upsertRun({
+          id: event.runId,
+          status: 'cancelled',
+          updatedAt: new Date().toISOString(),
+        })
         store.addMessage({ type: 'cancelled', content: event.data.message || '任务已取消' })
         store.finishRun(event.runId)
         break
       case 'error':
+        if (event.runId) {
+          store.upsertRun({
+            id: event.runId,
+            status: 'failed',
+            errorMessage: event.data.message,
+            updatedAt: new Date().toISOString(),
+          })
+        }
         store.addMessage({ type: 'error', content: event.data.message })
         store.finishRun(event.runId)
         break
@@ -268,6 +307,13 @@ export function useWebSocket() {
     }
     store.setRunning(true)
     store.addMessage({ type: 'user', content })
+    if (store.sessionId) {
+      store.upsertSession({
+        id: store.sessionId,
+        title: deriveSessionTitle(content),
+        lastSeenAt: new Date().toISOString(),
+      })
+    }
     send('user_message', { content })
   }
 

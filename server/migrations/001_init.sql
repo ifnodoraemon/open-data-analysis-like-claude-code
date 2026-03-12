@@ -73,6 +73,7 @@ create table analysis_runs (
   user_id varchar(64) not null references users(id),
   status varchar(32) not null,
   input_message text not null,
+  summary text not null default '',
   error_message text,
   report_file_id varchar(64),
   started_at timestamptz,

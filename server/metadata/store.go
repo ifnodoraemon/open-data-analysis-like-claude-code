@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -103,6 +104,7 @@ func (s *Store) migrate() error {
 			user_id TEXT NOT NULL,
 			status TEXT NOT NULL,
 			input_message TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '',
 			error_message TEXT,
 			report_file_id TEXT,
 			started_at DATETIME,
@@ -118,5 +120,38 @@ func (s *Store) migrate() error {
 		}
 	}
 
+	if err := ensureColumn(s.DB, "analysis_runs", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return fmt.Errorf("检查 %s.%s 失败: %w", table, column, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("读取 %s 表结构失败: %w", table, err)
+		}
+		if strings.EqualFold(name, column) {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("遍历 %s 表结构失败: %w", table, err)
+	}
+
+	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
+		return fmt.Errorf("为 %s 添加列 %s 失败: %w", table, column, err)
+	}
 	return nil
 }

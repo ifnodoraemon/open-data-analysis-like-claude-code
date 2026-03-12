@@ -231,6 +231,11 @@ func (r *SessionRepository) ListByUserWorkspace(ctx context.Context, userID, wor
 	return sessions, rows.Err()
 }
 
+func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID, title string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?`, title, time.Now(), sessionID)
+	return err
+}
+
 func (r *SessionRepository) UpdateLastSeen(ctx context.Context, sessionID string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ?, updated_at = ? WHERE id = ?`, time.Now(), time.Now(), sessionID)
 	return err
@@ -242,18 +247,18 @@ func (r *SessionRepository) UpdateLastRun(ctx context.Context, sessionID, runID 
 }
 
 func (r *RunRepository) Create(ctx context.Context, run *domain.AnalysisRun) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO analysis_runs (id, session_id, workspace_id, user_id, status, input_message, error_message, report_file_id, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.SessionID, run.WorkspaceID, run.UserID, string(run.Status), run.InputMessage, run.ErrorMessage, run.ReportFileID, run.StartedAt, run.FinishedAt, run.CreatedAt, run.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO analysis_runs (id, session_id, workspace_id, user_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.SessionID, run.WorkspaceID, run.UserID, string(run.Status), run.InputMessage, run.Summary, run.ErrorMessage, run.ReportFileID, run.StartedAt, run.FinishedAt, run.CreatedAt, run.UpdatedAt)
 	return err
 }
 
 func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.AnalysisRun, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE id = ?`, runID)
+	row := r.db.QueryRowContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE id = ?`, runID)
 	var run domain.AnalysisRun
 	var status string
 	var errMsg, reportID sql.NullString
 	var startedAt, finishedAt sql.NullTime
-	if err := row.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
+	if err := row.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
 		return nil, err
 	}
 	run.Status = domain.RunStatus(status)
@@ -276,7 +281,7 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +293,7 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 		var status string
 		var errMsg, reportID sql.NullString
 		var startedAt, finishedAt sql.NullTime
-		if err := rows.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
 		run.Status = domain.RunStatus(status)
@@ -319,6 +324,11 @@ func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status d
 		finishedAt = nil
 	}
 	_, err := r.db.ExecContext(ctx, `UPDATE analysis_runs SET status = ?, error_message = ?, finished_at = COALESCE(?, finished_at), updated_at = ? WHERE id = ?`, string(status), errMsg, finishedAt, now, runID)
+	return err
+}
+
+func (r *RunRepository) UpdateSummary(ctx context.Context, runID, summary string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE analysis_runs SET summary = ?, updated_at = ? WHERE id = ?`, summary, time.Now(), runID)
 	return err
 }
 

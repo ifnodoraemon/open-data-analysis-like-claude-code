@@ -25,7 +25,7 @@
         type="button"
       >
         <span class="run-status" :class="'status-' + run.status"></span>
-        <span class="run-label">{{ truncate(run.inputMessage || run.id, 28) }}</span>
+        <span class="run-label">{{ truncate(run.summary || run.inputMessage || run.id, 28) }}</span>
       </button>
     </div>
     <div class="messages" ref="messagesEl">

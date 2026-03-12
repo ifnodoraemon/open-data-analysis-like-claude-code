@@ -84,6 +84,7 @@ type ToolResultData struct {
 type ReportUpdateData struct {
 	HTML      string `json:"html"`
 	SectionID string `json:"sectionId,omitempty"`
+	Title     string `json:"title,omitempty"`
 }
 
 // ErrorData 错误事件

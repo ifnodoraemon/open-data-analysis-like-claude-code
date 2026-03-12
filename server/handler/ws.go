@@ -99,13 +99,14 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			now := time.Now()
+			rawInput := strings.TrimSpace(userMsg.Content)
 			if err := runRepo.Create(r.Context(), &domain.AnalysisRun{
 				ID:           runID,
 				SessionID:    sess.ID,
 				WorkspaceID:  sess.WorkspaceID,
 				UserID:       identity.UserID,
 				Status:       domain.RunStatusRunning,
-				InputMessage: strings.TrimSpace(userMsg.Content),
+				InputMessage: rawInput,
 				StartedAt:    &now,
 				CreatedAt:    now,
 				UpdatedAt:    now,
@@ -118,6 +119,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			_ = sessionRepo.UpdateLastRun(r.Context(), sess.ID, runID)
+			if record, err := sessionRepo.GetByID(r.Context(), sess.ID); err == nil {
+				if record.Title == "" || record.Title == "未命名分析" {
+					_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, deriveSessionTitle(rawInput))
+				}
+			}
 
 			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 				Type: agent.EventRunStarted,
@@ -155,10 +161,14 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 										Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
 									})
 								}
+								if title := strings.TrimSpace(sess.ReportState.FinalTitle); title != "" {
+									_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, title)
+								}
 								sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 									Type: agent.EventReportFinal,
 									Data: agent.ReportUpdateData{
-										HTML: finalHTML,
+										HTML:  finalHTML,
+										Title: strings.TrimSpace(sess.ReportState.FinalTitle),
 									},
 								})
 							}
@@ -169,6 +179,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					case agent.EventRunCompleted:
 						sess.FinishRun(runID, "completed")
 						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCompleted, nil)
+						if complete, ok := ev.Data.(agent.CompleteData); ok {
+							_ = runRepo.UpdateSummary(r.Context(), runID, strings.TrimSpace(complete.Summary))
+						}
 					case agent.EventRunCancelled:
 						sess.FinishRun(runID, "cancelled")
 						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCancelled, nil)
@@ -227,6 +240,20 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("未知事件类型: %s", event.Type)
 		}
 	}
+}
+
+func deriveSessionTitle(input string) string {
+	title := strings.TrimSpace(input)
+	if title == "" {
+		return "未命名分析"
+	}
+	title = strings.ReplaceAll(title, "\n", " ")
+	title = strings.Join(strings.Fields(title), " ")
+	runes := []rune(title)
+	if len(runes) > 28 {
+		return string(runes[:28]) + "..."
+	}
+	return title
 }
 
 func sendSessionEvent(conn *websocket.Conn, mu *sync.Mutex, sessionID, runID string, event agent.WSEvent) {

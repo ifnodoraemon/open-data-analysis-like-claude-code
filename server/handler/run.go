@@ -106,6 +106,7 @@ func serializeRun(run domain.AnalysisRun) map[string]interface{} {
 		"workspaceId":  run.WorkspaceID,
 		"status":       run.Status,
 		"inputMessage": run.InputMessage,
+		"summary":      run.Summary,
 		"createdAt":    run.CreatedAt,
 		"updatedAt":    run.UpdatedAt,
 	}

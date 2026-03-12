@@ -72,6 +72,16 @@ export const useAgentStore = defineStore('agent', () => {
     sessions.value.unshift(session)
   }
 
+  function upsertRun(run) {
+    if (!run?.id) return
+    const index = runs.value.findIndex(item => item.id === run.id)
+    if (index >= 0) {
+      runs.value.splice(index, 1, { ...runs.value[index], ...run })
+      return
+    }
+    runs.value.unshift(run)
+  }
+
   function setRuns(items) {
     runs.value = items || []
   }
@@ -152,6 +162,7 @@ export const useAgentStore = defineStore('agent', () => {
     setSessions,
     upsertSession,
     setRuns,
+    upsertRun,
     setConnectionState,
     startRun,
     finishRun,

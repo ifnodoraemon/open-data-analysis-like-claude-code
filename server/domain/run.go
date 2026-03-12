@@ -19,6 +19,7 @@ type AnalysisRun struct {
 	UserID       string
 	Status       RunStatus
 	InputMessage string
+	Summary      string
 	ErrorMessage *string
 	ReportFileID *string
 	StartedAt    *time.Time
