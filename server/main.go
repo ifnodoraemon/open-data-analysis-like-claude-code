@@ -22,7 +22,6 @@ func main() {
 	// 中间件
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(handler.AuthMiddleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -30,16 +29,18 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// REST 接口
-	r.Get("/api/bootstrap", handler.BootstrapHandler)
-	r.Post("/api/upload", handler.UploadHandler)
-
-	// WebSocket 接口
-	r.Get("/ws", handler.WSHandler)
-
-	// 健康检查
+	// 公开接口
+	r.Post("/api/auth/login", handler.LoginHandler)
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// 鉴权接口
+	r.Group(func(protected chi.Router) {
+		protected.Use(handler.AuthMiddleware)
+		protected.Get("/api/bootstrap", handler.BootstrapHandler)
+		protected.Post("/api/upload", handler.UploadHandler)
+		protected.Get("/ws", handler.WSHandler)
 	})
 
 	port := config.Cfg.ServerPort

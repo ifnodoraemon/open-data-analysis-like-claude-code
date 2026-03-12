@@ -13,6 +13,9 @@
       <button class="nav-btn" @click="clearAll" title="新建分析">
         ✨ 新建
       </button>
+      <button class="nav-btn" @click="logout">
+        退出
+      </button>
     </div>
   </nav>
 </template>
@@ -22,12 +25,17 @@ import { computed } from 'vue'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
-const { connected, resetSession } = useWebSocket()
+const { connected, resetSession, disconnect } = useWebSocket()
 const store = useAgentStore()
 const workspaceName = computed(() => store.workspace?.name || '')
 
 function clearAll() {
   resetSession(true)
+}
+
+function logout() {
+  disconnect()
+  store.logout()
 }
 </script>
 

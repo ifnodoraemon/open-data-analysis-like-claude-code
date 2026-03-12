@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
 )
 
@@ -28,7 +29,8 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	var writeMu sync.Mutex
 
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
-	sess, _, err := sessionManager.GetOrCreate(sessionID)
+	identity, _ := auth.FromContext(r.Context())
+	sess, _, err := sessionManager.GetOrCreate(sessionID, identity.WorkspaceID, identity.UserID)
 	if err != nil {
 		log.Printf("创建会话失败: %v", err)
 		return

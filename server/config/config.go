@@ -21,9 +21,11 @@ type Config struct {
 	CacheRoot            string
 	MetadataDBPath       string
 	TempDir              string
+	AuthSecret           string
 	DefaultUserID        string
 	DefaultUserEmail     string
 	DefaultUserName      string
+	DefaultUserPassword  string
 	DefaultWorkspaceID   string
 	DefaultWorkspaceName string
 }
@@ -56,11 +58,13 @@ func Load() {
 		CacheRoot:            getEnv("CACHE_ROOT", "./data/cache"),
 		MetadataDBPath:       getEnv("METADATA_DB_PATH", "./data/metadata/app.db"),
 		TempDir:              getEnv("TEMP_DIR", "./tmp"),
-		DefaultUserID:        getEnv("DEFAULT_USER_ID", "u_demo"),
-		DefaultUserEmail:     getEnv("DEFAULT_USER_EMAIL", "demo@example.com"),
-		DefaultUserName:      getEnv("DEFAULT_USER_NAME", "Demo User"),
-		DefaultWorkspaceID:   getEnv("DEFAULT_WORKSPACE_ID", "w_demo"),
-		DefaultWorkspaceName: getEnv("DEFAULT_WORKSPACE_NAME", "Default Workspace"),
+		AuthSecret:           getEnv("AUTH_SECRET", ""),
+		DefaultUserID:        getEnv("DEFAULT_USER_ID", ""),
+		DefaultUserEmail:     getEnv("DEFAULT_USER_EMAIL", ""),
+		DefaultUserName:      getEnv("DEFAULT_USER_NAME", ""),
+		DefaultUserPassword:  getEnv("DEFAULT_USER_PASSWORD", ""),
+		DefaultWorkspaceID:   getEnv("DEFAULT_WORKSPACE_ID", ""),
+		DefaultWorkspaceName: getEnv("DEFAULT_WORKSPACE_NAME", ""),
 	}
 
 	if Cfg.LLMAPIKey == "" {

@@ -18,12 +18,12 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := sessionManager.Get(sessionID)
+	identity, _ := auth.FromContext(r.Context())
+	sess, err := sessionManager.Get(sessionID, identity.WorkspaceID, identity.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	identity, _ := auth.FromContext(r.Context())
 
 	// 限制文件大小 100MB
 	if err := r.ParseMultipartForm(100 << 20); err != nil {

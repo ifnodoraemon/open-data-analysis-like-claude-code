@@ -9,23 +9,37 @@ const connected = ref(false)
 export function useWebSocket() {
   const store = useAgentStore()
 
+  function authHeaders() {
+    return store.token ? { Authorization: `Bearer ${store.token}` } : {}
+  }
+
   async function bootstrap() {
-    if (store.user && store.workspace) return
-    const res = await fetch('/api/bootstrap')
+    if (!store.token) {
+      throw new Error('未登录')
+    }
+    const res = await fetch('/api/bootstrap', {
+      headers: authHeaders(),
+    })
     if (!res.ok) {
+      if (res.status === 401) {
+        store.logout()
+      }
       throw new Error('bootstrap 失败')
     }
     const data = await res.json()
     store.setIdentity(data.user, data.workspace)
+    store.setWorkspaces(data.workspaces || [])
   }
 
   function connect() {
+    if (!store.token) return
     if (wsInstance && [WebSocket.OPEN, WebSocket.CONNECTING].includes(wsInstance.readyState)) return
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const params = new URLSearchParams()
     if (store.sessionId) params.set('session_id', store.sessionId)
     if (store.workspace?.id) params.set('workspace_id', store.workspace.id)
+    params.set('token', store.token)
     const sessionQuery = params.toString() ? `?${params.toString()}` : ''
     const url = `${protocol}//${location.host}/ws${sessionQuery}`
     wsInstance = new WebSocket(url)
@@ -46,6 +60,7 @@ export function useWebSocket() {
       connected.value = false
       wsInstance = null
       store.setConnectionState('disconnected')
+      if (!store.token) return
       console.log('WebSocket 断开，3 秒后重连...')
       clearTimeout(reconnectTimer)
       reconnectTimer = setTimeout(connect, 3000)
@@ -125,6 +140,31 @@ export function useWebSocket() {
     }
   }
 
+  async function login(email, password, workspaceId = '') {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, workspaceId }),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    const data = await res.json()
+    store.setToken(data.token)
+    store.setIdentity(data.user, data.workspace)
+    store.setWorkspaces(data.workspaces || [])
+    store.resetAnalysis({ keepFiles: false })
+  }
+
+  function disconnect() {
+    clearTimeout(reconnectTimer)
+    if (wsInstance) {
+      wsInstance.close()
+      wsInstance = null
+    }
+    connected.value = false
+  }
+
   function sendMessage(content) {
     if (wsInstance?.readyState !== WebSocket.OPEN) {
       store.addMessage({ type: 'error', content: '连接尚未建立，请稍后重试。' })
@@ -143,5 +183,5 @@ export function useWebSocket() {
     send('reset_session', { keepFiles })
   }
 
-  return { connected, bootstrap, connect, sendMessage, stop, resetSession }
+  return { connected, bootstrap, connect, login, disconnect, sendMessage, stop, resetSession }
 }

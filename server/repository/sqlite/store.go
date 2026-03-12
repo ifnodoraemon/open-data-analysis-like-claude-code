@@ -37,6 +37,23 @@ func (r *UserRepository) GetByID(ctx context.Context, userID string) (*domain.Us
 	return &user, nil
 }
 
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT id, email, password_hash, name, avatar_url, status, created_at, updated_at, last_login_at FROM users WHERE email = ?`, email)
+	var user domain.User
+	var avatarURL string
+	var status string
+	var lastLogin sql.NullTime
+	if err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Name, &avatarURL, &status, &user.CreatedAt, &user.UpdatedAt, &lastLogin); err != nil {
+		return nil, err
+	}
+	user.AvatarURL = avatarURL
+	user.Status = domain.UserStatus(status)
+	if lastLogin.Valid {
+		user.LastLoginAt = &lastLogin.Time
+	}
+	return &user, nil
+}
+
 func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
 	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO users (id, email, password_hash, name, avatar_url, status, created_at, updated_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, user.Email, user.PasswordHash, user.Name, user.AvatarURL, string(user.Status), user.CreatedAt, user.UpdatedAt, user.LastLoginAt)
@@ -52,6 +69,31 @@ func (r *WorkspaceRepository) GetByID(ctx context.Context, workspaceID string) (
 	}
 	workspace.Status = domain.WorkspaceStatus(status)
 	return &workspace, nil
+}
+
+func (r *WorkspaceRepository) ListByUser(ctx context.Context, userID string) ([]domain.Workspace, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT w.id, w.name, w.slug, w.owner_user_id, w.status, w.created_at, w.updated_at
+		FROM workspaces w
+		INNER JOIN workspace_members wm ON wm.workspace_id = w.id
+		WHERE wm.user_id = ?
+		ORDER BY w.created_at ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var workspaces []domain.Workspace
+	for rows.Next() {
+		var workspace domain.Workspace
+		var status string
+		if err := rows.Scan(&workspace.ID, &workspace.Name, &workspace.Slug, &workspace.OwnerUserID, &status, &workspace.CreatedAt, &workspace.UpdatedAt); err != nil {
+			return nil, err
+		}
+		workspace.Status = domain.WorkspaceStatus(status)
+		workspaces = append(workspaces, workspace)
+	}
+	return workspaces, rows.Err()
 }
 
 func (r *WorkspaceRepository) IsMember(ctx context.Context, workspaceID, userID string) (bool, error) {

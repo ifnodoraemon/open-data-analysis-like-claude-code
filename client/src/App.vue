@@ -1,5 +1,6 @@
 <template>
-  <div class="app">
+  <LoginScreen v-if="!isAuthenticated" @success="initApp" />
+  <div v-else class="app">
     <TopNav />
     <div class="main-content">
       <AgentPanel class="panel-left" :style="{ width: leftWidth + '%' }" />
@@ -11,23 +12,32 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useWebSocket } from './composables/useWebSocket.js'
+import { useAgentStore } from './stores/agent.js'
 import TopNav from './components/layout/TopNav.vue'
 import AgentPanel from './components/agent/AgentPanel.vue'
 import ReportPreview from './components/report/ReportPreview.vue'
 import InputBar from './components/layout/InputBar.vue'
+import LoginScreen from './components/auth/LoginScreen.vue'
 
 const { bootstrap, connect } = useWebSocket()
+const store = useAgentStore()
 const leftWidth = ref(45)
 const isDragging = ref(false)
+const isAuthenticated = computed(() => !!store.token && !!store.user)
 
 onMounted(() => {
+  if (store.token) {
+    initApp()
+  }
+})
+
+function initApp() {
   bootstrap().then(connect).catch((err) => {
     console.error('bootstrap failed:', err)
-    connect()
   })
-})
+}
 
 function startDrag(e) {
   isDragging.value = true

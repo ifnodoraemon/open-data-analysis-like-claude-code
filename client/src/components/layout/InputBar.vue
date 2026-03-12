@@ -73,7 +73,11 @@ async function handleFile(e) {
   formData.append('file', file)
 
   try {
-    const res = await fetch(`/api/upload?session_id=${encodeURIComponent(store.sessionId)}`, { method: 'POST', body: formData })
+    const res = await fetch(`/api/upload?session_id=${encodeURIComponent(store.sessionId)}`, {
+      method: 'POST',
+      headers: store.token ? { Authorization: `Bearer ${store.token}` } : {},
+      body: formData,
+    })
     if (!res.ok) {
       throw new Error(await res.text())
     }

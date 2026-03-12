@@ -6,11 +6,13 @@ export const useAgentStore = defineStore('agent', () => {
   const reportHTML = ref('')
   const isRunning = ref(false)
   const uploadedFiles = ref([])
+  const token = ref(localStorage.getItem('oda_token') || '')
   const sessionId = ref('')
   const activeRunId = ref('')
   const connectionState = ref('connecting')
   const user = ref(null)
   const workspace = ref(null)
+  const workspaces = ref([])
 
   function addMessage(msg) {
     messages.value.push({
@@ -35,6 +37,19 @@ export const useAgentStore = defineStore('agent', () => {
   function setIdentity(nextUser, nextWorkspace) {
     user.value = nextUser
     workspace.value = nextWorkspace
+  }
+
+  function setToken(nextToken) {
+    token.value = nextToken
+    if (nextToken) {
+      localStorage.setItem('oda_token', nextToken)
+    } else {
+      localStorage.removeItem('oda_token')
+    }
+  }
+
+  function setWorkspaces(items) {
+    workspaces.value = items
   }
 
   function setConnectionState(state) {
@@ -71,9 +86,19 @@ export const useAgentStore = defineStore('agent', () => {
     reportHTML.value = ''
     isRunning.value = false
     activeRunId.value = ''
+    sessionId.value = ''
     if (!keepFiles) {
       uploadedFiles.value = []
     }
+  }
+
+  function logout() {
+    setToken('')
+    user.value = null
+    workspace.value = null
+    workspaces.value = []
+    resetAnalysis({ keepFiles: false })
+    connectionState.value = 'disconnected'
   }
 
   return {
@@ -81,21 +106,26 @@ export const useAgentStore = defineStore('agent', () => {
     reportHTML,
     isRunning,
     uploadedFiles,
+    token,
     sessionId,
     activeRunId,
     connectionState,
     user,
     workspace,
+    workspaces,
     addMessage,
     updateReport,
     setRunning,
     setSession,
     setIdentity,
+    setToken,
+    setWorkspaces,
     setConnectionState,
     startRun,
     finishRun,
     addFile,
     replaceFiles,
     resetAnalysis,
+    logout,
   }
 })

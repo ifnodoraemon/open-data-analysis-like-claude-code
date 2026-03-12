@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 type Identity struct {
@@ -26,11 +28,37 @@ func FromContext(ctx context.Context) (Identity, bool) {
 	return identity, ok
 }
 
-func Middleware(defaultIdentity Identity) func(http.Handler) http.Handler {
+func Middleware(tokenManager *TokenManager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := WithIdentity(r.Context(), defaultIdentity)
+			token := ""
+			authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+				token = strings.TrimSpace(authHeader[7:])
+			}
+			if token == "" {
+				token = strings.TrimSpace(r.URL.Query().Get("token"))
+			}
+			if token == "" || tokenManager == nil {
+				writeAuthError(w, http.StatusUnauthorized, "未登录")
+				return
+			}
+
+			identity, err := tokenManager.Parse(token)
+			if err != nil {
+				writeAuthError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			ctx := WithIdentity(r.Context(), identity)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func writeAuthError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": message,
+	})
 }
