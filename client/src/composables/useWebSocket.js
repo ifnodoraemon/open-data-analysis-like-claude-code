@@ -13,6 +13,36 @@ export function useWebSocket() {
     return store.token ? { Authorization: `Bearer ${store.token}` } : {}
   }
 
+  async function loadRunReport(runId) {
+    if (!runId) return
+    const res = await fetch(`/api/runs/${runId}/report`, {
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      if (res.status !== 404) {
+        throw new Error(await res.text())
+      }
+      return
+    }
+    const html = await res.text()
+    store.updateReport(html)
+  }
+
+  function restoreBootstrapState(data) {
+    const nextSessionId = data.session?.id || ''
+    store.setSession(nextSessionId)
+    store.setRuns(data.runs || [])
+
+    const latestRun = (data.runs || [])[0]
+    if (latestRun?.status === 'running') {
+      store.startRun(latestRun.id)
+      return latestRun
+    }
+
+    store.finishRun(store.activeRunId)
+    return latestRun
+  }
+
   async function bootstrap() {
     if (!store.token) {
       throw new Error('未登录')
@@ -29,6 +59,11 @@ export function useWebSocket() {
     const data = await res.json()
     store.setIdentity(data.user, data.workspace)
     store.setWorkspaces(data.workspaces || [])
+    const latestRun = restoreBootstrapState(data)
+    store.updateReport('')
+    if (latestRun?.reportFileId) {
+      await loadRunReport(latestRun.id)
+    }
   }
 
   function connect() {

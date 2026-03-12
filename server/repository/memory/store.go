@@ -3,7 +3,9 @@ package memory
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
 )
@@ -171,6 +173,29 @@ func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.Anal
 	return &copy, nil
 }
 
+func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, limit int) ([]domain.AnalysisRun, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	runs := make([]domain.AnalysisRun, 0, limit)
+	for _, run := range r.runs {
+		if run.SessionID == sessionID {
+			runs = append(runs, *run)
+		}
+	}
+	if len(runs) > 1 {
+		sort.Slice(runs, func(i, j int) bool {
+			return runs[i].CreatedAt.After(runs[j].CreatedAt)
+		})
+	}
+	if len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return runs, nil
+}
+
 func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg *string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -180,5 +205,20 @@ func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status d
 	}
 	run.Status = status
 	run.ErrorMessage = errMsg
+	if status == domain.RunStatusCompleted || status == domain.RunStatusCancelled || status == domain.RunStatusFailed {
+		now := time.Now()
+		run.FinishedAt = &now
+	}
+	return nil
+}
+
+func (r *RunRepository) BindReportFile(ctx context.Context, runID, reportFileID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[runID]
+	if !ok {
+		return fmt.Errorf("任务不存在: %s", runID)
+	}
+	run.ReportFileID = &reportFileID
 	return nil
 }

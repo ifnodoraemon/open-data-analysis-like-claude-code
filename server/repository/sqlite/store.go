@@ -204,6 +204,33 @@ func (r *SessionRepository) GetByID(ctx context.Context, sessionID string) (*dom
 	return &session, nil
 }
 
+func (r *SessionRepository) ListByUserWorkspace(ctx context.Context, userID, workspaceID string, limit int) ([]domain.Session, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id, workspace_id, user_id, title, status, last_run_id, created_at, updated_at, last_seen_at FROM sessions WHERE user_id = ? AND workspace_id = ? ORDER BY last_seen_at DESC, created_at DESC LIMIT ?`, userID, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := make([]domain.Session, 0, limit)
+	for rows.Next() {
+		var session domain.Session
+		var status string
+		var lastRun sql.NullString
+		if err := rows.Scan(&session.ID, &session.WorkspaceID, &session.UserID, &session.Title, &status, &lastRun, &session.CreatedAt, &session.UpdatedAt, &session.LastSeenAt); err != nil {
+			return nil, err
+		}
+		session.Status = domain.SessionStatus(status)
+		if lastRun.Valid {
+			session.LastRunID = &lastRun.String
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
 func (r *SessionRepository) UpdateLastSeen(ctx context.Context, sessionID string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ?, updated_at = ? WHERE id = ?`, time.Now(), time.Now(), sessionID)
 	return err
@@ -243,6 +270,43 @@ func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.Anal
 		run.FinishedAt = &finishedAt.Time
 	}
 	return &run, nil
+}
+
+func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, limit int) ([]domain.AnalysisRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := make([]domain.AnalysisRun, 0, limit)
+	for rows.Next() {
+		var run domain.AnalysisRun
+		var status string
+		var errMsg, reportID sql.NullString
+		var startedAt, finishedAt sql.NullTime
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
+			return nil, err
+		}
+		run.Status = domain.RunStatus(status)
+		if errMsg.Valid {
+			run.ErrorMessage = &errMsg.String
+		}
+		if reportID.Valid {
+			run.ReportFileID = &reportID.String
+		}
+		if startedAt.Valid {
+			run.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			run.FinishedAt = &finishedAt.Time
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
 }
 
 func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg *string) error {

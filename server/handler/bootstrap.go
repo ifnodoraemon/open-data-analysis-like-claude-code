@@ -32,6 +32,21 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		"workspaces": respWorkspaces,
 	}
 
+	sessions, err := sessionRepo.ListByUserWorkspace(r.Context(), identity.UserID, identity.WorkspaceID, 1)
+	if err == nil && len(sessions) > 0 {
+		latestSession := sessions[0]
+		resp["session"] = map[string]interface{}{
+			"id":         latestSession.ID,
+			"title":      latestSession.Title,
+			"lastRunId":  latestSession.LastRunID,
+			"lastSeenAt": latestSession.LastSeenAt,
+		}
+		runs, err := runRepo.ListBySession(r.Context(), latestSession.ID, 20)
+		if err == nil {
+			resp["runs"] = serializeRuns(runs)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

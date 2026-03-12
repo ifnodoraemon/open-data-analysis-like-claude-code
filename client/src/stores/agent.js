@@ -13,6 +13,7 @@ export const useAgentStore = defineStore('agent', () => {
   const user = ref(null)
   const workspace = ref(null)
   const workspaces = ref([])
+  const runs = ref([])
 
   function addMessage(msg) {
     messages.value.push({
@@ -56,6 +57,10 @@ export const useAgentStore = defineStore('agent', () => {
     workspaces.value = items
   }
 
+  function setRuns(items) {
+    runs.value = items || []
+  }
+
   function setConnectionState(state) {
     connectionState.value = state
   }
@@ -91,6 +96,7 @@ export const useAgentStore = defineStore('agent', () => {
     isRunning.value = false
     activeRunId.value = ''
     sessionId.value = ''
+    runs.value = []
     if (!keepFiles) {
       uploadedFiles.value = []
     }
@@ -117,6 +123,7 @@ export const useAgentStore = defineStore('agent', () => {
     user,
     workspace,
     workspaces,
+    runs,
     addMessage,
     updateReport,
     setRunning,
@@ -125,6 +132,7 @@ export const useAgentStore = defineStore('agent', () => {
     setWorkspace,
     setToken,
     setWorkspaces,
+    setRuns,
     setConnectionState,
     startRun,
     finishRun,

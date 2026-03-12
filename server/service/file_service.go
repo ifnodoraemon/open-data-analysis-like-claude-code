@@ -192,10 +192,31 @@ func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*
 	if err := s.FileRepo.Create(ctx, file); err != nil {
 		return nil, err
 	}
-	if err := s.FileRepo.AttachFilesToSession(ctx, in.SessionID, []string{file.ID}); err != nil {
-		return nil, err
-	}
 	return file, nil
+}
+
+func (s *FileService) OpenForDownload(ctx context.Context, userID, workspaceID, fileID string) (io.ReadCloser, *domain.File, error) {
+	ok, err := s.WorkspaceRepo.IsMember(ctx, workspaceID, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, nil, fmt.Errorf("用户无权访问工作区")
+	}
+
+	file, err := s.FileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if file.WorkspaceID != workspaceID {
+		return nil, nil, fmt.Errorf("文件不属于当前工作区")
+	}
+
+	reader, err := s.Storage.Get(ctx, file.StorageKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reader, file, nil
 }
 
 func sanitizeFilename(name string) string {
