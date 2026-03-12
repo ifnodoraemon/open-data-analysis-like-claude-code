@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/xuri/excelize/v2"
@@ -81,16 +82,8 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		sanitizedHeaders[i] = sanitizeColumnName(h)
 	}
 
-	// 创建表
-	if err := ing.createTable(tableName, sanitizedHeaders); err != nil {
-		return 0, 0, err
-	}
-
-	// 批量插入数据
-	rowCount := 0
-	batchSize := 500
-	var batch [][]string
-
+	// 读取全量数据（先缓存用于类型推断）
+	var allRows [][]string
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -99,19 +92,28 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		if err != nil {
 			continue // 跳过错误行
 		}
-		batch = append(batch, record)
-		if len(batch) >= batchSize {
-			if err := ing.insertBatch(tableName, sanitizedHeaders, batch); err != nil {
-				return rowCount, colCount, err
-			}
-			rowCount += len(batch)
-			batch = batch[:0]
-		}
+		allRows = append(allRows, record)
 	}
 
-	// 插入剩余数据
-	if len(batch) > 0 {
-		if err := ing.insertBatch(tableName, sanitizedHeaders, batch); err != nil {
+	// 类型推断（扫描前 100 行）
+	colTypes := inferColumnTypes(allRows, colCount)
+
+	// 创建表
+	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
+		return 0, 0, err
+	}
+
+	// 批量插入数据
+	rowCount := 0
+	batchSize := 500
+
+	for i := 0; i < len(allRows); i += batchSize {
+		end := i + batchSize
+		if end > len(allRows) {
+			end = len(allRows)
+		}
+		batch := allRows[i:end]
+		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
 			return rowCount, colCount, err
 		}
 		rowCount += len(batch)
@@ -147,52 +149,126 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 		sanitizedHeaders[i] = sanitizeColumnName(h)
 	}
 
+	// 数据行
+	dataRows := rows[1:]
+
+	// 补齐列数
+	normalizedRows := make([][]string, len(dataRows))
+	for j, row := range dataRows {
+		if len(row) < colCount {
+			padded := make([]string, colCount)
+			copy(padded, row)
+			normalizedRows[j] = padded
+		} else {
+			normalizedRows[j] = row[:colCount]
+		}
+	}
+
+	// 类型推断
+	colTypes := inferColumnTypes(normalizedRows, colCount)
+
 	// 创建表
-	if err := ing.createTable(tableName, sanitizedHeaders); err != nil {
+	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
 		return 0, 0, err
 	}
 
-	// 批量插入数据 (跳过表头)
-	dataRows := rows[1:]
+	// 批量插入
 	batchSize := 500
 	rowCount := 0
-
-	for i := 0; i < len(dataRows); i += batchSize {
+	for i := 0; i < len(normalizedRows); i += batchSize {
 		end := i + batchSize
-		if end > len(dataRows) {
-			end = len(dataRows)
+		if end > len(normalizedRows) {
+			end = len(normalizedRows)
 		}
-		batch := dataRows[i:end]
-
-		// 补齐列数
-		normalizedBatch := make([][]string, len(batch))
-		for j, row := range batch {
-			if len(row) < colCount {
-				padded := make([]string, colCount)
-				copy(padded, row)
-				normalizedBatch[j] = padded
-			} else {
-				normalizedBatch[j] = row[:colCount]
-			}
-		}
-
-		if err := ing.insertBatch(tableName, sanitizedHeaders, normalizedBatch); err != nil {
+		batch := normalizedRows[i:end]
+		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
 			return rowCount, colCount, err
 		}
-		rowCount += len(normalizedBatch)
+		rowCount += len(batch)
 	}
 
 	return rowCount, colCount, nil
 }
 
-// createTable 创建 SQLite 表
-func (ing *Ingester) createTable(tableName string, columns []string) error {
-	// 删除已存在的同名表
+// ColumnType 列类型
+type ColumnType int
+
+const (
+	TypeText    ColumnType = iota // 默认文本
+	TypeInteger                   // 整数
+	TypeReal                      // 浮点数
+)
+
+func (t ColumnType) SQLType() string {
+	switch t {
+	case TypeInteger:
+		return "INTEGER"
+	case TypeReal:
+		return "REAL"
+	default:
+		return "TEXT"
+	}
+}
+
+// inferColumnTypes 扫描前 N 行推断列类型
+func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
+	types := make([]ColumnType, colCount)
+
+	// 初始假设所有列是整数
+	for i := range types {
+		types[i] = TypeInteger
+	}
+
+	sampleSize := 100
+	if len(rows) < sampleSize {
+		sampleSize = len(rows)
+	}
+
+	for _, row := range rows[:sampleSize] {
+		for i := 0; i < colCount && i < len(row); i++ {
+			val := strings.TrimSpace(row[i])
+
+			// 空值不影响判断
+			if val == "" || val == "-" || val == "N/A" || val == "null" || val == "NULL" {
+				continue
+			}
+
+			switch types[i] {
+			case TypeInteger:
+				// 先尝试整数
+				if _, err := strconv.ParseInt(val, 10, 64); err != nil {
+					// 再尝试浮点
+					if _, err := strconv.ParseFloat(val, 64); err != nil {
+						types[i] = TypeText // 不是数字 → TEXT
+					} else {
+						types[i] = TypeReal // 是浮点 → REAL
+					}
+				}
+			case TypeReal:
+				// 已确定为浮点，检查是否还是数字
+				if _, err := strconv.ParseFloat(val, 64); err != nil {
+					types[i] = TypeText // 不是数字 → TEXT
+				}
+			case TypeText:
+				// 已确定为文本，不再变化
+			}
+		}
+	}
+
+	return types
+}
+
+// createTableTyped 创建带类型的 SQLite 表
+func (ing *Ingester) createTableTyped(tableName string, columns []string, types []ColumnType) error {
 	_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
 
 	var colDefs []string
-	for _, col := range columns {
-		colDefs = append(colDefs, fmt.Sprintf("\"%s\" TEXT", col))
+	for i, col := range columns {
+		sqlType := "TEXT"
+		if i < len(types) {
+			sqlType = types[i].SQLType()
+		}
+		colDefs = append(colDefs, fmt.Sprintf("\"%s\" %s", col, sqlType))
 	}
 
 	createSQL := fmt.Sprintf("CREATE TABLE \"%s\" (%s)", tableName, strings.Join(colDefs, ", "))
@@ -203,8 +279,8 @@ func (ing *Ingester) createTable(tableName string, columns []string) error {
 	return nil
 }
 
-// insertBatch 批量插入数据
-func (ing *Ingester) insertBatch(tableName string, columns []string, rows [][]string) error {
+// insertBatchTyped 批量插入（带类型转换）
+func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types []ColumnType, rows [][]string) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -234,10 +310,32 @@ func (ing *Ingester) insertBatch(tableName string, columns []string, rows [][]st
 	for _, row := range rows {
 		vals := make([]interface{}, len(columns))
 		for i := range columns {
-			if i < len(row) {
-				vals[i] = row[i]
+			if i >= len(row) || strings.TrimSpace(row[i]) == "" {
+				vals[i] = nil // 空值 → NULL
+				continue
+			}
+
+			val := strings.TrimSpace(row[i])
+
+			if i < len(types) {
+				switch types[i] {
+				case TypeInteger:
+					if v, err := strconv.ParseInt(val, 10, 64); err == nil {
+						vals[i] = v
+					} else {
+						vals[i] = val // fallback 到文本
+					}
+				case TypeReal:
+					if v, err := strconv.ParseFloat(val, 64); err == nil {
+						vals[i] = v
+					} else {
+						vals[i] = val
+					}
+				default:
+					vals[i] = val
+				}
 			} else {
-				vals[i] = ""
+				vals[i] = val
 			}
 		}
 		if _, err := stmt.Exec(vals...); err != nil {
