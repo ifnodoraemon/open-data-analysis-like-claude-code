@@ -119,28 +119,30 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("解析 Python 执行结果失败: %w", err)
 	}
 
-	// 格式化输出
-	var output strings.Builder
+	return formatPythonResult(result), nil
+}
+
+func formatPythonResult(result pyExecResponse) string {
+	payload := map[string]interface{}{
+		"duration_ms": result.DurationMs,
+		"stdout":      result.Stdout,
+		"stderr":      result.Stderr,
+		"files":       result.Files,
+	}
 	if result.Success {
-		output.WriteString("✅ 执行成功")
-	} else {
-		output.WriteString("❌ 执行失败")
-	}
-	output.WriteString(fmt.Sprintf(" (%dms)\n", result.DurationMs))
-
-	if result.Stdout != "" {
-		output.WriteString("\n📤 输出:\n")
-		output.WriteString(result.Stdout)
+		payload["summary_text"] = fmt.Sprintf("Python 执行成功 (%dms)", result.DurationMs)
+		return toolSuccess("run_python", payload)
 	}
 
-	if result.Error != nil && *result.Error != "" {
-		output.WriteString("\n⚠️ 错误:\n")
-		output.WriteString(*result.Error)
+	errorText := ""
+	if result.Error != nil {
+		errorText = strings.TrimSpace(*result.Error)
 	}
-
-	if len(result.Files) > 0 {
-		output.WriteString(fmt.Sprintf("\n📁 生成文件: %s", strings.Join(result.Files, ", ")))
+	if errorText == "" {
+		errorText = strings.TrimSpace(result.Stderr)
 	}
-
-	return output.String(), nil
+	payload["detail"] = errorText
+	payload["summary_text"] = fmt.Sprintf("Python 执行失败 (%dms)", result.DurationMs)
+	payload["next_action"] = "根据错误信息修正代码后再次调用 run_python"
+	return toolFailure("run_python", "execution_failed", "Python 执行失败", payload)
 }

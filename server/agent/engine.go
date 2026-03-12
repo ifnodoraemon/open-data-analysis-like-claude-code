@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,7 +144,7 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 		if len(choice.Message.ToolCalls) > 0 {
 			// 将 assistant 消息加入历史
 			e.mu.Lock()
-			e.messages = append(e.messages, choice.Message)
+			e.messages = append(e.messages, compactAssistantMessage(choice.Message))
 			e.mu.Unlock()
 
 			for _, toolCall := range choice.Message.ToolCalls {
@@ -162,10 +163,9 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 				result, execErr := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 				duration := time.Since(start).Milliseconds()
 
-				success := true
+				success := toolCallSucceeded(result, execErr)
 				if execErr != nil {
 					result = fmt.Sprintf("工具执行错误: %s", execErr.Error())
-					success = false
 					log.Printf("Tool %s error: %v", toolCall.Function.Name, execErr)
 				}
 
@@ -185,7 +185,7 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 				e.mu.Lock()
 				e.messages = append(e.messages, openai.ChatCompletionMessage{
 					Role:       openai.ChatMessageRoleTool,
-					Content:    result,
+					Content:    compactToolResult(toolCall.Function.Name, result),
 					ToolCallID: toolCall.ID,
 				})
 				e.mu.Unlock()
@@ -200,4 +200,137 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 	}
 
 	e.emit(WSEvent{Type: EventError, Data: ErrorData{Message: "达到最大迭代次数"}})
+}
+
+func compactAssistantMessage(message openai.ChatCompletionMessage) openai.ChatCompletionMessage {
+	if len(message.ToolCalls) == 0 {
+		return message
+	}
+
+	compacted := message
+	compacted.ToolCalls = make([]openai.ToolCall, 0, len(message.ToolCalls))
+	for _, toolCall := range message.ToolCalls {
+		next := toolCall
+		next.Function.Arguments = compactToolArguments(toolCall.Function.Name, toolCall.Function.Arguments)
+		compacted.ToolCalls = append(compacted.ToolCalls, next)
+	}
+	return compacted
+}
+
+func compactToolArguments(toolName, raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+
+	switch toolName {
+	case "create_chart":
+		var payload struct {
+			ChartID string `json:"chart_id"`
+			Title   string `json:"title"`
+			Option  any    `json:"option"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
+			summary, _ := json.Marshal(map[string]interface{}{
+				"chart_id":     payload.ChartID,
+				"title":        payload.Title,
+				"option_note":  "compacted_for_history",
+				"option_chars": len([]rune(raw)),
+			})
+			return string(summary)
+		}
+	case "write_section":
+		var payload struct {
+			SectionType string `json:"section_type"`
+			Title       string `json:"title"`
+			Content     string `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
+			summary, _ := json.Marshal(map[string]interface{}{
+				"section_type":  payload.SectionType,
+				"title":         payload.Title,
+				"content_note":  "compacted_for_history",
+				"content_chars": len([]rune(payload.Content)),
+				"content_head":  clipHistoryText(payload.Content, 120),
+			})
+			return string(summary)
+		}
+	case "finalize_report":
+		var payload struct {
+			ReportTitle string `json:"report_title"`
+			Author      string `json:"author"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
+			summary, _ := json.Marshal(map[string]interface{}{
+				"report_title": payload.ReportTitle,
+				"author":       payload.Author,
+			})
+			return string(summary)
+		}
+	}
+
+	return raw
+}
+
+func clipHistoryText(input string, max int) string {
+	input = strings.Join(strings.Fields(strings.TrimSpace(input)), " ")
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(input)
+	if len(runes) <= max {
+		return input
+	}
+	return string(runes[:max]) + "...(truncated)"
+}
+
+func compactToolResult(toolName, result string) string {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == "" {
+		return result
+	}
+
+	switch toolName {
+	case "query_data":
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			minified, _ := json.Marshal(payload)
+			return string(minified)
+		}
+	case "describe_data":
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			minified, _ := json.Marshal(payload)
+			return string(minified)
+		}
+	case "run_python":
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			minified, _ := json.Marshal(payload)
+			return string(minified)
+		}
+	case "list_tables":
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			minified, _ := json.Marshal(payload)
+			return string(minified)
+		}
+		return strings.Join(strings.Fields(trimmed), " ")
+	}
+
+	return result
+}
+
+func toolCallSucceeded(result string, execErr error) bool {
+	if execErr != nil {
+		return false
+	}
+
+	var payload struct {
+		OK *bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &payload); err == nil && payload.OK != nil {
+		return *payload.OK
+	}
+
+	return true
 }

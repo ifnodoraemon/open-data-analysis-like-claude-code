@@ -3,6 +3,8 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
 )
@@ -63,8 +65,15 @@ func (t *LoadDataTool) Execute(args json.RawMessage) (string, error) {
 		return "", err
 	}
 
-	result := fmt.Sprintf("数据已成功导入。文件: %s (%s), 表名: %s, 行数: %d, 列数: %d\n可使用 describe_data 查看表结构，或使用 query_data 执行 SQL 查询。", fileRef.DisplayName, fileRef.FileID, tableName, rowCount, colCount)
-	return result, nil
+	return toolSuccess("load_data", map[string]interface{}{
+		"file_id":      fileRef.FileID,
+		"display_name": fileRef.DisplayName,
+		"table_name":   tableName,
+		"row_count":    rowCount,
+		"column_count": colCount,
+		"summary_text": fmt.Sprintf("数据已成功导入到表 %s（%d 行，%d 列）", tableName, rowCount, colCount),
+		"next_action":  fmt.Sprintf("先调用 describe_data 查看 %s 的结构，再按需使用 query_data", tableName),
+	}), nil
 }
 
 // ListTablesTool 列出所有已导入的表
@@ -101,14 +110,21 @@ func (t *ListTablesTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	if len(tables) == 0 {
-		return "当前没有已导入的数据表。请先使用 load_data 加载数据文件。", nil
+		return toolSuccess("list_tables", map[string]interface{}{
+			"table_count":  0,
+			"tables":       []string{},
+			"empty":        true,
+			"next_action":  "先调用 load_data 导入文件，再继续 describe_data 或 query_data",
+			"summary_text": "当前没有已导入的数据表",
+		}), nil
 	}
 
-	result := fmt.Sprintf("已导入 %d 张表:\n", len(tables))
-	for _, t := range tables {
-		result += fmt.Sprintf("  - %s\n", t)
-	}
-	return result, nil
+	return toolSuccess("list_tables", map[string]interface{}{
+		"table_count":  len(tables),
+		"tables":       tables,
+		"empty":        false,
+		"summary_text": fmt.Sprintf("已导入 %d 张表", len(tables)),
+	}), nil
 }
 
 // DescribeDataTool 获取数据 Schema 和统计摘要
@@ -145,11 +161,20 @@ func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
 
 	schema, err := data.ExtractSchema(db, params.TableName)
 	if err != nil {
-		return "", err
+		return toolFailure("describe_data", "schema_lookup_failed", "读取表结构失败", map[string]interface{}{
+			"table_name":  params.TableName,
+			"detail":      err.Error(),
+			"next_action": "检查 table_name 是否正确，必要时先调用 list_tables",
+		}), nil
 	}
 
-	result, _ := json.MarshalIndent(schema, "", "  ")
-	return string(result), nil
+	return toolSuccess("describe_data", map[string]interface{}{
+		"table_name":   schema.TableName,
+		"row_count":    schema.RowCount,
+		"column_count": len(schema.Columns),
+		"schema":       schema,
+		"summary_text": fmt.Sprintf("表 %s 已完成 schema 分析，共 %d 列、%d 行", schema.TableName, len(schema.Columns), schema.RowCount),
+	}), nil
 }
 
 // QueryDataTool 执行 SQL 查询
@@ -186,11 +211,20 @@ func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
 
 	rows, err := data.ExecuteQuery(db, params.SQL)
 	if err != nil {
-		return "", err
+		return toolFailure("query_data", "query_failed", "SQL 执行失败", map[string]interface{}{
+			"sql":         params.SQL,
+			"detail":      err.Error(),
+			"next_action": "根据错误信息修正 SQL，继续使用单条只读 SELECT/WITH",
+		}), nil
 	}
 
-	result, _ := json.MarshalIndent(rows, "", "  ")
-	return string(result), nil
+	return toolSuccess("query_data", map[string]interface{}{
+		"sql":          params.SQL,
+		"row_count":    len(rows),
+		"columns":      queryResultColumns(rows),
+		"rows":         rows,
+		"summary_text": fmt.Sprintf("SQL 查询成功，返回 %d 行", len(rows)),
+	}), nil
 }
 
 // WriteSectionTool 向研报写入章节
@@ -237,7 +271,26 @@ func (t *WriteSectionTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.ReportState.Sections = append(t.ReportState.Sections, section)
-	return fmt.Sprintf("已添加章节: [%s] %s", section.Type, section.Title), nil
+	return toolSuccess("write_section", map[string]interface{}{
+		"section_type":  section.Type,
+		"title":         section.Title,
+		"content_chars": len([]rune(strings.TrimSpace(section.Content))),
+		"section_count": len(t.ReportState.Sections),
+		"summary_text":  fmt.Sprintf("已添加章节 [%s] %s", section.Type, section.Title),
+	}), nil
+}
+
+func queryResultColumns(rows []map[string]interface{}) []string {
+	if len(rows) == 0 {
+		return []string{}
+	}
+
+	columns := make([]string, 0, len(rows[0]))
+	for name := range rows[0] {
+		columns = append(columns, name)
+	}
+	sort.Strings(columns)
+	return columns
 }
 
 // FinalizeReportTool 生成最终报告
@@ -277,5 +330,11 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 
 	chartCount := len(t.ReportState.Charts)
 	sectionCount := len(t.ReportState.Sections)
-	return fmt.Sprintf("研究报告已生成完成（%d 个章节，%d 个交互式图表）", sectionCount, chartCount), nil
+	return toolSuccess("finalize_report", map[string]interface{}{
+		"report_title":  params.ReportTitle,
+		"author":        params.Author,
+		"section_count": sectionCount,
+		"chart_count":   chartCount,
+		"summary_text":  fmt.Sprintf("研究报告已生成完成（%d 个章节，%d 个交互式图表）", sectionCount, chartCount),
+	}), nil
 }

@@ -57,32 +57,14 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
-	// 验证 option 不为空 — 返回 success result 而非 error，确保 LLM 能看到提示并重试
 	if len(params.Option) == 0 || string(params.Option) == "null" || string(params.Option) == "{}" {
-		return fmt.Sprintf(`❌ 图表 [%s] 创建失败：缺少 option 参数。
-
-你必须在 option 中提供完整的 ECharts 配置对象（基于 query_data 的查询结果数据）。
-
-请重新调用 create_chart，参数格式如下：
-{
-  "chart_id": "%s",
-  "title": "%s",
-  "option": {
-    "title": {"text": "%s"},
-    "tooltip": {"trigger": "axis"},
-    "xAxis": {"type": "category", "data": ["填入实际数据"]},
-    "yAxis": {"type": "value"},
-    "series": [{"type": "bar", "data": [填入实际数据]}]
-  }
-}
-
-请根据之前 query_data 返回的数据填写 option 配置。`, params.ChartID, params.ChartID, params.Title, params.Title), nil
+		return chartValidationFeedback("missing_option", params.ChartID, params.Title, "option 必须是非空对象，且数据应来自之前的 query_data 结果", ""), nil
 	}
 
 	// 验证 option 是合法的 JSON 对象
 	var optionCheck map[string]interface{}
 	if err := json.Unmarshal(params.Option, &optionCheck); err != nil {
-		return fmt.Sprintf("❌ 图表 [%s] 创建失败：option 不是合法的 JSON 对象: %s。请修正 option 后重新调用。", params.ChartID, err.Error()), nil
+		return chartValidationFeedback("invalid_option", params.ChartID, params.Title, "option 必须是合法的 JSON 对象", err.Error()), nil
 	}
 
 	chart := ChartData{
@@ -94,5 +76,23 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 
 	t.ReportState.Charts = append(t.ReportState.Charts, chart)
 
-	return fmt.Sprintf("✅ 图表 [%s] '%s' 已创建成功。可在 write_section 的 content 中使用 {{chart:%s}} 来引用此图表。", params.ChartID, params.Title, params.ChartID), nil
+	return toolSuccess("create_chart", map[string]interface{}{
+		"chart_id":     params.ChartID,
+		"title":        params.Title,
+		"chart_ref":    "{{chart:" + params.ChartID + "}}",
+		"summary_text": fmt.Sprintf("图表 %s 已创建成功", params.ChartID),
+	}), nil
+}
+
+func chartValidationFeedback(code, chartID, title, message, detail string) string {
+	payload := map[string]interface{}{
+		"chart_id": chartID,
+		"title":    title,
+	}
+	if detail != "" {
+		payload["detail"] = detail
+	}
+	payload["required_fields"] = []string{"chart_id", "title", "option"}
+	payload["next_action"] = "根据已有查询结果修正参数后再次调用 create_chart"
+	return toolFailure("create_chart", code, message, payload)
 }
