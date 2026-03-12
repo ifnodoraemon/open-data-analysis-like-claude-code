@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
 )
 
@@ -95,6 +98,27 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			now := time.Now()
+			if err := runRepo.Create(r.Context(), &domain.AnalysisRun{
+				ID:           runID,
+				SessionID:    sess.ID,
+				WorkspaceID:  sess.WorkspaceID,
+				UserID:       identity.UserID,
+				Status:       domain.RunStatusRunning,
+				InputMessage: strings.TrimSpace(userMsg.Content),
+				StartedAt:    &now,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}); err != nil {
+				sess.CancelRun(runID)
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: "创建任务记录失败: " + err.Error()},
+				})
+				continue
+			}
+			_ = sessionRepo.UpdateLastRun(r.Context(), sess.ID, runID)
+
 			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 				Type: agent.EventRunStarted,
 				Data: agent.RunStartedData{RunID: runID},
@@ -115,10 +139,26 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 									},
 								})
 							case "finalize_report":
+								finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
+								if reportFile, err := fileService.SaveReportHTML(r.Context(), service.SaveReportInput{
+									UserID:      identity.UserID,
+									WorkspaceID: sess.WorkspaceID,
+									SessionID:   sess.ID,
+									RunID:       runID,
+									Title:       sess.ReportState.FinalTitle,
+									HTML:        finalHTML,
+								}); err == nil {
+									_ = runRepo.BindReportFile(r.Context(), runID, reportFile.ID)
+								} else {
+									sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+										Type: agent.EventError,
+										Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
+									})
+								}
 								sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 									Type: agent.EventReportFinal,
 									Data: agent.ReportUpdateData{
-										HTML: tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState),
+										HTML: finalHTML,
 									},
 								})
 							}
@@ -128,10 +168,18 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					switch ev.Type {
 					case agent.EventRunCompleted:
 						sess.FinishRun(runID, "completed")
+						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCompleted, nil)
 					case agent.EventRunCancelled:
 						sess.FinishRun(runID, "cancelled")
+						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCancelled, nil)
 					case agent.EventError:
 						sess.FinishRun(runID, "failed")
+						if errData, ok := ev.Data.(agent.ErrorData); ok {
+							msg := errData.Message
+							_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, &msg)
+						} else {
+							_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, nil)
+						}
 					}
 				}
 			}(runID)

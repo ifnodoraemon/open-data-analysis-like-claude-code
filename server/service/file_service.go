@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -123,6 +124,78 @@ func (s *FileService) MaterializeToTemp(ctx context.Context, fileID string) (str
 	}
 
 	return tempPath, file, nil
+}
+
+type SaveReportInput struct {
+	UserID      string
+	WorkspaceID string
+	SessionID   string
+	RunID       string
+	Title       string
+	HTML        string
+}
+
+func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*domain.File, error) {
+	ok, err := s.WorkspaceRepo.IsMember(ctx, in.WorkspaceID, in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("用户无权访问工作区")
+	}
+
+	fileID := "rep_" + in.RunID
+	displayName := sanitizeFilename(strings.TrimSpace(in.Title))
+	if displayName == "" || displayName == "upload.bin" {
+		displayName = "report-" + in.RunID
+	}
+	if filepath.Ext(displayName) != ".html" {
+		displayName += ".html"
+	}
+
+	body := []byte(in.HTML)
+	key := ReportHTMLKey(in.WorkspaceID, in.RunID)
+	obj, err := s.Storage.Put(ctx, storage.PutObjectRequest{
+		Key:         key,
+		Body:        bytes.NewReader(body),
+		Size:        int64(len(body)),
+		ContentType: "text/html; charset=utf-8",
+		Metadata: map[string]string{
+			"workspace_id": in.WorkspaceID,
+			"session_id":   in.SessionID,
+			"uploaded_by":  in.UserID,
+			"run_id":       in.RunID,
+			"file_id":      fileID,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	file := &domain.File{
+		ID:              fileID,
+		WorkspaceID:     in.WorkspaceID,
+		UploadedBy:      in.UserID,
+		DisplayName:     displayName,
+		ContentType:     obj.ContentType,
+		SizeBytes:       obj.Size,
+		StorageProvider: obj.Provider,
+		Bucket:          obj.Bucket,
+		StorageKey:      obj.Key,
+		Checksum:        obj.ETag,
+		Status:          domain.FileStatusReady,
+		Visibility:      domain.FileVisibilityPrivate,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := s.FileRepo.Create(ctx, file); err != nil {
+		return nil, err
+	}
+	if err := s.FileRepo.AttachFilesToSession(ctx, in.SessionID, []string{file.ID}); err != nil {
+		return nil, err
+	}
+	return file, nil
 }
 
 func sanitizeFilename(name string) string {

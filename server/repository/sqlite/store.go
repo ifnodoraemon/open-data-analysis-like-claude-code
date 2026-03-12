@@ -246,6 +246,19 @@ func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.Anal
 }
 
 func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg *string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE analysis_runs SET status = ?, error_message = ?, updated_at = ? WHERE id = ?`, string(status), errMsg, time.Now(), runID)
+	now := time.Now()
+	var finishedAt interface{}
+	switch status {
+	case domain.RunStatusCompleted, domain.RunStatusCancelled, domain.RunStatusFailed:
+		finishedAt = now
+	default:
+		finishedAt = nil
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE analysis_runs SET status = ?, error_message = ?, finished_at = COALESCE(?, finished_at), updated_at = ? WHERE id = ?`, string(status), errMsg, finishedAt, now, runID)
+	return err
+}
+
+func (r *RunRepository) BindReportFile(ctx context.Context, runID, reportFileID string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE analysis_runs SET report_file_id = ?, updated_at = ? WHERE id = ?`, reportFileID, time.Now(), runID)
 	return err
 }

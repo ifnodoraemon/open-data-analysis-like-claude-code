@@ -156,6 +156,27 @@ export function useWebSocket() {
     store.resetAnalysis({ keepFiles: false })
   }
 
+  async function switchWorkspace(workspaceId) {
+    const res = await fetch('/api/auth/switch-workspace', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ workspaceId }),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    const data = await res.json()
+    disconnect()
+    store.setToken(data.token)
+    store.setWorkspace(data.workspace)
+    store.resetAnalysis({ keepFiles: false })
+    await bootstrap()
+    connect()
+  }
+
   function disconnect() {
     clearTimeout(reconnectTimer)
     if (wsInstance) {
@@ -183,5 +204,5 @@ export function useWebSocket() {
     send('reset_session', { keepFiles })
   }
 
-  return { connected, bootstrap, connect, login, disconnect, sendMessage, stop, resetSession }
+  return { connected, bootstrap, connect, login, switchWorkspace, disconnect, sendMessage, stop, resetSession }
 }

@@ -3,7 +3,16 @@
     <div class="nav-left">
       <span class="logo">📊</span>
       <span class="title">数据分析智能体</span>
-      <span v-if="workspaceName" class="workspace-tag">{{ workspaceName }}</span>
+      <select
+        v-if="workspaceOptions.length > 0"
+        class="workspace-select"
+        :value="workspaceId"
+        @change="handleWorkspaceChange"
+      >
+        <option v-for="item in workspaceOptions" :key="item.id" :value="item.id">
+          {{ item.name }}
+        </option>
+      </select>
     </div>
     <div class="nav-center">
       <span class="status-dot" :class="connected ? 'online' : 'offline'"></span>
@@ -25,12 +34,23 @@ import { computed } from 'vue'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
-const { connected, resetSession, disconnect } = useWebSocket()
+const { connected, resetSession, disconnect, switchWorkspace } = useWebSocket()
 const store = useAgentStore()
-const workspaceName = computed(() => store.workspace?.name || '')
+const workspaceOptions = computed(() => store.workspaces || [])
+const workspaceId = computed(() => store.workspace?.id || '')
 
 function clearAll() {
   resetSession(true)
+}
+
+async function handleWorkspaceChange(event) {
+  const nextWorkspaceId = event.target.value
+  if (!nextWorkspaceId || nextWorkspaceId === workspaceId.value) return
+  try {
+    await switchWorkspace(nextWorkspaceId)
+  } catch (err) {
+    console.error('switch workspace failed:', err)
+  }
 }
 
 function logout() {
@@ -66,13 +86,14 @@ function logout() {
   color: var(--text-primary);
 }
 
-.workspace-tag {
+.workspace-select {
   font-size: 0.72rem;
   color: var(--text-secondary);
   background: var(--bg-card);
   border: 1px solid var(--border);
-  padding: 2px 8px;
+  padding: 4px 8px;
   border-radius: 999px;
+  outline: none;
 }
 
 .nav-center {

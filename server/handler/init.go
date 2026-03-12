@@ -23,6 +23,8 @@ var (
 	tokenManager    *auth.TokenManager
 	userRepo        repository.UserRepository
 	workspaceRepo   repository.WorkspaceRepository
+	runRepo         repository.RunRepository
+	sessionRepo     repository.SessionRepository
 )
 
 func Initialize() {
@@ -45,7 +47,8 @@ func Initialize() {
 	userRepo = sqliterepo.NewUserRepository(store.DB)
 	workspaceRepo = sqliterepo.NewWorkspaceRepository(store.DB)
 	fileRepo := sqliterepo.NewFileRepository(store.DB)
-	sessionRepo := sqliterepo.NewSessionRepository(store.DB)
+	sessionRepo = sqliterepo.NewSessionRepository(store.DB)
+	runRepo = sqliterepo.NewRunRepository(store.DB)
 
 	now := time.Now()
 	_ = userRepo.Create(context.Background(), &domain.User{

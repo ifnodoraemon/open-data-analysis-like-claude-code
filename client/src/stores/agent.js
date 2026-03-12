@@ -39,6 +39,10 @@ export const useAgentStore = defineStore('agent', () => {
     workspace.value = nextWorkspace
   }
 
+  function setWorkspace(nextWorkspace) {
+    workspace.value = nextWorkspace
+  }
+
   function setToken(nextToken) {
     token.value = nextToken
     if (nextToken) {
@@ -118,6 +122,7 @@ export const useAgentStore = defineStore('agent', () => {
     setRunning,
     setSession,
     setIdentity,
+    setWorkspace,
     setToken,
     setWorkspaces,
     setConnectionState,

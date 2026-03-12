@@ -17,6 +17,10 @@ type loginRequest struct {
 	WorkspaceID string `json:"workspaceId,omitempty"`
 }
 
+type switchWorkspaceRequest struct {
+	WorkspaceID string `json:"workspaceId"`
+}
+
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -100,4 +104,57 @@ func selectWorkspace(workspaces []domain.Workspace, workspaceID string) domain.W
 		}
 	}
 	return workspaces[0]
+}
+
+func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
+	identity, _ := auth.FromContext(r.Context())
+
+	var req switchWorkspaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.WorkspaceID) == "" {
+		http.Error(w, "workspaceId 不能为空", http.StatusBadRequest)
+		return
+	}
+
+	ok, err := workspaceRepo.IsMember(r.Context(), req.WorkspaceID, identity.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "无权访问该工作区", http.StatusForbidden)
+		return
+	}
+
+	workspace, err := workspaceRepo.GetByID(r.Context(), req.WorkspaceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	newIdentity := auth.Identity{
+		UserID:      identity.UserID,
+		UserName:    identity.UserName,
+		UserEmail:   identity.UserEmail,
+		WorkspaceID: workspace.ID,
+		Workspace:   workspace.Name,
+	}
+	token, err := tokenManager.Sign(newIdentity, 7*24*time.Hour)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"token": token,
+		"workspace": map[string]string{
+			"id":   workspace.ID,
+			"name": workspace.Name,
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }

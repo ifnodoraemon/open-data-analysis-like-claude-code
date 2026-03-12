@@ -38,6 +38,7 @@ func main() {
 	// 鉴权接口
 	r.Group(func(protected chi.Router) {
 		protected.Use(handler.AuthMiddleware)
+		protected.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
 		protected.Get("/api/bootstrap", handler.BootstrapHandler)
 		protected.Post("/api/upload", handler.UploadHandler)
 		protected.Get("/ws", handler.WSHandler)
