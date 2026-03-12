@@ -45,7 +45,7 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		resp["session"] = serializeSession(latestSession)
 		runs, err := runRepo.ListBySession(r.Context(), latestSession.ID, 20)
 		if err == nil {
-			resp["runs"] = serializeRuns(runs)
+			resp["runs"] = serializeRuns(r.Context(), runs)
 		}
 		files, err := fileService.GetSessionFiles(r.Context(), latestSession.ID)
 		if err == nil {

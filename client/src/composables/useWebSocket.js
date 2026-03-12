@@ -4,6 +4,9 @@ import { useAgentStore } from '../stores/agent'
 // 单例 WebSocket
 let wsInstance = null
 let reconnectTimer = null
+let connectPromise = null
+let bootstrapPromise = null
+let reconnectEnabled = false
 const connected = ref(false)
 
 export function useWebSocket() {
@@ -11,6 +14,11 @@ export function useWebSocket() {
 
   function authHeaders() {
     return store.token ? { Authorization: `Bearer ${store.token}` } : {}
+  }
+
+  function clearReconnectTimer() {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
   }
 
   async function loadRunReport(runId) {
@@ -84,6 +92,36 @@ export function useWebSocket() {
     }
   }
 
+  async function initializeApp() {
+    if (!store.token) {
+      throw new Error('未登录')
+    }
+    if (bootstrapPromise) {
+      return bootstrapPromise
+    }
+
+    const pending = (async () => {
+      store.setBootstrapState('loading')
+      try {
+        await bootstrap()
+        await connect()
+        store.setBootstrapState('ready')
+      } catch (err) {
+        disconnect()
+        const message = err instanceof Error ? err.message : '工作区恢复失败'
+        store.setBootstrapState('error', message)
+        throw err
+      } finally {
+        if (bootstrapPromise === pending) {
+          bootstrapPromise = null
+        }
+      }
+    })()
+
+    bootstrapPromise = pending
+    return pending
+  }
+
   async function createSession({ refreshSessions = true } = {}) {
     const res = await fetch('/api/sessions', {
       method: 'POST',
@@ -135,10 +173,13 @@ export function useWebSocket() {
     disconnect()
     const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [])
     store.updateReport('')
-    if (latestRun?.reportFileId) {
-      await loadRunReport(latestRun.id)
+    try {
+      if (latestRun?.reportFileId) {
+        await loadRunReport(latestRun.id)
+      }
+    } finally {
+      await connect()
     }
-    connect()
   }
 
   async function openRun(runId) {
@@ -169,9 +210,20 @@ export function useWebSocket() {
   }
 
   function connect() {
-    if (!store.token) return
-    if (wsInstance && [WebSocket.OPEN, WebSocket.CONNECTING].includes(wsInstance.readyState)) return
+    if (!store.token) {
+      return Promise.reject(new Error('未登录'))
+    }
+    if (wsInstance?.readyState === WebSocket.OPEN) {
+      reconnectEnabled = true
+      return Promise.resolve(wsInstance)
+    }
+    if (wsInstance?.readyState === WebSocket.CONNECTING && connectPromise) {
+      reconnectEnabled = true
+      return connectPromise
+    }
 
+    reconnectEnabled = true
+    clearReconnectTimer()
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const params = new URLSearchParams()
     if (store.sessionId) params.set('session_id', store.sessionId)
@@ -179,33 +231,83 @@ export function useWebSocket() {
     params.set('token', store.token)
     const sessionQuery = params.toString() ? `?${params.toString()}` : ''
     const url = `${protocol}//${location.host}/ws${sessionQuery}`
-    wsInstance = new WebSocket(url)
+    const socket = new WebSocket(url)
+    wsInstance = socket
     store.setConnectionState('connecting')
+    connected.value = false
 
-    wsInstance.onopen = () => {
-      connected.value = true
-      store.setConnectionState('connected')
-      console.log('WebSocket 已连接')
-    }
+    const pending = new Promise((resolve, reject) => {
+      let settled = false
 
-    wsInstance.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      handleEvent(data, store)
-    }
+      function resolveOnce(value) {
+        if (settled) return
+        settled = true
+        if (connectPromise === pending) {
+          connectPromise = null
+        }
+        resolve(value)
+      }
 
-    wsInstance.onclose = () => {
-      connected.value = false
-      wsInstance = null
-      store.setConnectionState('disconnected')
-      if (!store.token) return
-      console.log('WebSocket 断开，3 秒后重连...')
-      clearTimeout(reconnectTimer)
-      reconnectTimer = setTimeout(connect, 3000)
-    }
+      function rejectOnce(error) {
+        if (settled) return
+        settled = true
+        if (connectPromise === pending) {
+          connectPromise = null
+        }
+        reject(error)
+      }
 
-    wsInstance.onerror = (err) => {
-      console.error('WebSocket 错误:', err)
-    }
+      socket.onopen = () => {
+        if (wsInstance !== socket) {
+          resolveOnce(socket)
+          return
+        }
+        connected.value = true
+        store.setConnectionState('connected')
+        console.log('WebSocket 已连接')
+        resolveOnce(socket)
+      }
+
+      socket.onmessage = (event) => {
+        if (wsInstance !== socket) {
+          return
+        }
+        const data = JSON.parse(event.data)
+        handleEvent(data, store)
+      }
+
+      socket.onclose = () => {
+        if (wsInstance !== socket) {
+          rejectOnce(new Error('连接已被替换'))
+          return
+        }
+        wsInstance = null
+        connected.value = false
+        rejectOnce(new Error('WebSocket 连接已关闭'))
+        if (!store.token || !reconnectEnabled) {
+          store.setConnectionState('disconnected')
+          return
+        }
+        store.setConnectionState('reconnecting')
+        console.log('WebSocket 断开，3 秒后重连...')
+        clearReconnectTimer()
+        reconnectTimer = setTimeout(() => {
+          void connect().catch((err) => {
+            console.error('WebSocket 重连失败:', err)
+          })
+        }, 3000)
+      }
+
+      socket.onerror = (err) => {
+        if (wsInstance !== socket) {
+          return
+        }
+        console.error('WebSocket 错误:', err)
+      }
+    })
+
+    connectPromise = pending
+    return pending
   }
 
   function handleEvent(event, store) {
@@ -333,6 +435,7 @@ export function useWebSocket() {
     store.setWorkspaces(data.workspaces || [])
     store.resetAnalysis({ keepFiles: false })
     store.setSessions([])
+    store.setBootstrapState('idle')
   }
 
   async function switchWorkspace(workspaceId) {
@@ -353,32 +456,57 @@ export function useWebSocket() {
     store.setWorkspace(data.workspace)
     store.resetAnalysis({ keepFiles: false })
     store.setSessions([])
+    store.setBootstrapState('idle')
+    await initializeApp()
   }
 
   function disconnect() {
-    clearTimeout(reconnectTimer)
+    reconnectEnabled = false
+    clearReconnectTimer()
     if (wsInstance) {
-      wsInstance.close()
+      const socket = wsInstance
       wsInstance = null
+      socket.close()
     }
     connected.value = false
+    connectPromise = null
+    store.setConnectionState('disconnected')
   }
 
-  function sendMessage(content) {
+  async function ensureSocketOpen() {
+    if (wsInstance?.readyState === WebSocket.OPEN) {
+      return wsInstance
+    }
+    await connect()
     if (wsInstance?.readyState !== WebSocket.OPEN) {
-      store.addMessage({ type: 'error', content: '连接尚未建立，请稍后重试。' })
+      throw new Error('连接尚未建立，请稍后重试。')
+    }
+    return wsInstance
+  }
+
+  async function sendMessage(content) {
+    const value = String(content || '').trim()
+    if (!value) return
+
+    try {
+      await ensureSession()
+      await ensureSocketOpen()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '连接尚未建立，请稍后重试。'
+      store.addMessage({ type: 'error', content: message })
       return
     }
+
     store.setRunning(true)
-    store.addMessage({ type: 'user', content })
+    store.addMessage({ type: 'user', content: value })
     if (store.sessionId) {
       store.upsertSession({
         id: store.sessionId,
-        title: deriveSessionTitle(content),
+        title: deriveSessionTitle(value),
         lastSeenAt: new Date().toISOString(),
       })
     }
-    send('user_message', { content })
+    send('user_message', { content: value })
   }
 
   function stop() {
@@ -394,10 +522,10 @@ export function useWebSocket() {
     store.resetAnalysis({ keepFiles: false })
     store.updateReport('')
     await createSession({ refreshSessions: true })
-    connect()
+    await connect()
   }
 
-  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, openRun, downloadRunReport, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession }
+  return { connected, bootstrap, initializeApp, connect, login, switchWorkspace, loadSessions, openSession, openRun, downloadRunReport, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession }
 }
 
 function getDownloadFilename(contentDisposition) {

@@ -25,6 +25,7 @@ var (
 	workspaceRepo   repository.WorkspaceRepository
 	runRepo         repository.RunRepository
 	sessionRepo     repository.SessionRepository
+	reportRepo      repository.ReportRepository
 )
 
 func Initialize() {
@@ -47,6 +48,7 @@ func Initialize() {
 	userRepo = sqliterepo.NewUserRepository(store.DB)
 	workspaceRepo = sqliterepo.NewWorkspaceRepository(store.DB)
 	fileRepo := sqliterepo.NewFileRepository(store.DB)
+	reportRepo = sqliterepo.NewReportRepository(store.DB)
 	sessionRepo = sqliterepo.NewSessionRepository(store.DB)
 	runRepo = sqliterepo.NewRunRepository(store.DB)
 
@@ -79,6 +81,7 @@ func Initialize() {
 	fileService = &service.FileService{
 		Storage:       localstorage.New(config.Cfg.StorageRoot, ""),
 		FileRepo:      fileRepo,
+		ReportRepo:    reportRepo,
 		WorkspaceRepo: workspaceRepo,
 		TempDir:       config.Cfg.TempDir,
 	}

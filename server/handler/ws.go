@@ -155,7 +155,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 									SessionID:   sess.ID,
 									RunID:       runID,
 									Title:       sess.ReportState.FinalTitle,
+									Author:      sess.ReportState.FinalAuthor,
 									HTML:        finalHTML,
+									Snapshot:    buildReportSnapshot(sess.ReportState),
 								}); err == nil {
 									_ = runRepo.BindReportFile(r.Context(), runID, reportFile.ID)
 									log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
@@ -301,4 +303,38 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		log.Printf("发送事件失败: %v", err)
 	}
+}
+
+func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
+	snapshot := domain.ReportSnapshot{
+		Version:     "v1",
+		GeneratedAt: time.Now(),
+	}
+	if state == nil {
+		return snapshot
+	}
+
+	snapshot.Title = strings.TrimSpace(state.FinalTitle)
+	snapshot.Author = strings.TrimSpace(state.FinalAuthor)
+	if snapshot.Title == "" {
+		snapshot.Title = tools.ResolveReportTitle(state.Sections, "数据分析报告")
+	}
+	snapshot.Sections = make([]domain.ReportSnapshotSection, 0, len(state.Sections))
+	for _, section := range state.Sections {
+		snapshot.Sections = append(snapshot.Sections, domain.ReportSnapshotSection{
+			Type:    section.Type,
+			Title:   section.Title,
+			Content: section.Content,
+		})
+	}
+	snapshot.Charts = make([]domain.ReportSnapshotChart, 0, len(state.Charts))
+	for _, chart := range state.Charts {
+		snapshot.Charts = append(snapshot.Charts, domain.ReportSnapshotChart{
+			ID:     chart.ID,
+			Option: chart.Option,
+			Width:  chart.Width,
+			Height: chart.Height,
+		})
+	}
+	return snapshot
 }

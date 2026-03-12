@@ -91,9 +91,9 @@ async function handleFile(e) {
   }
 }
 
-function handleSend() {
+async function handleSend() {
   if (!input.value.trim() || isRunning.value) return
-  sendMessage(input.value.trim())
+  await sendMessage(input.value.trim())
   input.value = ''
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,100 +16,126 @@ import (
 )
 
 var llmDebugWriter = &debugWriter{
-	runSequence:    make(map[string]int),
-	lastRunTraceID: make(map[string]string),
-	traceMetaReady: make(map[string]bool),
+	traceSpanSequence: make(map[string]int),
+	traceMetaReady:    make(map[string]bool),
+	spanMetaReady:     make(map[string]bool),
 }
 
-type TraceInfo struct {
-	Date          string
-	TraceID       string
-	ParentTraceID string
-	Sequence      int
-	WorkspaceID   string
-	SessionID     string
-	RunID         string
+type SpanInfo struct {
+	Date         string
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	Sequence     int
+	Kind         string
+	Name         string
+	WorkspaceID  string
+	SessionID    string
+	RunID        string
+	ToolCallID   string
 }
 
 type debugWriter struct {
-	mu             sync.Mutex
-	runSequence    map[string]int
-	lastRunTraceID map[string]string
-	traceMetaReady map[string]bool
+	mu                sync.Mutex
+	traceSpanSequence map[string]int
+	traceMetaReady    map[string]bool
+	spanMetaReady     map[string]bool
 }
 
-func (w *debugWriter) StartTrace(meta TraceMetadata) TraceInfo {
+func (w *debugWriter) StartSpan(meta TraceMetadata, kind, name, parentSpanID, toolCallID string) SpanInfo {
 	if !config.Cfg.LLMDebug {
-		return TraceInfo{}
+		return SpanInfo{}
 	}
 
 	now := time.Now()
-	info := TraceInfo{
-		Date:        now.Format("2006-01-02"),
-		WorkspaceID: meta.WorkspaceID,
-		SessionID:   meta.SessionID,
-		RunID:       meta.RunID,
+	traceID := strings.TrimSpace(meta.TraceID)
+	if traceID == "" {
+		if meta.RunID != "" {
+			traceID = meta.RunID
+		} else {
+			traceID = fmt.Sprintf("trace-%s-%s", now.Format("150405.000000000"), uuid.NewString()[:8])
+		}
+	}
+	spanKind := sanitizeTracePart(kind)
+	if spanKind == "" {
+		spanKind = "span"
+	}
+
+	info := SpanInfo{
+		Date:         now.Format("2006-01-02"),
+		TraceID:      traceID,
+		ParentSpanID: strings.TrimSpace(parentSpanID),
+		Kind:         spanKind,
+		Name:         strings.TrimSpace(name),
+		WorkspaceID:  meta.WorkspaceID,
+		SessionID:    meta.SessionID,
+		RunID:        meta.RunID,
+		ToolCallID:   strings.TrimSpace(toolCallID),
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if meta.RunID != "" {
-		info.Sequence = w.runSequence[meta.RunID] + 1
-		w.runSequence[meta.RunID] = info.Sequence
-		info.ParentTraceID = w.lastRunTraceID[meta.RunID]
-		info.TraceID = fmt.Sprintf("%s-llm-%03d", meta.RunID, info.Sequence)
-		w.lastRunTraceID[meta.RunID] = info.TraceID
-		return info
-	}
-
-	info.TraceID = fmt.Sprintf("%s-%s", now.Format("150405.000000000"), uuid.NewString()[:8])
+	info.Sequence = w.traceSpanSequence[traceID] + 1
+	w.traceSpanSequence[traceID] = info.Sequence
+	info.SpanID = fmt.Sprintf("%s-%s-%03d", traceID, spanKind, info.Sequence)
 	return info
 }
 
-func (w *debugWriter) WriteRecord(trace TraceInfo, event string, payload map[string]interface{}) {
-	if !config.Cfg.LLMDebug || trace.TraceID == "" {
+func (w *debugWriter) WriteEvent(span SpanInfo, eventName string, payload map[string]interface{}) {
+	if !config.Cfg.LLMDebug || span.TraceID == "" || span.SpanID == "" {
 		return
 	}
 
 	record := map[string]interface{}{
-		"ts":              time.Now().Format(time.RFC3339Nano),
-		"trace_id":        trace.TraceID,
-		"parent_trace_id": trace.ParentTraceID,
-		"sequence":        trace.Sequence,
-		"workspace_id":    trace.WorkspaceID,
-		"session_id":      trace.SessionID,
-		"run_id":          trace.RunID,
-		"event":           event,
-		"data":            payload,
+		"type":           "event",
+		"ts":             time.Now().Format(time.RFC3339Nano),
+		"trace_id":       span.TraceID,
+		"span_id":        span.SpanID,
+		"parent_span_id": span.ParentSpanID,
+		"sequence":       span.Sequence,
+		"span_kind":      span.Kind,
+		"span_name":      span.Name,
+		"workspace_id":   span.WorkspaceID,
+		"session_id":     span.SessionID,
+		"run_id":         span.RunID,
+		"tool_call_id":   span.ToolCallID,
+		"event": map[string]interface{}{
+			"name": eventName,
+			"data": payload,
+		},
 	}
 	line, err := json.Marshal(record)
 	if err != nil {
 		return
 	}
 
-	dailyPath := filepath.Join(config.Cfg.LLMDebugDir, trace.Date, "index.jsonl")
-	tracePath := filepath.Join(config.Cfg.LLMDebugDir, trace.Date, trace.TraceID, "index.jsonl")
+	dailyPath := filepath.Join(config.Cfg.LLMDebugDir, span.Date, "events.jsonl")
+	tracePath := filepath.Join(config.Cfg.LLMDebugDir, span.Date, span.TraceID, "events.jsonl")
+	spanPath := filepath.Join(config.Cfg.LLMDebugDir, span.Date, span.TraceID, "spans", span.SpanID, "events.jsonl")
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	w.ensureTraceMetaLocked(trace)
+	w.ensureTraceMetaLocked(span)
+	w.ensureSpanMetaLocked(span)
 	_ = appendJSONL(dailyPath, line)
 	_ = appendJSONL(tracePath, line)
+	_ = appendJSONL(spanPath, line)
 }
 
-func (w *debugWriter) WriteBlob(trace TraceInfo, name string, payload []byte) string {
-	if !config.Cfg.LLMDebug || trace.TraceID == "" {
+func (w *debugWriter) WriteBlob(span SpanInfo, name string, payload []byte) string {
+	if !config.Cfg.LLMDebug || span.TraceID == "" || span.SpanID == "" {
 		return ""
 	}
 
-	path := filepath.Join(config.Cfg.LLMDebugDir, trace.Date, trace.TraceID, name)
+	path := filepath.Join(config.Cfg.LLMDebugDir, span.Date, span.TraceID, "spans", span.SpanID, name)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	w.ensureTraceMetaLocked(trace)
+	w.ensureTraceMetaLocked(span)
+	w.ensureSpanMetaLocked(span)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return ""
 	}
@@ -132,33 +159,81 @@ func appendJSONL(path string, line []byte) error {
 	return err
 }
 
-func (w *debugWriter) ensureTraceMetaLocked(trace TraceInfo) {
-	if trace.TraceID == "" || w.traceMetaReady[trace.TraceID] {
+func (w *debugWriter) ensureTraceMetaLocked(span SpanInfo) {
+	if span.TraceID == "" || w.traceMetaReady[span.TraceID] {
 		return
 	}
 
 	meta := map[string]interface{}{
-		"trace_id":        trace.TraceID,
-		"parent_trace_id": trace.ParentTraceID,
-		"sequence":        trace.Sequence,
-		"workspace_id":    trace.WorkspaceID,
-		"session_id":      trace.SessionID,
-		"run_id":          trace.RunID,
-		"date":            trace.Date,
-		"created_at":      time.Now().Format(time.RFC3339Nano),
+		"type":         "trace",
+		"trace_id":     span.TraceID,
+		"workspace_id": span.WorkspaceID,
+		"session_id":   span.SessionID,
+		"run_id":       span.RunID,
+		"date":         span.Date,
+		"created_at":   time.Now().Format(time.RFC3339Nano),
 	}
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return
 	}
-	metaPath := filepath.Join(config.Cfg.LLMDebugDir, trace.Date, trace.TraceID, "meta.json")
+	metaPath := filepath.Join(config.Cfg.LLMDebugDir, span.Date, span.TraceID, "trace.json")
 	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
 		return
 	}
 	if err := os.WriteFile(metaPath, metaBytes, 0o644); err != nil {
 		return
 	}
-	w.traceMetaReady[trace.TraceID] = true
+	w.traceMetaReady[span.TraceID] = true
+}
+
+func (w *debugWriter) ensureSpanMetaLocked(span SpanInfo) {
+	if span.SpanID == "" || w.spanMetaReady[span.SpanID] {
+		return
+	}
+
+	meta := map[string]interface{}{
+		"type":           "span",
+		"trace_id":       span.TraceID,
+		"span_id":        span.SpanID,
+		"parent_span_id": span.ParentSpanID,
+		"sequence":       span.Sequence,
+		"kind":           span.Kind,
+		"name":           span.Name,
+		"workspace_id":   span.WorkspaceID,
+		"session_id":     span.SessionID,
+		"run_id":         span.RunID,
+		"tool_call_id":   span.ToolCallID,
+		"created_at":     time.Now().Format(time.RFC3339Nano),
+	}
+	metaBytes, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return
+	}
+	metaPath := filepath.Join(config.Cfg.LLMDebugDir, span.Date, span.TraceID, "spans", span.SpanID, "span.json")
+	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
+		return
+	}
+	if err := os.WriteFile(metaPath, metaBytes, 0o644); err != nil {
+		return
+	}
+	w.spanMetaReady[span.SpanID] = true
+}
+
+func sanitizeTracePart(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", "_", "-")
+	value = replacer.Replace(value)
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func blobSHA256(payload []byte) string {

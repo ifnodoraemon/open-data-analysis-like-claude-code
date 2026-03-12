@@ -92,9 +92,9 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 		return nil, fmt.Errorf("序列化 Responses 请求失败: %w", err)
 	}
 	start := time.Now()
-	trace := llmDebugWriter.StartTrace(TraceMetadataFromContext(ctx))
-	requestPath := llmDebugWriter.WriteBlob(trace, "request.json", reqBytes)
-	l.debugLog(trace, "llm.request", map[string]interface{}{
+	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
+	requestPath := llmDebugWriter.WriteBlob(span, "request.json", reqBytes)
+	l.debugLog(span, "llm.request", map[string]interface{}{
 		"provider":          l.provider,
 		"model":             l.model,
 		"endpoint":          endpoint,
@@ -123,8 +123,8 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		responsePath := llmDebugWriter.WriteBlob(trace, "response.error.txt", body)
-		l.debugLog(trace, "llm.error", map[string]interface{}{
+		responsePath := llmDebugWriter.WriteBlob(span, "response.error.txt", body)
+		l.debugLog(span, "llm.error", map[string]interface{}{
 			"status":          resp.StatusCode,
 			"duration_ms":     time.Since(start).Milliseconds(),
 			"error_preview":   clipText(string(body), 500),
@@ -139,13 +139,13 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 	if err != nil {
 		return nil, fmt.Errorf("读取 Responses 响应失败: %w", err)
 	}
-	responsePath := llmDebugWriter.WriteBlob(trace, "response.json", respBytes)
+	responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
 
 	var apiResp responsesAPIResponse
 	if err := json.Unmarshal(respBytes, &apiResp); err != nil {
 		return nil, fmt.Errorf("解析 Responses 响应失败: %w", err)
 	}
-	l.debugLog(trace, "llm.response", map[string]interface{}{
+	l.debugLog(span, "llm.response", map[string]interface{}{
 		"duration_ms":     time.Since(start).Milliseconds(),
 		"output_preview":  clipText(apiResp.OutputText, 300),
 		"output_chars":    len([]rune(apiResp.OutputText)),
@@ -289,7 +289,7 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 				},
 			})
 		default:
-			l.debugLog(TraceInfo{}, "llm.output_item", map[string]interface{}{
+			l.debugLog(SpanInfo{}, "llm.output_item", map[string]interface{}{
 				"type": item.Type,
 				"name": item.Name,
 				"id":   item.ID,
@@ -303,8 +303,8 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 	}
 }
 
-func (l *LLMClient) debugLog(trace TraceInfo, event string, payload map[string]interface{}) {
-	llmDebugWriter.WriteRecord(trace, event, payload)
+func (l *LLMClient) debugLog(span SpanInfo, event string, payload map[string]interface{}) {
+	llmDebugWriter.WriteEvent(span, event, payload)
 }
 
 func summarizeTools(tools []openai.Tool) []string {
@@ -389,7 +389,7 @@ func anthropicToolNames(content []anthropic.MessageContent) []string {
 
 // chatAnthropic Anthropic 格式调用，转换为统一的 OpenAI 格式返回
 func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
-	trace := llmDebugWriter.StartTrace(TraceMetadataFromContext(ctx))
+	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
 
 	// 转换 messages: OpenAI → Anthropic 格式
 	var systemPrompt string
@@ -469,8 +469,8 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCom
 	}
 	reqBytes, err := json.Marshal(req)
 	if err == nil {
-		requestPath := llmDebugWriter.WriteBlob(trace, "request.json", reqBytes)
-		l.debugLog(trace, "llm.request", map[string]interface{}{
+		requestPath := llmDebugWriter.WriteBlob(span, "request.json", reqBytes)
+		l.debugLog(span, "llm.request", map[string]interface{}{
 			"provider":          l.provider,
 			"model":             l.model,
 			"endpoint":          config.Cfg.LLMAPIEndpoint,
@@ -488,15 +488,15 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCom
 
 	resp, err := l.anthropicClient.CreateMessages(ctx, req)
 	if err != nil {
-		l.debugLog(trace, "llm.error", map[string]interface{}{
+		l.debugLog(span, "llm.error", map[string]interface{}{
 			"duration_ms":   time.Since(start).Milliseconds(),
 			"error_preview": clipText(err.Error(), 500),
 		})
 		return nil, fmt.Errorf("Anthropic API 调用失败: %w", err)
 	}
 	if respBytes, marshalErr := json.Marshal(resp); marshalErr == nil {
-		responsePath := llmDebugWriter.WriteBlob(trace, "response.json", respBytes)
-		l.debugLog(trace, "llm.response", map[string]interface{}{
+		responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
+		l.debugLog(span, "llm.response", map[string]interface{}{
 			"duration_ms":     time.Since(start).Milliseconds(),
 			"output_preview":  clipText(firstAnthropicText(resp.Content), 300),
 			"output_chars":    len([]rune(firstAnthropicText(resp.Content))),

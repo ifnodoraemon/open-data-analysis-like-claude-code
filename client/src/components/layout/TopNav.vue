@@ -16,7 +16,7 @@
     </div>
     <div class="nav-center">
       <span class="status-dot" :class="connected ? 'online' : 'offline'"></span>
-      <span class="status-text">{{ connected ? '已连接' : '连接中...' }}</span>
+      <span class="status-text">{{ statusText }}</span>
     </div>
     <div class="nav-right">
       <button class="nav-btn" @click="clearAll" title="新建分析">
@@ -38,6 +38,18 @@ const { connected, createNewSession, disconnect, switchWorkspace } = useWebSocke
 const store = useAgentStore()
 const workspaceOptions = computed(() => store.workspaces || [])
 const workspaceId = computed(() => store.workspace?.id || '')
+const statusText = computed(() => {
+  switch (store.connectionState) {
+    case 'connected':
+      return '已连接'
+    case 'reconnecting':
+      return '重连中...'
+    case 'disconnected':
+      return '未连接'
+    default:
+      return '连接中...'
+  }
+})
 
 function clearAll() {
   createNewSession()

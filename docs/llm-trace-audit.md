@@ -67,9 +67,9 @@ system prompt 里有一些规则在多个段落重复表达，例如图表章节
 - `write_section` 只保留 `section_type`、`title`、`content_chars` 和前缀摘要
 - `finalize_report` 只保留标题和作者
 
-### 2. LLM trace 索引降噪
+### 2. LLM trace 事件索引降噪
 
-`index.jsonl` 现在主要保留摘要字段：
+`events.jsonl` 现在主要保留摘要字段：
 
 - message/tool 数量
 - 用户输入摘要
@@ -77,7 +77,7 @@ system prompt 里有一些规则在多个段落重复表达，例如图表章节
 - sha256
 - 文件路径
 
-原始 request/response 仍在对应 trace 目录中单独落盘。
+原始 request/response 仍在对应 `trace/spans/*` 目录中单独落盘。
 
 ### 3. 运行日志降噪
 

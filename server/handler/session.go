@@ -60,7 +60,7 @@ func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"session": serializeSession(*session),
 		"files":   respFiles,
-		"runs":    serializeRuns(runs),
+		"runs":    serializeRuns(r.Context(), runs),
 	})
 }
 

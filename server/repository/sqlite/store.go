@@ -11,12 +11,14 @@ import (
 type UserRepository struct{ db *sql.DB }
 type WorkspaceRepository struct{ db *sql.DB }
 type FileRepository struct{ db *sql.DB }
+type ReportRepository struct{ db *sql.DB }
 type SessionRepository struct{ db *sql.DB }
 type RunRepository struct{ db *sql.DB }
 
 func NewUserRepository(db *sql.DB) *UserRepository           { return &UserRepository{db: db} }
 func NewWorkspaceRepository(db *sql.DB) *WorkspaceRepository { return &WorkspaceRepository{db: db} }
 func NewFileRepository(db *sql.DB) *FileRepository           { return &FileRepository{db: db} }
+func NewReportRepository(db *sql.DB) *ReportRepository       { return &ReportRepository{db: db} }
 func NewSessionRepository(db *sql.DB) *SessionRepository     { return &SessionRepository{db: db} }
 func NewRunRepository(db *sql.DB) *RunRepository             { return &RunRepository{db: db} }
 
@@ -183,6 +185,21 @@ func (r *FileRepository) AttachFilesToSession(ctx context.Context, sessionID str
 		}
 	}
 	return nil
+}
+
+func (r *ReportRepository) Create(ctx context.Context, report *domain.Report) error {
+	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO reports (id, run_id, workspace_id, title, author, html_storage_provider, html_bucket, html_storage_key, snapshot_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		report.ID, report.RunID, report.WorkspaceID, report.Title, report.Author, report.HTMLStorageProvider, report.HTMLBucket, report.HTMLStorageKey, report.SnapshotJSON, report.CreatedAt)
+	return err
+}
+
+func (r *ReportRepository) GetByRunID(ctx context.Context, runID string) (*domain.Report, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT id, run_id, workspace_id, title, author, html_storage_provider, html_bucket, html_storage_key, snapshot_json, created_at FROM reports WHERE run_id = ?`, runID)
+	var report domain.Report
+	if err := row.Scan(&report.ID, &report.RunID, &report.WorkspaceID, &report.Title, &report.Author, &report.HTMLStorageProvider, &report.HTMLBucket, &report.HTMLStorageKey, &report.SnapshotJSON, &report.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &report, nil
 }
 
 func (r *SessionRepository) Create(ctx context.Context, session *domain.Session) error {

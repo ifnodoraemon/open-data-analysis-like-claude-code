@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,7 @@ type UploadFileInput struct {
 type FileService struct {
 	Storage       storage.ObjectStorage
 	FileRepo      repository.FileRepository
+	ReportRepo    repository.ReportRepository
 	WorkspaceRepo repository.WorkspaceRepository
 	TempDir       string
 }
@@ -133,7 +135,9 @@ type SaveReportInput struct {
 	SessionID   string
 	RunID       string
 	Title       string
+	Author      string
 	HTML        string
+	Snapshot    domain.ReportSnapshot
 }
 
 func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*domain.File, error) {
@@ -194,6 +198,34 @@ func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*
 	if err := s.FileRepo.Create(ctx, file); err != nil {
 		return nil, err
 	}
+
+	if s.ReportRepo != nil {
+		snapshotJSON, err := json.Marshal(in.Snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("序列化报告快照失败: %w", err)
+		}
+		report := &domain.Report{
+			ID:                  "report_" + in.RunID,
+			RunID:               in.RunID,
+			WorkspaceID:         in.WorkspaceID,
+			Title:               strings.TrimSpace(in.Snapshot.Title),
+			Author:              strings.TrimSpace(in.Snapshot.Author),
+			HTMLStorageProvider: obj.Provider,
+			HTMLBucket:          obj.Bucket,
+			HTMLStorageKey:      obj.Key,
+			SnapshotJSON:        string(snapshotJSON),
+			CreatedAt:           now,
+		}
+		if report.Title == "" {
+			report.Title = strings.TrimSpace(in.Title)
+		}
+		if report.Author == "" {
+			report.Author = strings.TrimSpace(in.Author)
+		}
+		if err := s.ReportRepo.Create(ctx, report); err != nil {
+			return nil, fmt.Errorf("保存报告元数据失败: %w", err)
+		}
+	}
 	return file, nil
 }
 
@@ -219,6 +251,17 @@ func (s *FileService) OpenForDownload(ctx context.Context, userID, workspaceID, 
 		return nil, nil, err
 	}
 	return reader, file, nil
+}
+
+func (s *FileService) OpenStoredObject(ctx context.Context, userID, workspaceID, storageKey string) (io.ReadCloser, error) {
+	ok, err := s.WorkspaceRepo.IsMember(ctx, workspaceID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("用户无权访问工作区")
+	}
+	return s.Storage.Get(ctx, storageKey)
 }
 
 func sanitizeFilename(name string) string {

@@ -97,10 +97,21 @@ type FileRepository struct {
 	sessions map[string][]string
 }
 
+type ReportRepository struct {
+	mu      sync.Mutex
+	reports map[string]*domain.Report
+}
+
 func NewFileRepository() *FileRepository {
 	return &FileRepository{
 		files:    make(map[string]*domain.File),
 		sessions: make(map[string][]string),
+	}
+}
+
+func NewReportRepository() *ReportRepository {
+	return &ReportRepository{
+		reports: make(map[string]*domain.Report),
 	}
 }
 
@@ -143,6 +154,25 @@ func (r *FileRepository) AttachFilesToSession(ctx context.Context, sessionID str
 
 	r.sessions[sessionID] = append(r.sessions[sessionID], fileIDs...)
 	return nil
+}
+
+func (r *ReportRepository) Create(ctx context.Context, report *domain.Report) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *report
+	r.reports[report.RunID] = &copy
+	return nil
+}
+
+func (r *ReportRepository) GetByRunID(ctx context.Context, runID string) (*domain.Report, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	report, ok := r.reports[runID]
+	if !ok {
+		return nil, fmt.Errorf("报告不存在: %s", runID)
+	}
+	copy := *report
+	return &copy, nil
 }
 
 type RunRepository struct {

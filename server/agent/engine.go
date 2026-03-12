@@ -148,6 +148,14 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 			e.mu.Unlock()
 
 			for _, toolCall := range choice.Message.ToolCalls {
+				toolSpan := llmDebugWriter.StartSpan(
+					TraceMetadataFromContext(ctx),
+					"tool",
+					toolCall.Function.Name,
+					"",
+					toolCall.ID,
+				)
+
 				// 通知前端: 工具调用
 				e.emit(WSEvent{
 					Type: EventToolCall,
@@ -156,6 +164,14 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 						Name:      toolCall.Function.Name,
 						Arguments: json.RawMessage(toolCall.Function.Arguments),
 					},
+				})
+				argPath := llmDebugWriter.WriteBlob(toolSpan, "arguments.json", []byte(toolCall.Function.Arguments))
+				llmDebugWriter.WriteEvent(toolSpan, "tool.call", map[string]interface{}{
+					"tool_name":        toolCall.Function.Name,
+					"tool_call_id":     toolCall.ID,
+					"arguments_path":   argPath,
+					"arguments_bytes":  len([]byte(toolCall.Function.Arguments)),
+					"arguments_sha256": blobSHA256([]byte(toolCall.Function.Arguments)),
 				})
 
 				// 执行工具
@@ -168,6 +184,19 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 					result = fmt.Sprintf("工具执行错误: %s", execErr.Error())
 					log.Printf("Tool %s error: %v", toolCall.Function.Name, execErr)
 				}
+				resultBytes := []byte(result)
+				resultPath := llmDebugWriter.WriteBlob(toolSpan, "result.txt", resultBytes)
+				llmDebugWriter.WriteEvent(toolSpan, "tool.result", map[string]interface{}{
+					"tool_name":       toolCall.Function.Name,
+					"tool_call_id":    toolCall.ID,
+					"duration_ms":     duration,
+					"success":         success,
+					"result_preview":  clipText(result, 300),
+					"result_bytes":    len(resultBytes),
+					"result_sha256":   blobSHA256(resultBytes),
+					"result_path":     resultPath,
+					"execution_error": errorString(execErr),
+				})
 
 				// 通知前端: 工具结果
 				e.emit(WSEvent{
@@ -200,6 +229,13 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 	}
 
 	e.emit(WSEvent{Type: EventError, Data: ErrorData{Message: "达到最大迭代次数"}})
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func compactAssistantMessage(message openai.ChatCompletionMessage) openai.ChatCompletionMessage {

@@ -1,5 +1,12 @@
 <template>
   <div v-if="isRestoring" class="app-loading">正在恢复工作区...</div>
+  <div v-else-if="hasRestoreError" class="app-loading error-state">
+    <div class="error-card">
+      <p>工作区恢复失败</p>
+      <p class="error-message">{{ restoreError }}</p>
+      <button class="retry-btn" type="button" @click="retryInit">重试</button>
+    </div>
+  </div>
   <LoginScreen v-else-if="!isAuthenticated" />
   <div v-else class="app">
     <TopNav />
@@ -22,13 +29,14 @@ import ReportPreview from './components/report/ReportPreview.vue'
 import InputBar from './components/layout/InputBar.vue'
 import LoginScreen from './components/auth/LoginScreen.vue'
 
-const { bootstrap, connect } = useWebSocket()
+const { initializeApp } = useWebSocket()
 const store = useAgentStore()
 const leftWidth = ref(45)
 const isDragging = ref(false)
-const isRestoring = ref(false)
 const isAuthenticated = computed(() => !!store.token && !!store.user)
-let initPromise = null
+const isRestoring = computed(() => store.bootstrapState === 'loading')
+const hasRestoreError = computed(() => store.bootstrapState === 'error' && !!store.token)
+const restoreError = computed(() => store.bootstrapError || '请稍后重试。')
 
 onMounted(() => {
   if (store.token) {
@@ -40,23 +48,18 @@ watch(() => store.token, (nextToken, prevToken) => {
   if (nextToken && nextToken !== prevToken) {
     void initApp()
   } else if (!nextToken) {
-    isRestoring.value = false
+    store.setBootstrapState('idle')
   }
 })
 
 function initApp() {
-  if (initPromise) return initPromise
-  isRestoring.value = !store.user
-  initPromise = bootstrap()
-    .then(() => connect())
-    .catch((err) => {
-      console.error('bootstrap failed:', err)
-    })
-    .finally(() => {
-      isRestoring.value = false
-      initPromise = null
-    })
-  return initPromise
+  return initializeApp().catch((err) => {
+    console.error('bootstrap failed:', err)
+  })
+}
+
+function retryInit() {
+  void initApp()
 }
 
 function startDrag(e) {
@@ -90,6 +93,35 @@ function startDrag(e) {
   background: var(--bg-primary);
   color: var(--text-secondary);
   letter-spacing: 0.04em;
+}
+
+.error-state {
+  padding: 24px;
+}
+
+.error-card {
+  max-width: 420px;
+  padding: 20px 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  text-align: center;
+}
+
+.error-message {
+  margin: 12px 0 0;
+  color: var(--accent-red);
+  line-height: 1.5;
+}
+
+.retry-btn {
+  margin-top: 16px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent-blue);
+  border-radius: 8px;
+  background: var(--accent-blue);
+  color: white;
+  cursor: pointer;
 }
 
 .app {

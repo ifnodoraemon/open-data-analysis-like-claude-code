@@ -113,6 +113,18 @@ func (s *Store) migrate() error {
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS reports (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL UNIQUE,
+			workspace_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			author TEXT NOT NULL DEFAULT '',
+			html_storage_provider TEXT NOT NULL,
+			html_bucket TEXT NOT NULL DEFAULT '',
+			html_storage_key TEXT NOT NULL,
+			snapshot_json TEXT NOT NULL,
+			created_at DATETIME NOT NULL
+		)`,
 	}
 
 	for _, stmt := range stmts {

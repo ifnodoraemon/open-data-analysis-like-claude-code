@@ -34,7 +34,12 @@ const { downloadRunReport } = useWebSocket()
 const reportHTML = computed(() => store.reportHTML)
 const selectedRun = computed(() => store.runs.find(run => run.id === store.selectedRunId) || null)
 const activeRun = computed(() => store.runs.find(run => run.id === store.activeRunId) || null)
+const selectedReport = computed(() => selectedRun.value?.report || null)
 const runMetaLabel = computed(() => {
+  if (selectedReport.value?.title) {
+    const suffix = selectedReport.value.author ? ` · ${selectedReport.value.author}` : ''
+    return `${selectedReport.value.title}${suffix}`
+  }
   if (selectedRun.value?.id && activeRun.value?.id && selectedRun.value.id !== activeRun.value.id) {
     return `当前查看历史任务 ${selectedRun.value.id}`
   }

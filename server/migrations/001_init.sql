@@ -85,10 +85,10 @@ create table analysis_runs (
 
 create table reports (
   id varchar(64) primary key,
-  run_id varchar(64) not null references analysis_runs(id),
+  run_id varchar(64) not null unique references analysis_runs(id),
   workspace_id varchar(64) not null references workspaces(id),
   title varchar(255) not null,
-  author varchar(255),
+  author varchar(255) not null default '',
   html_storage_provider varchar(64) not null,
   html_bucket varchar(255),
   html_storage_key text not null,

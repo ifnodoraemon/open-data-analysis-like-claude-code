@@ -10,7 +10,9 @@ export const useAgentStore = defineStore('agent', () => {
   const sessionId = ref('')
   const activeRunId = ref('')
   const selectedRunId = ref('')
-  const connectionState = ref('connecting')
+  const connectionState = ref('disconnected')
+  const bootstrapState = ref('idle')
+  const bootstrapError = ref('')
   const user = ref(null)
   const workspace = ref(null)
   const workspaces = ref([])
@@ -95,6 +97,11 @@ export const useAgentStore = defineStore('agent', () => {
     connectionState.value = state
   }
 
+  function setBootstrapState(state, error = '') {
+    bootstrapState.value = state
+    bootstrapError.value = error
+  }
+
   function startRun(runId) {
     activeRunId.value = runId
     selectedRunId.value = runId
@@ -142,6 +149,8 @@ export const useAgentStore = defineStore('agent', () => {
     sessions.value = []
     resetAnalysis({ keepFiles: false })
     connectionState.value = 'disconnected'
+    bootstrapState.value = 'idle'
+    bootstrapError.value = ''
   }
 
   return {
@@ -154,6 +163,8 @@ export const useAgentStore = defineStore('agent', () => {
     activeRunId,
     selectedRunId,
     connectionState,
+    bootstrapState,
+    bootstrapError,
     user,
     workspace,
     workspaces,
@@ -173,6 +184,7 @@ export const useAgentStore = defineStore('agent', () => {
     setRuns,
     upsertRun,
     setConnectionState,
+    setBootstrapState,
     startRun,
     finishRun,
     addFile,
