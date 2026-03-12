@@ -21,8 +21,9 @@
         v-for="run in runs"
         :key="run.id"
         class="run-chip"
-        :class="{ active: run.id === activeRunId }"
+        :class="{ active: run.id === selectedRunId }"
         type="button"
+        @click="handleRunClick(run.id)"
       >
         <span class="run-status" :class="'status-' + run.status"></span>
         <span class="run-label">{{ truncate(run.summary || run.inputMessage || run.id, 28) }}</span>
@@ -128,12 +129,12 @@ import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
 const store = useAgentStore()
-const { openSession } = useWebSocket()
+const { openSession, openRun } = useWebSocket()
 const messages = computed(() => store.messages)
 const isRunning = computed(() => store.isRunning)
 const sessions = computed(() => store.sessions || [])
 const runs = computed(() => store.runs || [])
-const activeRunId = computed(() => store.activeRunId)
+const selectedRunId = computed(() => store.selectedRunId)
 const currentSessionId = computed(() => store.sessionId || '')
 const messagesEl = ref(null)
 
@@ -167,6 +168,15 @@ async function handleSessionChange(event) {
     await openSession(sessionId)
   } catch (err) {
     console.error('open session failed:', err)
+  }
+}
+
+async function handleRunClick(runId) {
+  if (!runId || runId === selectedRunId.value) return
+  try {
+    await openRun(runId)
+  } catch (err) {
+    console.error('open run failed:', err)
   }
 }
 </script>

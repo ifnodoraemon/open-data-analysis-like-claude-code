@@ -9,6 +9,7 @@ export const useAgentStore = defineStore('agent', () => {
   const token = ref(localStorage.getItem('oda_token') || '')
   const sessionId = ref('')
   const activeRunId = ref('')
+  const selectedRunId = ref('')
   const connectionState = ref('connecting')
   const user = ref(null)
   const workspace = ref(null)
@@ -34,6 +35,10 @@ export const useAgentStore = defineStore('agent', () => {
 
   function setSession(id) {
     sessionId.value = id
+  }
+
+  function setSelectedRun(runId) {
+    selectedRunId.value = runId || ''
   }
 
   function setIdentity(nextUser, nextWorkspace) {
@@ -92,6 +97,7 @@ export const useAgentStore = defineStore('agent', () => {
 
   function startRun(runId) {
     activeRunId.value = runId
+    selectedRunId.value = runId
     isRunning.value = true
   }
 
@@ -120,6 +126,7 @@ export const useAgentStore = defineStore('agent', () => {
     reportHTML.value = ''
     isRunning.value = false
     activeRunId.value = ''
+    selectedRunId.value = ''
     sessionId.value = ''
     runs.value = []
     if (!keepFiles) {
@@ -145,6 +152,7 @@ export const useAgentStore = defineStore('agent', () => {
     token,
     sessionId,
     activeRunId,
+    selectedRunId,
     connectionState,
     user,
     workspace,
@@ -155,6 +163,7 @@ export const useAgentStore = defineStore('agent', () => {
     updateReport,
     setRunning,
     setSession,
+    setSelectedRun,
     setIdentity,
     setWorkspace,
     setToken,

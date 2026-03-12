@@ -35,10 +35,12 @@ export function useWebSocket() {
     store.setRuns(runs || [])
 
     const latestRun = (runs || [])[0]
+    store.setSelectedRun(latestRun?.id || '')
     if (latestRun?.status === 'running') {
       store.startRun(latestRun.id)
     } else {
       store.finishRun()
+      store.setSelectedRun(latestRun?.id || '')
     }
     return latestRun
   }
@@ -105,6 +107,13 @@ export function useWebSocket() {
       await loadRunReport(latestRun.id)
     }
     connect()
+  }
+
+  async function openRun(runId) {
+    if (!runId) return
+    store.setSelectedRun(runId)
+    store.updateReport('')
+    await loadRunReport(runId)
   }
 
   function connect() {
@@ -201,9 +210,12 @@ export function useWebSocket() {
         })
         break
       case 'report_update':
-        store.updateReport(event.data.html)
+        if (!store.selectedRunId || store.selectedRunId === event.runId) {
+          store.updateReport(event.data.html)
+        }
         break
       case 'report_final':
+        store.setSelectedRun(event.runId)
         store.updateReport(event.data.html)
         if (event.data.title && store.sessionId) {
           store.upsertSession({
@@ -325,5 +337,5 @@ export function useWebSocket() {
     send('reset_session', { keepFiles })
   }
 
-  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, disconnect, sendMessage, stop, resetSession }
+  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, openRun, disconnect, sendMessage, stop, resetSession }
 }
