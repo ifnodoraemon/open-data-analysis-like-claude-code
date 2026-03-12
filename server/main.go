@@ -40,6 +40,8 @@ func main() {
 		protected.Use(handler.AuthMiddleware)
 		protected.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
 		protected.Get("/api/bootstrap", handler.BootstrapHandler)
+		protected.Get("/api/sessions", handler.ListSessionsHandler)
+		protected.Get("/api/sessions/{sessionID}", handler.GetSessionHandler)
 		protected.Get("/api/runs", handler.ListRunsHandler)
 		protected.Get("/api/runs/{runID}", handler.GetRunHandler)
 		protected.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)

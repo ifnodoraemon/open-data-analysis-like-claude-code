@@ -13,6 +13,7 @@ export const useAgentStore = defineStore('agent', () => {
   const user = ref(null)
   const workspace = ref(null)
   const workspaces = ref([])
+  const sessions = ref([])
   const runs = ref([])
 
   function addMessage(msg) {
@@ -54,7 +55,21 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function setWorkspaces(items) {
-    workspaces.value = items
+    workspaces.value = items || []
+  }
+
+  function setSessions(items) {
+    sessions.value = items || []
+  }
+
+  function upsertSession(session) {
+    if (!session?.id) return
+    const index = sessions.value.findIndex(item => item.id === session.id)
+    if (index >= 0) {
+      sessions.value.splice(index, 1, { ...sessions.value[index], ...session })
+      return
+    }
+    sessions.value.unshift(session)
   }
 
   function setRuns(items) {
@@ -107,6 +122,7 @@ export const useAgentStore = defineStore('agent', () => {
     user.value = null
     workspace.value = null
     workspaces.value = []
+    sessions.value = []
     resetAnalysis({ keepFiles: false })
     connectionState.value = 'disconnected'
   }
@@ -123,6 +139,7 @@ export const useAgentStore = defineStore('agent', () => {
     user,
     workspace,
     workspaces,
+    sessions,
     runs,
     addMessage,
     updateReport,
@@ -132,6 +149,8 @@ export const useAgentStore = defineStore('agent', () => {
     setWorkspace,
     setToken,
     setWorkspaces,
+    setSessions,
+    upsertSession,
     setRuns,
     setConnectionState,
     startRun,

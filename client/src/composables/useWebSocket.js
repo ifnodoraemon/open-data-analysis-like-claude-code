@@ -28,19 +28,25 @@ export function useWebSocket() {
     store.updateReport(html)
   }
 
-  function restoreBootstrapState(data) {
-    const nextSessionId = data.session?.id || ''
-    store.setSession(nextSessionId)
-    store.setRuns(data.runs || [])
+  function applySessionState(sessionId, files, runs) {
+    store.resetAnalysis({ keepFiles: false })
+    store.setSession(sessionId || '')
+    store.replaceFiles(files || [])
+    store.setRuns(runs || [])
 
-    const latestRun = (data.runs || [])[0]
+    const latestRun = (runs || [])[0]
     if (latestRun?.status === 'running') {
       store.startRun(latestRun.id)
-      return latestRun
+    } else {
+      store.finishRun()
     }
-
-    store.finishRun(store.activeRunId)
     return latestRun
+  }
+
+  function restoreBootstrapState(data) {
+    const nextSessionId = data.session?.id || ''
+    store.setSessions(data.sessions || [])
+    return applySessionState(nextSessionId, data.files || [], data.runs || [])
   }
 
   async function bootstrap() {
@@ -64,6 +70,35 @@ export function useWebSocket() {
     if (latestRun?.reportFileId) {
       await loadRunReport(latestRun.id)
     }
+  }
+
+  async function loadSessions() {
+    const res = await fetch('/api/sessions', {
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    const data = await res.json()
+    store.setSessions(data.sessions || [])
+    return data.sessions || []
+  }
+
+  async function openSession(sessionId) {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    const data = await res.json()
+    disconnect()
+    const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [])
+    store.updateReport('')
+    if (latestRun?.reportFileId) {
+      await loadRunReport(latestRun.id)
+    }
+    connect()
   }
 
   function connect() {
@@ -118,6 +153,11 @@ export function useWebSocket() {
       case 'session_ready':
         store.setSession(event.data.sessionId)
         store.replaceFiles(event.data.files || [])
+        store.upsertSession({
+          id: event.data.sessionId,
+          title: '未命名分析',
+          lastSeenAt: new Date().toISOString(),
+        })
         break
       case 'session_reset':
         store.resetAnalysis({ keepFiles: event.data.keepFiles })
@@ -239,5 +279,5 @@ export function useWebSocket() {
     send('reset_session', { keepFiles })
   }
 
-  return { connected, bootstrap, connect, login, switchWorkspace, disconnect, sendMessage, stop, resetSession }
+  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, disconnect, sendMessage, stop, resetSession }
 }

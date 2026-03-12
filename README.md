@@ -1,194 +1,223 @@
-# 📊 数据分析智能体 (Open Data Analysis)
+# Open Data Analysis / 数据分析智能体
 
-> 类似 Claude Code 的交互式数据分析 — 上传数据，AI 自主分析，生成带交互图表的专业研报
+Interactive, Claude-Code-style data analysis for tabular files. Upload CSV or Excel data, let the agent inspect and query it, then generate a report with interactive charts.
 
-## 技术栈
+面向表格数据的交互式智能分析工具，交互方式类似 Claude Code。上传 CSV 或 Excel 文件后，Agent 会自主检查、查询、分析数据，并生成带交互图表的研报。
 
-| 层 | 技术 |
-|---|------|
-| **前端** | Vue 3 + Vite + Pinia |
-| **后端** | Go (Chi + Gorilla WebSocket) |
-| **LLM** | OpenAI / Anthropic 双格式兼容 |
-| **数据** | Excel/CSV → SQLite → Text-to-SQL |
-| **图表** | ECharts 5 (交互式) |
-| **部署** | Docker + Docker Compose |
+## Highlights / 功能概览
 
-## Agent 工作流
+- Agent-driven workflow with tool calling, not a fixed DAG
+- Workspace-aware auth, sessions, runs, and file ownership
+- Real-time WebSocket execution stream plus resumable run/report state
+- Local object storage abstraction with clean migration path to S3-compatible backends
+- Vue 3 frontend, Go backend, SQLite metadata + SQLite analysis scratch DB
 
-**我们的 Agent 是动态的（类 Claude Code），不是预定义的固定工作流。**
+- Agent 自主决定工具调用顺序，不是硬编码 DAG
+- 已支持工作区、会话、任务、文件归属和鉴权
+- 通过 WebSocket 实时推送执行过程，并支持恢复最近一次 run/report
+- 已抽象对象存储接口，当前默认本地存储，后续可切 S3 兼容实现
+- 前端使用 Vue 3，后端使用 Go，当前运行时采用 SQLite 元数据库 + SQLite 分析工作库
 
-LLM 拥有 7 个工具，在每一轮自主决定调用哪个工具、以什么参数调用、是否需要继续分析。没有硬编码的步骤顺序 —— Agent 会根据数据的实际情况动态调整策略：
+## Current Architecture / 当前架构
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  System Prompt (角色定义 + 工具说明 + 分析原则)           │
-└────────────────────────┬────────────────────────────────┘
-                         │
-  用户: "分析这份销售数据"  │  + 文件上下文: [sales.csv]
-                         ▼
-              ┌──────────────────┐
-              │   Agent Loop     │  ← 最多 25 轮
-              │  (动态决策)       │
-              └────────┬─────────┘
-                       │
-         LLM 每轮自主选择 ↓
-    ┌─────────────────────────────────────┐
-    │                                     │
-    │   load_data    → 导入数据到 SQLite   │
-    │   list_tables  → 查看已有表          │
-    │   describe_data→ 查看 Schema+统计    │
-    │   query_data   → 执行 SQL 分析       │  ← LLM 动态决定
-    │   create_chart → 生成 ECharts 图表   │     调用顺序和参数
-    │   write_section→ 撰写研报章节        │
-    │   finalize_report → 生成最终研报     │
-    │                                     │
-    └─────────────┬───────────────────────┘
-                  │
-                  ▼
-        工具结果 → 追加到消息历史
-                  │
-                  ▼
-          LLM 观察结果 → 决定下一步
-                  │
-          ┌───────┴───────┐
-          │               │
-     继续调用工具     回复用户(结束)
-```
+### Runtime data layers / 运行时数据分层
 
-### 动态 vs 固定工作流
+1. Metadata SQLite
+   Stores users, workspaces, memberships, sessions, files, and analysis runs.
 
-| 对比维度 | 固定工作流 (DAG) | 我们的方案 (动态 ReAct) |
-|---------|-----------------|----------------------|
-| 执行顺序 | 预定义 A→B→C→D | LLM 每轮自主决策 |
-| 分支条件 | 硬编码 if/else | LLM 根据观察结果判断 |
-| 错误处理 | 预设兜底逻辑 | LLM 读取错误后自主修正 |
-| 灵活性 | 低 — 新场景需改代码 | 高 — 自动适应不同数据 |
-| 可控性 | 高 — 完全可预测 | 中 — 受 Prompt 约束 |
+1. 元数据 SQLite
+   存储用户、工作区、成员关系、会话、文件元数据和分析任务。
 
-### 一次典型执行示例
+2. Session analysis SQLite
+   Each session gets its own scratch database for imported CSV/Excel data and SQL analysis.
 
-```
-轮次  LLM 决策                    工具              结果
-──────────────────────────────────────────────────────────
- 1    "先加载数据"                load_data         → 表名: sales, 3000行×8列
- 2    "看看数据结构"              describe_data     → 列: date/region/product/amount...
- 3    "按区域汇总"                query_data        → [{华东:1.2M},{华南:890K}...]
- 4    "做个柱状图"                create_chart      → chart_region_sales
- 5    "按月看趋势"                query_data        → [{1月:200K},{2月:350K}...]
- 6    "做个折线图"                create_chart      → chart_monthly_trend
- 7    "写执行摘要"                write_section     → [summary] 已添加
- 8    "写区域分析章节"             write_section     → [analysis] + {{chart:chart_region_sales}}
- 9    "写趋势分析章节"             write_section     → [analysis] + {{chart:chart_monthly_trend}}
-10    "写结论"                    write_section     → [conclusion] 已添加
-11    "生成报告"                  finalize_report   → HTML 研报 (含交互图表)
-```
+2. 会话分析 SQLite
+   每个 session 都有自己的分析工作库，用于导入 CSV/Excel 并执行 SQL 查询。
 
-> 注意：以上步骤不是硬编码的。如果数据有异常（如大量缺失值），Agent 会自动插入额外的数据质量检查步骤。
+PostgreSQL is not enabled in runtime yet. The repository keeps the domain boundaries and schema direction ready for a future migration, but the current product uses SQLite in production code paths.
 
-## 系统架构
+目前运行时还没有接入 PostgreSQL。仓库已经保留了未来迁移所需的领域边界和 schema 方向，但当前产品代码路径仍然使用 SQLite。
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Vue 3 Frontend                           │
-│  ┌──────────┐  ┌──────────────┐  ┌───────────────────────┐  │
-│  │ InputBar │  │ AgentPanel   │  │ ReportPreview         │  │
-│  │ 提示词模板│  │ 思考/工具/结果│  │ iframe + ECharts 渲染  │  │
-│  └────┬─────┘  └──────▲───────┘  └──────────▲────────────┘  │
-│       │               │                     │               │
-│       └───── WebSocket (单例) ──── Pinia Store ──────────────┘
-│                    │         ▲
-└────────────────────┼─────────┼──────────────────────────────┘
-                     │         │ 6 种事件类型
-                     ▼         │
-┌────────────────────────────────────────────────────────────┐
-│                     Go Backend                             │
-│  ┌──────────┐  ┌───────────────┐  ┌─────────────────────┐  │
-│  │ Chi 路由  │  │ WS Handler    │  │ Upload Handler      │  │
-│  │ CORS     │  │ Session UUID  │  │ POST /api/upload    │  │
-│  └──────────┘  │ Engine 复用   │  └─────────────────────┘  │
-│                └───────┬───────┘                           │
-│                        │                                   │
-│  ┌─────────────────────▼───────────────────────────────┐   │
-│  │              Agent Engine (动态 ReAct 循环)           │   │
-│  │  messages[] ←→ LLM API ←→ Tool Registry             │   │
-│  └─────────────────────┬───────────────────────────────┘   │
-│                        │                                   │
-│  ┌─────────────────────▼───────────────────────────────┐   │
-│  │  load_data │ describe │ query │ chart │ write │ final│   │
-│  └─────────────────────┬───────────────────────────────┘   │
-│                        │                                   │
-│  ┌─────────────────────▼───────────────────────────────┐   │
-│  │   SQLite (ingester.go + schema.go)                   │   │
-│  │   CSV/Excel → 批量导入 → SQL 查询引擎                 │   │
-│  └─────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────┘
-                     │
-                     ▼
-          OpenAI / Anthropic API
+### Storage / 存储
+
+The application does not bind business logic to MinIO. Files are addressed by `file_id`, and the backend resolves them through the storage abstraction.
+
+应用没有把业务逻辑绑定到 MinIO。文件对外只暴露 `file_id`，后端通过存储抽象解析实际对象位置。
+
+Current default implementation:
+
+当前默认实现：
+
+- Provider: local filesystem
+- Upload object key: `workspaces/{workspace_id}/files/{file_id}/source/{filename}`
+- Report object key: `workspaces/{workspace_id}/runs/{run_id}/report/report.html`
+
+- Provider：本地文件系统
+- 上传文件对象 key：`workspaces/{workspace_id}/files/{file_id}/source/{filename}`
+- 报告对象 key：`workspaces/{workspace_id}/runs/{run_id}/report/report.html`
+
+## Tech Stack / 技术栈
+
+| Layer | Stack |
+|---|---|
+| Frontend | Vue 3, Vite, Pinia |
+| Backend | Go, Chi, Gorilla WebSocket |
+| Agent | Tool-calling ReAct loop |
+| Data ingestion | CSV / Excel -> SQLite |
+| Charts | ECharts 5 |
+| Storage | Local object storage abstraction |
+| Deployment | Docker, Docker Compose |
+
+## Agent Workflow / Agent 工作流
+
+The agent is dynamic. It observes tool results, decides the next step, and stops when it has enough evidence to answer or finalize a report.
+
+Agent 是动态决策的。它会观察工具结果，自主决定下一步要做什么，在证据充分时结束分析或生成最终报告。
+
+Available core tools:
+
+当前核心工具：
+
+- `load_data`
+- `list_tables`
+- `describe_data`
+- `query_data`
+- `create_chart`
+- `write_section`
+- `finalize_report`
+- `run_python`
+
+## Authentication / 鉴权
+
+The backend now runs in authenticated mode. Except for `/api/auth/login` and `/api/health`, APIs require a valid token.
+
+后端当前运行在鉴权模式下。除 `/api/auth/login` 和 `/api/health` 外，其余接口都要求携带有效 token。
+
+Default admin credentials are configured through environment variables, not hardcoded in business logic.
+
+默认管理员账号通过环境变量配置，不写死在业务逻辑中。
+
+Example defaults in `server/.env.example`:
+
+`server/.env.example` 中的默认示例：
+
+```env
+DEFAULT_USER_ID=admin
+DEFAULT_USER_EMAIL=admin
+DEFAULT_USER_NAME=Administrator
+DEFAULT_USER_PASSWORD=admin@123
+DEFAULT_WORKSPACE_ID=default
+DEFAULT_WORKSPACE_NAME=Default Workspace
+AUTH_SECRET=change-me
 ```
 
-## 快速开始
+## Quick Start / 快速开始
 
-### 本地开发
+### Local development / 本地开发
 
 ```bash
-# 1. 配置 LLM API
+# 1. Prepare backend env
 cp server/.env.example server/.env
-vim server/.env  # 填入 LLM_PROVIDER / LLM_API_KEY / LLM_MODEL
 
-# 2. 启动后端
-cd server && go run main.go
+# 2. Fill in your LLM settings
+#    配置 LLM_PROVIDER / LLM_API_KEY / LLM_MODEL 等参数
 
-# 3. 启动前端 (新终端)
-cd client && npm install && npm run dev
+# 3. Start backend
+cd server
+go run main.go
 
-# 4. 打开 http://localhost:5173
+# 4. Start frontend in another terminal
+cd client
+npm install
+npm run dev
+
+# 5. Open
+#    浏览器访问 http://localhost:5173
 ```
 
-### Docker 部署
+### Docker / Docker 部署
 
 ```bash
 cp server/.env.example server/.env
-vim server/.env
 docker compose up -d --build
-# 访问 http://localhost
 ```
 
-## 使用流程
+## Main API Surface / 主要接口
 
-1. 📁 上传 Excel/CSV 数据文件
-2. 💬 输入分析需求（或点击快捷提示词）
-3. 🧠 左侧面板实时展示 Agent 思考 + 工具调用
-4. 📊 右侧面板实时渲染研报（含交互式 ECharts 图表）
-5. 📥 点击"导出"下载独立 HTML 研报
-6. 💬 可继续追问补充分析（多轮对话）
+Authenticated endpoints currently include:
 
-## 项目结构
+当前受保护接口包括：
 
-```
-├── client/                  # Vue 3 前端
+- `POST /api/auth/switch-workspace`
+- `GET /api/bootstrap`
+- `GET /api/sessions`
+- `GET /api/sessions/{sessionID}`
+- `GET /api/runs`
+- `GET /api/runs/{runID}`
+- `GET /api/runs/{runID}/report`
+- `POST /api/upload?session_id=...`
+- `GET /ws?token=...&session_id=...`
+
+## UI Behavior / 界面行为
+
+- Workspace switch issues a new token and reconnects the WebSocket
+- Recent sessions and runs are restored on bootstrap
+- Final report HTML can be reopened after refresh
+- Uploaded source files remain session-scoped and are not mixed with generated report artifacts
+
+- 切换工作区时会重新签发 token 并重连 WebSocket
+- 启动后会恢复最近的 session 和 runs
+- 刷新页面后仍可重新打开最终报告 HTML
+- 上传的源文件保持 session 作用域，不会和生成的报告产物混在一起
+
+## Project Structure / 项目结构
+
+```text
+.
+├── client/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── agent/       # AgentPanel (消息流)
-│   │   │   ├── layout/      # TopNav + InputBar (提示词模板)
-│   │   │   └── report/      # ReportPreview (iframe + 导出)
-│   │   ├── composables/     # useWebSocket (单例)
-│   │   └── stores/          # Pinia 状态管理
+│   │   ├── composables/
+│   │   └── stores/
 │   ├── Dockerfile
 │   └── nginx.conf
-├── server/                  # Go 后端
-│   ├── agent/               # Engine + LLM + Prompts + Types
-│   ├── tools/               # 7 个工具 + 研报 HTML 生成
-│   ├── data/                # Ingester + Schema (SQLite)
-│   ├── handler/             # WebSocket + Upload
-│   ├── config/              # .env 配置
+├── server/
+│   ├── agent/
+│   ├── auth/
+│   ├── config/
+│   ├── data/
+│   ├── domain/
+│   ├── handler/
+│   ├── metadata/
+│   ├── migrations/
+│   ├── repository/
+│   ├── service/
+│   ├── session/
+│   ├── storage/
+│   ├── tools/
 │   ├── Dockerfile
 │   └── main.go
-├── data/                    # 示例数据
+├── data/
 ├── docker-compose.yml
 └── README.md
 ```
 
-## License
+## Product Direction / 产品方向
+
+This repository is being built as a new product, so the priority is reducing future technical debt rather than preserving backward compatibility. Current implementation choices favor explicit boundaries:
+
+这个仓库对应的是新产品，因此当前优先级是减少未来技术债，而不是保留历史兼容逻辑。当前实现重点收敛在这些边界：
+
+- auth and workspace ownership
+- session and run lifecycle
+- file identity and storage abstraction
+- report persistence and recovery
+
+- 认证与工作区归属
+- 会话与任务生命周期
+- 文件身份与存储抽象
+- 报告持久化与恢复
+
+## License / 许可证
 
 MIT

@@ -1,8 +1,32 @@
 <template>
   <div class="agent-panel">
     <div class="panel-header">
-      <span>🤖 Agent 执行</span>
-      <span class="msg-count">{{ messages.length }} 条消息</span>
+      <div class="header-main">
+        <span>🤖 Agent 执行</span>
+        <select
+          v-if="sessions.length > 0"
+          class="session-select"
+          :value="currentSessionId"
+          @change="handleSessionChange"
+        >
+          <option v-for="session in sessions" :key="session.id" :value="session.id">
+            {{ formatSessionLabel(session) }}
+          </option>
+        </select>
+      </div>
+      <span class="msg-count">{{ messages.length }} 条消息 / {{ runs.length }} 个任务</span>
+    </div>
+    <div v-if="runs.length > 0" class="run-history">
+      <button
+        v-for="run in runs"
+        :key="run.id"
+        class="run-chip"
+        :class="{ active: run.id === activeRunId }"
+        type="button"
+      >
+        <span class="run-status" :class="'status-' + run.status"></span>
+        <span class="run-label">{{ truncate(run.inputMessage || run.id, 28) }}</span>
+      </button>
     </div>
     <div class="messages" ref="messagesEl">
       <div v-if="messages.length === 0" class="empty-state">
@@ -100,11 +124,17 @@
 
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue'
+import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
 const store = useAgentStore()
+const { openSession } = useWebSocket()
 const messages = computed(() => store.messages)
 const isRunning = computed(() => store.isRunning)
+const sessions = computed(() => store.sessions || [])
+const runs = computed(() => store.runs || [])
+const activeRunId = computed(() => store.activeRunId)
+const currentSessionId = computed(() => store.sessionId || '')
 const messagesEl = ref(null)
 
 watch(messages, async () => {
@@ -124,6 +154,21 @@ function truncate(str, max) {
   if (!str) return ''
   return str.length > max ? str.slice(0, max) + '\n... (已截断)' : str
 }
+
+function formatSessionLabel(session) {
+  const date = session.lastSeenAt ? new Date(session.lastSeenAt).toLocaleDateString() : ''
+  return `${session.title || session.id}${date ? ` · ${date}` : ''}`
+}
+
+async function handleSessionChange(event) {
+  const sessionId = event.target.value
+  if (!sessionId || sessionId === currentSessionId.value) return
+  try {
+    await openSession(sessionId)
+  } catch (err) {
+    console.error('open session failed:', err)
+  }
+}
 </script>
 
 <style scoped>
@@ -142,10 +187,74 @@ function truncate(str, max) {
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
+  gap: 12px;
   flex-shrink: 0;
 }
 
+.header-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .msg-count { color: var(--text-muted); font-weight: 400; }
+
+.session-select {
+  min-width: 180px;
+  max-width: 280px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.run-history {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.run-chip.active {
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
+}
+
+.run-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-running { background: var(--accent-blue); }
+.status-completed { background: var(--accent-green); }
+.status-cancelled { background: var(--accent-orange); }
+.status-failed { background: var(--accent-red); }
+.status-queued { background: var(--text-muted); }
+
+.run-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .messages {
   flex: 1;
