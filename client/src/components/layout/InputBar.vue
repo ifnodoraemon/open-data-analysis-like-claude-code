@@ -9,7 +9,7 @@
     </div>
 
     <div class="upload-area" v-if="uploadedFiles.length > 0">
-      <span v-for="file in uploadedFiles" :key="file.name" class="file-tag">
+      <span v-for="file in uploadedFiles" :key="file.fileId" class="file-tag">
         📎 {{ file.name }}
         <span class="file-size">({{ formatSize(file.size) }})</span>
       </span>
@@ -64,14 +64,21 @@ function useTemplate(text) {
 async function handleFile(e) {
   const file = e.target.files[0]
   if (!file) return
+  if (!store.sessionId) {
+    store.addMessage({ type: 'error', content: '会话尚未建立，请稍后再上传。' })
+    return
+  }
 
   const formData = new FormData()
   formData.append('file', file)
 
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData })
+    const res = await fetch(`/api/upload?session_id=${encodeURIComponent(store.sessionId)}`, { method: 'POST', body: formData })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
     const data = await res.json()
-    store.addFile({ name: file.name, size: file.size, path: data.path })
+    store.addFile({ fileId: data.file_id, name: file.name, size: file.size })
     store.addMessage({ type: 'user', content: `📎 已上传文件: ${file.name} (${formatSize(file.size)})` })
   } catch (err) {
     store.addMessage({ type: 'error', content: `文件上传失败: ${err.message}` })

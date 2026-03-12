@@ -68,6 +68,14 @@
             </div>
           </template>
 
+          <template v-else-if="msg.type === 'cancelled'">
+            <div class="msg-icon">⏹</div>
+            <div class="msg-body">
+              <div class="msg-label">任务已停止</div>
+              <div class="msg-content">{{ msg.content }}</div>
+            </div>
+          </template>
+
           <!-- 错误 -->
           <template v-else-if="msg.type === 'error'">
             <div class="msg-icon">❌</div>

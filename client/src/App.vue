@@ -18,12 +18,15 @@ import AgentPanel from './components/agent/AgentPanel.vue'
 import ReportPreview from './components/report/ReportPreview.vue'
 import InputBar from './components/layout/InputBar.vue'
 
-const { connect } = useWebSocket()
+const { bootstrap, connect } = useWebSocket()
 const leftWidth = ref(45)
 const isDragging = ref(false)
 
 onMounted(() => {
-  connect()
+  bootstrap().then(connect).catch((err) => {
+    console.error('bootstrap failed:', err)
+    connect()
+  })
 })
 
 function startDrag(e) {

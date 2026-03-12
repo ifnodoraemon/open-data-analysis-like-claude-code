@@ -3,6 +3,7 @@
     <div class="nav-left">
       <span class="logo">📊</span>
       <span class="title">数据分析智能体</span>
+      <span v-if="workspaceName" class="workspace-tag">{{ workspaceName }}</span>
     </div>
     <div class="nav-center">
       <span class="status-dot" :class="connected ? 'online' : 'offline'"></span>
@@ -21,11 +22,12 @@ import { computed } from 'vue'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
-const { connected } = useWebSocket()
+const { connected, resetSession } = useWebSocket()
 const store = useAgentStore()
+const workspaceName = computed(() => store.workspace?.name || '')
 
 function clearAll() {
-  store.clearMessages()
+  resetSession(true)
 }
 </script>
 
@@ -54,6 +56,15 @@ function clearAll() {
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.workspace-tag {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 
 .nav-center {
