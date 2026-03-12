@@ -21,7 +21,7 @@ ENV TZ=Asia/Shanghai
 WORKDIR /app
 
 COPY --from=builder /app/server .
-RUN mkdir -p uploads data/cache
+RUN mkdir -p data/cache data/metadata data/storage data/tmp
 
 EXPOSE 8080
 

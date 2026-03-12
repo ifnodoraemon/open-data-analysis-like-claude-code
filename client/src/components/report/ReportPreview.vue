@@ -1,11 +1,16 @@
 <template>
   <div class="report-preview">
     <div class="panel-header">
-      <span>📄 研报预览</span>
+      <div class="header-main">
+        <span>📄 研报预览</span>
+        <span v-if="runMetaLabel" class="run-meta">{{ runMetaLabel }}</span>
+      </div>
       <div class="toolbar">
         <button class="toolbar-btn" :class="{ active: mode === 'preview' }" @click="mode = 'preview'">预览</button>
         <button class="toolbar-btn" :class="{ active: mode === 'source' }" @click="mode = 'source'">源码</button>
-        <button v-if="reportHTML" class="toolbar-btn export" @click="exportHTML">⬇ 导出</button>
+        <button v-if="reportHTML" class="toolbar-btn export" @click="handleExport">
+          {{ selectedRun?.reportFileId ? '⬇ 下载报告' : '⬇ 导出快照' }}
+        </button>
       </div>
     </div>
     <div class="preview-area">
@@ -21,11 +26,35 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
 const store = useAgentStore()
+const { downloadRunReport } = useWebSocket()
 const reportHTML = computed(() => store.reportHTML)
+const selectedRun = computed(() => store.runs.find(run => run.id === store.selectedRunId) || null)
+const activeRun = computed(() => store.runs.find(run => run.id === store.activeRunId) || null)
+const runMetaLabel = computed(() => {
+  if (selectedRun.value?.id && activeRun.value?.id && selectedRun.value.id !== activeRun.value.id) {
+    return `当前查看历史任务 ${selectedRun.value.id}`
+  }
+  if (selectedRun.value?.id) {
+    return `当前报告 ${selectedRun.value.id}`
+  }
+  if (activeRun.value?.id) {
+    return `正在执行 ${activeRun.value.id}`
+  }
+  return ''
+})
 const mode = ref('preview')
+
+async function handleExport() {
+  if (selectedRun.value?.reportFileId) {
+    await downloadRunReport(selectedRun.value.id)
+    return
+  }
+  exportHTML()
+}
 
 function exportHTML() {
   const blob = new Blob([reportHTML.value], { type: 'text/html' })
@@ -56,6 +85,18 @@ function exportHTML() {
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
+}
+
+.header-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.run-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 400;
 }
 
 .toolbar { display: flex; gap: 4px; }

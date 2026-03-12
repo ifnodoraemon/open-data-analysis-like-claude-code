@@ -1,10 +1,21 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 )
+
+const (
+	queryTimeout   = 5 * time.Second
+	queryRowLimit  = 200
+	queryProbeRows = queryRowLimit + 1
+)
+
+var forbiddenSQLKeywordPattern = regexp.MustCompile(`\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|ATTACH|DETACH|REINDEX|VACUUM|PRAGMA|REPLACE|MERGE|UPSERT|TRUNCATE)\b`)
 
 // SchemaInfo 表 Schema 信息
 type SchemaInfo struct {
@@ -140,18 +151,26 @@ func GetSampleRows(db *sql.DB, tableName string, limit int) ([]map[string]interf
 
 // ExecuteQuery 执行 SQL 查询 (带安全限制)
 func ExecuteQuery(db *sql.DB, query string) ([]map[string]interface{}, error) {
-	// 安全检查：只允许 SELECT 查询
-	trimmed := strings.TrimSpace(strings.ToUpper(query))
-	if !strings.HasPrefix(trimmed, "SELECT") && !strings.HasPrefix(trimmed, "WITH") {
-		return nil, fmt.Errorf("只允许 SELECT 查询")
+	normalizedQuery, err := normalizeReadOnlyQuery(query)
+	if err != nil {
+		return nil, err
 	}
 
-	// 自动添加 LIMIT (如果没有的话)
-	if !strings.Contains(strings.ToUpper(query), "LIMIT") {
-		query = query + " LIMIT 200"
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("获取数据库连接失败: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		return nil, fmt.Errorf("启用只读查询模式失败: %w", err)
 	}
 
-	rows, err := db.Query(query)
+	wrappedQuery := fmt.Sprintf("SELECT * FROM (%s) AS _oda_query LIMIT %d", normalizedQuery, queryProbeRows)
+	rows, err := conn.QueryContext(ctx, wrappedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("SQL 执行失败: %w", err)
 	}
@@ -182,7 +201,191 @@ func ExecuteQuery(db *sql.DB, query string) ([]map[string]interface{}, error) {
 			}
 		}
 		result = append(result, row)
+		if len(result) >= queryProbeRows {
+			return nil, fmt.Errorf("查询结果超过 %d 行，请增加 WHERE 条件或更小的 LIMIT", queryRowLimit)
+		}
 	}
 
+	if err := rows.Err(); err != nil {
+		if errorsIsDeadline(err) || ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("SQL 查询超时（>%ds），请简化语句或缩小范围", int(queryTimeout/time.Second))
+		}
+		return nil, fmt.Errorf("读取 SQL 结果失败: %w", err)
+	}
 	return result, nil
+}
+
+func normalizeReadOnlyQuery(query string) (string, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return "", fmt.Errorf("SQL 不能为空")
+	}
+
+	trimmed = strings.TrimSuffix(trimmed, ";")
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return "", fmt.Errorf("SQL 不能为空")
+	}
+
+	if hasMultipleStatements(trimmed) {
+		return "", fmt.Errorf("只允许单条 SQL 查询")
+	}
+
+	inspection := stripSQLStringsAndComments(trimmed)
+	upper := strings.ToUpper(strings.TrimSpace(inspection))
+	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
+		return "", fmt.Errorf("只允许只读 SELECT / WITH 查询")
+	}
+	if forbiddenSQLKeywordPattern.MatchString(upper) {
+		return "", fmt.Errorf("检测到非只读 SQL 关键字，只允许只读查询")
+	}
+
+	return trimmed, nil
+}
+
+func hasMultipleStatements(query string) bool {
+	inSingleQuote := false
+	inDoubleQuote := false
+	inLineComment := false
+	inBlockComment := false
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+
+		if inLineComment {
+			if ch == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if ch == '*' && i+1 < len(query) && query[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if inSingleQuote {
+			if ch == '\'' {
+				if i+1 < len(query) && query[i+1] == '\'' {
+					i++
+					continue
+				}
+				inSingleQuote = false
+			}
+			continue
+		}
+		if inDoubleQuote {
+			if ch == '"' {
+				if i+1 < len(query) && query[i+1] == '"' {
+					i++
+					continue
+				}
+				inDoubleQuote = false
+			}
+			continue
+		}
+
+		if ch == '-' && i+1 < len(query) && query[i+1] == '-' {
+			inLineComment = true
+			i++
+			continue
+		}
+		if ch == '/' && i+1 < len(query) && query[i+1] == '*' {
+			inBlockComment = true
+			i++
+			continue
+		}
+		if ch == '\'' {
+			inSingleQuote = true
+			continue
+		}
+		if ch == '"' {
+			inDoubleQuote = true
+			continue
+		}
+		if ch == ';' {
+			return true
+		}
+	}
+
+	return false
+}
+
+func stripSQLStringsAndComments(query string) string {
+	var b strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+	inLineComment := false
+	inBlockComment := false
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+
+		if inLineComment {
+			if ch == '\n' {
+				inLineComment = false
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		if inBlockComment {
+			if ch == '*' && i+1 < len(query) && query[i+1] == '/' {
+				inBlockComment = false
+				i++
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		if inSingleQuote {
+			if ch == '\'' {
+				if i+1 < len(query) && query[i+1] == '\'' {
+					i++
+					continue
+				}
+				inSingleQuote = false
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		if inDoubleQuote {
+			if ch == '"' {
+				if i+1 < len(query) && query[i+1] == '"' {
+					i++
+					continue
+				}
+				inDoubleQuote = false
+				b.WriteByte(' ')
+			}
+			continue
+		}
+
+		if ch == '-' && i+1 < len(query) && query[i+1] == '-' {
+			inLineComment = true
+			i++
+			continue
+		}
+		if ch == '/' && i+1 < len(query) && query[i+1] == '*' {
+			inBlockComment = true
+			i++
+			continue
+		}
+		if ch == '\'' {
+			inSingleQuote = true
+			b.WriteByte(' ')
+			continue
+		}
+		if ch == '"' {
+			inDoubleQuote = true
+			b.WriteByte(' ')
+			continue
+		}
+		b.WriteByte(ch)
+	}
+
+	return b.String()
+}
+
+func errorsIsDeadline(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "interrupted")
 }

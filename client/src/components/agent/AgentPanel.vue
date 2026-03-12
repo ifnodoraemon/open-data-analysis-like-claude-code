@@ -16,17 +16,27 @@
       </div>
       <span class="msg-count">{{ messages.length }} 条消息 / {{ runs.length }} 个任务</span>
     </div>
+    <div v-if="activeRun || selectedRun" class="run-summary">
+      <span v-if="activeRun" class="summary-pill live">
+        正在执行 {{ truncate(activeRun.summary || activeRun.inputMessage || activeRun.id, 36) }}
+      </span>
+      <span v-if="selectedRun && selectedRun.id !== activeRun?.id" class="summary-pill history">
+        当前查看历史任务 {{ truncate(selectedRun.summary || selectedRun.inputMessage || selectedRun.id, 36) }}
+      </span>
+    </div>
     <div v-if="runs.length > 0" class="run-history">
       <button
         v-for="run in runs"
         :key="run.id"
         class="run-chip"
-        :class="{ active: run.id === selectedRunId }"
+        :class="{ active: run.id === selectedRunId, live: run.id === activeRunId }"
         type="button"
         @click="handleRunClick(run.id)"
       >
         <span class="run-status" :class="'status-' + run.status"></span>
         <span class="run-label">{{ truncate(run.summary || run.inputMessage || run.id, 28) }}</span>
+        <span v-if="run.id === activeRunId" class="run-tag">实时</span>
+        <span v-else-if="run.id === selectedRunId" class="run-tag subtle">历史</span>
       </button>
     </div>
     <div class="messages" ref="messagesEl">
@@ -135,7 +145,10 @@ const isRunning = computed(() => store.isRunning)
 const sessions = computed(() => store.sessions || [])
 const runs = computed(() => store.runs || [])
 const selectedRunId = computed(() => store.selectedRunId)
+const activeRunId = computed(() => store.activeRunId)
 const currentSessionId = computed(() => store.sessionId || '')
+const selectedRun = computed(() => runs.value.find(run => run.id === selectedRunId.value) || null)
+const activeRun = computed(() => runs.value.find(run => run.id === activeRunId.value) || null)
 const messagesEl = ref(null)
 
 watch(messages, async () => {
@@ -230,6 +243,33 @@ async function handleRunClick(runId) {
   background: var(--bg-secondary);
 }
 
+.run-summary {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 0;
+  flex-wrap: wrap;
+}
+
+.summary-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+}
+
+.summary-pill.live {
+  color: #d2e9ff;
+  background: rgba(47, 129, 247, 0.18);
+  border: 1px solid rgba(47, 129, 247, 0.35);
+}
+
+.summary-pill.history {
+  color: var(--text-secondary);
+  background: rgba(139, 148, 158, 0.12);
+  border: 1px solid rgba(139, 148, 158, 0.2);
+}
+
 .run-chip {
   display: inline-flex;
   align-items: center;
@@ -248,6 +288,10 @@ async function handleRunClick(runId) {
   color: var(--text-primary);
 }
 
+.run-chip.live {
+  box-shadow: inset 0 0 0 1px rgba(47, 129, 247, 0.25);
+}
+
 .run-status {
   width: 8px;
   height: 8px;
@@ -264,6 +308,19 @@ async function handleRunClick(runId) {
 .run-label {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.run-tag {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(47, 129, 247, 0.16);
+  color: #d2e9ff;
+}
+
+.run-tag.subtle {
+  background: rgba(139, 148, 158, 0.14);
+  color: var(--text-muted);
 }
 
 .messages {

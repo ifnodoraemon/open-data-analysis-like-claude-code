@@ -46,6 +46,7 @@ create table files (
   workspace_id varchar(64) not null references workspaces(id),
   uploaded_by varchar(64) not null references users(id),
   display_name varchar(255) not null,
+  purpose varchar(32) not null default 'source',
   content_type varchar(255),
   size_bytes bigint not null,
   storage_provider varchar(64) not null,

@@ -15,9 +15,9 @@
       </span>
     </div>
     <div class="input-row">
-      <label class="upload-btn" title="上传数据文件">
+      <label class="upload-btn" :class="{ disabled: isUploading }" title="上传数据文件">
         📁
-        <input type="file" accept=".csv,.xlsx,.xls,.json" @change="handleFile" hidden />
+        <input type="file" accept=".csv,.xlsx,.xls,.json" @change="handleFile" :disabled="isUploading" hidden />
       </label>
       <textarea
         v-model="input"
@@ -42,12 +42,13 @@ import { ref, computed } from 'vue'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
-const { sendMessage, stop } = useWebSocket()
+const { sendMessage, stop, ensureSession } = useWebSocket()
 const store = useAgentStore()
 const input = ref('')
 const isRunning = computed(() => store.isRunning)
 const uploadedFiles = computed(() => store.uploadedFiles)
 const messages = computed(() => store.messages)
+const isUploading = ref(false)
 
 const templates = [
   { icon: '📊', label: '全面分析', text: '请对数据进行全面分析，包括：数据概览、各维度分布、趋势变化、关键发现和建议，并生成完整的研究报告。' },
@@ -64,16 +65,14 @@ function useTemplate(text) {
 async function handleFile(e) {
   const file = e.target.files[0]
   if (!file) return
-  if (!store.sessionId) {
-    store.addMessage({ type: 'error', content: '会话尚未建立，请稍后再上传。' })
-    return
-  }
 
   const formData = new FormData()
   formData.append('file', file)
 
   try {
-    const res = await fetch(`/api/upload?session_id=${encodeURIComponent(store.sessionId)}`, {
+    isUploading.value = true
+    const sessionId = await ensureSession()
+    const res = await fetch(`/api/upload?session_id=${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: store.token ? { Authorization: `Bearer ${store.token}` } : {},
       body: formData,
@@ -86,6 +85,9 @@ async function handleFile(e) {
     store.addMessage({ type: 'user', content: `📎 已上传文件: ${file.name} (${formatSize(file.size)})` })
   } catch (err) {
     store.addMessage({ type: 'error', content: `文件上传失败: ${err.message}` })
+  } finally {
+    isUploading.value = false
+    e.target.value = ''
   }
 }
 
@@ -179,6 +181,7 @@ function formatSize(bytes) {
 }
 
 .upload-btn:hover { background: var(--bg-hover); }
+.upload-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 
 .input-field {
   flex: 1;

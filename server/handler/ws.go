@@ -38,6 +38,8 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("创建会话失败: %v", err)
 		return
 	}
+	log.Printf("ws connected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
+	defer log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 
 	sess.SetEmitter(func(event agent.WSEvent) {
 		sendSessionEvent(conn, &writeMu, sess.ID, "", event)
@@ -100,6 +102,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 			now := time.Now()
 			rawInput := strings.TrimSpace(userMsg.Content)
+			log.Printf("run started run_id=%s session_id=%s workspace_id=%s user_id=%s input_chars=%d", runID, sess.ID, sess.WorkspaceID, identity.UserID, len([]rune(rawInput)))
 			if err := runRepo.Create(r.Context(), &domain.AnalysisRun{
 				ID:           runID,
 				SessionID:    sess.ID,
@@ -155,6 +158,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 									HTML:        finalHTML,
 								}); err == nil {
 									_ = runRepo.BindReportFile(r.Context(), runID, reportFile.ID)
+									log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
 								} else {
 									sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 										Type: agent.EventError,
@@ -181,17 +185,23 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCompleted, nil)
 						if complete, ok := ev.Data.(agent.CompleteData); ok {
 							_ = runRepo.UpdateSummary(r.Context(), runID, strings.TrimSpace(complete.Summary))
+							log.Printf("run completed run_id=%s session_id=%s summary_chars=%d", runID, sess.ID, len([]rune(strings.TrimSpace(complete.Summary))))
+						} else {
+							log.Printf("run completed run_id=%s session_id=%s", runID, sess.ID)
 						}
 					case agent.EventRunCancelled:
 						sess.FinishRun(runID, "cancelled")
 						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCancelled, nil)
+						log.Printf("run cancelled run_id=%s session_id=%s", runID, sess.ID)
 					case agent.EventError:
 						sess.FinishRun(runID, "failed")
 						if errData, ok := ev.Data.(agent.ErrorData); ok {
 							msg := errData.Message
 							_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, &msg)
+							log.Printf("run failed run_id=%s session_id=%s error=%q", runID, sess.ID, clipLogText(msg, 240))
 						} else {
 							_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, nil)
+							log.Printf("run failed run_id=%s session_id=%s", runID, sess.ID)
 						}
 					}
 				}
@@ -203,6 +213,12 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			if fileContext := sess.BuildFileContext(); fileContext != "" {
 				userContent = fileContext + "\n用户指令: " + userContent
 			}
+
+			ctx = agent.WithTraceMetadata(ctx, agent.TraceMetadata{
+				WorkspaceID: sess.WorkspaceID,
+				SessionID:   sess.ID,
+				RunID:       runID,
+			})
 
 			go sess.Engine.Run(ctx, userContent)
 
@@ -240,6 +256,14 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("未知事件类型: %s", event.Type)
 		}
 	}
+}
+
+func clipLogText(input string, max int) string {
+	input = strings.TrimSpace(input)
+	if max <= 0 || len([]rune(input)) <= max {
+		return input
+	}
+	return string([]rune(input)[:max]) + "...(truncated)"
 }
 
 func deriveSessionTitle(input string) string {

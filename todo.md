@@ -27,6 +27,20 @@
 - 数据导入与存储演进
 - 后端执行架构的进一步稳定化
 
+## 2026-03-12 当前进度
+
+- P0.1 本地运行方式已统一到 `docker compose`
+- P0.2 LLM 调试日志已按 `date/trace_id` 落盘，并挂上 `workspace_id/session_id/run_id`
+- P0.3 登录后的 `bootstrap -> connect -> upload` 链路已收紧，缺失 session 时会自动补建
+- P0.4 `run_python` 继续按健康检查动态注册，Docker 默认启动 `python-executor`
+- P0.5 运行期目录与 `.gitignore` 已收口到 `data/` 边界
+- P1.6 历史 session/run 切换、当前执行/历史查看区分、最终 HTML 报告下载入口已补齐
+- P1.11 文件元数据已补充 `purpose=source/report/artifact` 边界，并贯通到 metadata/service/API
+- P1.12 `query_data` 已加上单语句、只读、超时和硬行数限制
+- P1.7/P0.2 运行日志与 LLM 调试日志已降噪并结构化，健康检查日志不再刷屏
+
+接下来优先继续推进 P1/P2 项，P0 可按回归结果做小修补，不再作为主阻塞项。
+
 ## P0：当前这轮必须收口
 
 ### 1. 收口本地运行方式
@@ -313,4 +327,3 @@
 - 不要为了“未来可扩展”提前引入过重的微服务拆分
 - 不要在没有 trace 结构之前继续堆普通文本日志
 - 不要把 MinIO 写死进业务层
-

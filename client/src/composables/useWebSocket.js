@@ -73,11 +73,43 @@ export function useWebSocket() {
     const data = await res.json()
     store.setIdentity(data.user, data.workspace)
     store.setWorkspaces(data.workspaces || [])
-    const latestRun = restoreBootstrapState(data)
+    let latestRun = restoreBootstrapState(data)
+    if (!data.session?.id) {
+      const session = await createSession({ refreshSessions: true })
+      latestRun = session?.latestRun || null
+    }
     store.updateReport('')
     if (latestRun?.reportFileId) {
       await loadRunReport(latestRun.id)
     }
+  }
+
+  async function createSession({ refreshSessions = true } = {}) {
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    const data = await res.json()
+    if (data.session) {
+      store.upsertSession(data.session)
+    }
+    const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [])
+    if (refreshSessions) {
+      await loadSessions()
+    }
+    return { ...data.session, latestRun }
+  }
+
+  async function ensureSession() {
+    if (store.sessionId) return store.sessionId
+    const session = await createSession({ refreshSessions: true })
+    if (!session?.id) {
+      throw new Error('创建会话失败')
+    }
+    return session.id
   }
 
   async function loadSessions() {
@@ -114,6 +146,26 @@ export function useWebSocket() {
     store.setSelectedRun(runId)
     store.updateReport('')
     await loadRunReport(runId)
+  }
+
+  async function downloadRunReport(runId) {
+    if (!runId) {
+      throw new Error('缺少 runId')
+    }
+    const res = await fetch(`/api/runs/${runId}/report`, {
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = getDownloadFilename(res.headers.get('Content-Disposition')) || `report-${runId}.html`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   function connect() {
@@ -280,6 +332,7 @@ export function useWebSocket() {
     store.setIdentity(data.user, data.workspace)
     store.setWorkspaces(data.workspaces || [])
     store.resetAnalysis({ keepFiles: false })
+    store.setSessions([])
   }
 
   async function switchWorkspace(workspaceId) {
@@ -299,8 +352,7 @@ export function useWebSocket() {
     store.setToken(data.token)
     store.setWorkspace(data.workspace)
     store.resetAnalysis({ keepFiles: false })
-    await bootstrap()
-    connect()
+    store.setSessions([])
   }
 
   function disconnect() {
@@ -340,18 +392,20 @@ export function useWebSocket() {
   async function createNewSession() {
     disconnect()
     store.resetAnalysis({ keepFiles: false })
-    store.setSession('')
     store.updateReport('')
+    await createSession({ refreshSessions: true })
     connect()
-    // 等待连接建立后刷新 session 列表
-    setTimeout(async () => {
-      try {
-        await loadSessions()
-      } catch (e) {
-        console.error('刷新 session 列表失败:', e)
-      }
-    }, 1000)
   }
 
-  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, openRun, disconnect, sendMessage, stop, resetSession, createNewSession }
+  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, openRun, downloadRunReport, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession }
+}
+
+function getDownloadFilename(contentDisposition) {
+  const value = String(contentDisposition || '')
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1])
+  }
+  const basicMatch = value.match(/filename="?([^"]+)"?/i)
+  return basicMatch?.[1] || ''
 }

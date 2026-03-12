@@ -39,7 +39,9 @@ var Cfg *Config
 func Load() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("Warning: .env file not found, using environment variables")
+		if _, statErr := os.Stat(".env"); statErr == nil {
+			log.Printf("Warning: failed to load .env: %v", err)
+		}
 	}
 
 	provider := strings.ToLower(getEnv("LLM_PROVIDER", "openai"))
@@ -63,10 +65,10 @@ func Load() {
 		LLMDebug:             getEnvBool("LLM_DEBUG", false),
 		LLMDebugDir:          getEnv("LLM_DEBUG_DIR", "./data/llm-debug"),
 		ServerPort:           getEnv("SERVER_PORT", "8080"),
-		StorageRoot:          getEnv("STORAGE_ROOT", "./storage"),
+		StorageRoot:          getEnv("STORAGE_ROOT", "./data/storage"),
 		CacheRoot:            getEnv("CACHE_ROOT", "./data/cache"),
 		MetadataDBPath:       getEnv("METADATA_DB_PATH", "./data/metadata/app.db"),
-		TempDir:              getEnv("TEMP_DIR", "./tmp"),
+		TempDir:              getEnv("TEMP_DIR", "./data/tmp"),
 		PythonMCPURL:         getEnv("PYTHON_MCP_URL", ""),
 		AuthSecret:           getEnv("AUTH_SECRET", ""),
 		DefaultUserID:        getEnv("DEFAULT_USER_ID", ""),
@@ -81,7 +83,7 @@ func Load() {
 		log.Println("Warning: LLM_API_KEY is not set")
 	}
 
-	log.Printf("LLM Provider: %s, Model: %s, Endpoint: %s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMAPIEndpoint)
+	log.Printf("config loaded llm_provider=%s llm_model=%s llm_endpoint=%s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMAPIEndpoint)
 }
 
 func getEnv(key, fallback string) string {

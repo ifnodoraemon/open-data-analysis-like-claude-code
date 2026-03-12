@@ -159,7 +159,7 @@ type QueryDataTool struct {
 
 func (t *QueryDataTool) Name() string { return "query_data" }
 func (t *QueryDataTool) Description() string {
-	return "在数据库上执行 SQL SELECT 查询。用于分析大数据集时不需要加载全量数据，而是通过 SQL 聚合查询获取所需信息。结果限制在 200 行以内。"
+	return "在数据库上执行单条只读 SQL 查询。仅允许 SELECT / WITH，强制只读、超时保护，结果最多 200 行。用于分析大数据集时通过 SQL 聚合查询获取所需信息。"
 }
 func (t *QueryDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{

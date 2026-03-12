@@ -11,7 +11,6 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
-      - uploads:/app/uploads
       - python-workspace:/app/python-workspace
     depends_on:
       python-executor:
@@ -30,7 +29,6 @@ services:
       - "8081:8081"
     volumes:
       - ./data:/app/data:ro
-      - uploads:/app/uploads:ro
       - python-workspace:/app/workspace
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()"]
@@ -49,5 +47,4 @@ services:
         condition: service_healthy
 
 volumes:
-  uploads:
   python-workspace:

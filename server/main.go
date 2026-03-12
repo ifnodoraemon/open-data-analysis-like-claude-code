@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 
@@ -20,7 +19,8 @@ func main() {
 	r := chi.NewRouter()
 
 	// 中间件
-	r.Use(middleware.Logger)
+	r.Use(middleware.RequestID)
+	r.Use(handler.RequestLoggingMiddleware)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
@@ -40,6 +40,7 @@ func main() {
 		protected.Use(handler.AuthMiddleware)
 		protected.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
 		protected.Get("/api/bootstrap", handler.BootstrapHandler)
+		protected.Post("/api/sessions", handler.CreateSessionHandler)
 		protected.Get("/api/sessions", handler.ListSessionsHandler)
 		protected.Get("/api/sessions/{sessionID}", handler.GetSessionHandler)
 		protected.Get("/api/runs", handler.ListRunsHandler)
@@ -50,10 +51,13 @@ func main() {
 	})
 
 	port := config.Cfg.ServerPort
-	fmt.Printf("🚀 数据分析智能体后端启动在 http://localhost:%s\n", port)
-	fmt.Printf("   WebSocket: ws://localhost:%s/ws\n", port)
-	fmt.Printf("   LLM Model: %s\n", config.Cfg.LLMModel)
-	fmt.Printf("   LLM API Endpoint: %s\n", config.Cfg.LLMAPIEndpoint)
+	log.Printf("server started addr=0.0.0.0:%s ws_path=/ws model=%s endpoint=%s llm_debug=%t llm_debug_dir=%s",
+		port,
+		config.Cfg.LLMModel,
+		config.Cfg.LLMAPIEndpoint,
+		config.Cfg.LLMDebug,
+		config.Cfg.LLMDebugDir,
+	)
 
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -89,7 +89,9 @@ create_chart 调用示例:
 
 - 数据已导入 SQLite，表名为文件名（去掉扩展名，全小写，空格/连字符替换为下划线）
 - 使用标准 SQL 语法
-- 查询结果限制在 200 行以内，使用 LIMIT
+- query_data 只允许单条只读 SELECT / WITH 查询
+- 查询结果强制限制在 200 行以内，请主动加 WHERE、GROUP BY 和更小的 LIMIT
+- 查询执行有超时保护，避免全表无界扫描
 - 聚合用 GROUP BY + SUM/AVG/COUNT/MAX/MIN
 - 日期字段是文本格式，用 substr() 提取年/月
 

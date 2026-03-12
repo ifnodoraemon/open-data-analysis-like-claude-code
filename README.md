@@ -60,12 +60,12 @@ Current default implementation:
 
 ### Local Docker debugging / 本地 Docker 调试
 
-When started with `docker compose`, the server enables `LLM_DEBUG=true` by default and writes model request/response traces to a separate JSONL directory:
+When started with `docker compose`, the server enables `LLM_DEBUG=true` by default and writes model request/response traces to a separate trace directory:
 
-通过 `docker compose` 启动本地环境时，服务端默认开启 `LLM_DEBUG=true`，并将模型输入输出写入独立的 JSONL 调试目录：
+通过 `docker compose` 启动本地环境时，服务端默认开启 `LLM_DEBUG=true`，并将模型输入输出写入独立的 trace 调试目录：
 
 - Path / 路径: `data/llm-debug/`
-- Format / 格式: one JSON record per line / 每行一个 JSON 记录
+- Format / 格式: `YYYY-MM-DD/<trace_id>/request.json + response.json + index.jsonl`
 - Separation / 隔离: kept outside normal app stdout logs / 不与程序标准日志混写
 
 ## Tech Stack / 技术栈
@@ -125,34 +125,65 @@ AUTH_SECRET=change-me
 
 ## Quick Start / 快速开始
 
-### Local development / 本地开发
+### Docker Compose Only / 本地只支持 Docker Compose
 
 ```bash
-# 1. Prepare backend env
+# 1. Prepare env
 cp server/.env.example server/.env
 
 # 2. Fill in your LLM settings
 #    配置 LLM_PROVIDER / LLM_API_KEY / LLM_MODEL 等参数
 
-# 3. Start backend
-cd server
-go run main.go
+# 3. Start all services
+docker compose up -d --build
 
-# 4. Start frontend in another terminal
-cd client
-npm install
-npm run dev
-
-# 5. Open
-#    浏览器访问 http://localhost:5173
+# 4. Open
+#    浏览器访问 http://localhost
 ```
 
-### Docker / Docker 部署
+Local setup is intentionally standardized on `docker compose`. The repository does not treat `go run main.go` or `npm run dev` as the primary supported path anymore.
+
+本地调试统一只走 `docker compose`。仓库不再把 `go run main.go` 或 `npm run dev` 视为主支持路径。
+
+### Rebuild And Logs / 重建与日志
 
 ```bash
-cp server/.env.example server/.env
-docker compose up -d --build
+# Rebuild all services from scratch
+docker compose up -d --build --force-recreate
+
+# Follow backend logs
+docker compose logs -f server
+
+# Follow frontend logs
+docker compose logs -f client
+
+# Follow python executor logs
+docker compose logs -f python-executor
+
+# Stop all services
+docker compose down
 ```
+
+### Runtime Directories / 运行期目录
+
+All runtime data stays under the mounted `data/` directory inside Docker:
+
+Docker 模式下，运行产物统一收敛到挂载的 `data/` 目录：
+
+- `data/metadata/`: metadata SQLite
+- `data/cache/`: per-session analysis SQLite scratch files
+- `data/storage/`: uploaded source files and generated report objects
+- `data/tmp/`: materialized temp files
+- `data/llm-debug/`: LLM request/response traces
+
+LLM debug traces are organized by date and trace ID:
+
+LLM 调试日志按日期和 trace ID 落盘：
+
+- `data/llm-debug/YYYY-MM-DD/index.jsonl`
+- `data/llm-debug/YYYY-MM-DD/<trace_id>/request.json`
+- `data/llm-debug/YYYY-MM-DD/<trace_id>/response.json` or `response.error.txt`
+- `data/llm-debug/YYYY-MM-DD/<trace_id>/index.jsonl`
 
 ## Main API Surface / 主要接口
 

@@ -4,6 +4,7 @@ import "time"
 
 type FileStatus string
 type FileVisibility string
+type FilePurpose string
 
 const (
 	FileStatusUploaded   FileStatus = "uploaded"
@@ -13,6 +14,10 @@ const (
 
 	FileVisibilityPrivate   FileVisibility = "private"
 	FileVisibilityWorkspace FileVisibility = "workspace"
+
+	FilePurposeSource   FilePurpose = "source"
+	FilePurposeReport   FilePurpose = "report"
+	FilePurposeArtifact FilePurpose = "artifact"
 )
 
 type File struct {
@@ -20,6 +25,7 @@ type File struct {
 	WorkspaceID     string
 	UploadedBy      string
 	DisplayName     string
+	Purpose         FilePurpose
 	ContentType     string
 	SizeBytes       int64
 	StorageProvider string

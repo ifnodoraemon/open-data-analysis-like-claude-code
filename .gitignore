@@ -10,12 +10,12 @@ server/server
 server/.env
 
 # Data cache
-server/data/cache/*.db
-server/uploads/
-data/
-server/data/metadata/
-server/storage/
-server/tmp/
+/data/
+/python-workspace/
+/server/data/cache/*.db
+/server/data/metadata/
+/server/storage/workspaces/
+/server/tmp/
 
 # IDE
 .vscode/
@@ -26,3 +26,9 @@ server/tmp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs and local artifacts
+*.log
+/report-*.html
+/研究报告_*.html
+python-executor/__pycache__/

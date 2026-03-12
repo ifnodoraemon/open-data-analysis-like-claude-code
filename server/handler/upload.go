@@ -55,6 +55,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"file_id":  uploaded.ID,
 		"filename": uploaded.DisplayName,
+		"purpose":  uploaded.Purpose,
 		"size":     uploaded.SizeBytes,
 		"message":  fmt.Sprintf("文件 %s 上传成功 (%.2f MB)", uploaded.DisplayName, float64(uploaded.SizeBytes)/(1024*1024)),
 	}

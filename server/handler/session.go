@@ -18,13 +18,7 @@ func ListSessionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	respSessions := make([]map[string]interface{}, 0, len(sessions))
 	for _, session := range sessions {
-		respSessions = append(respSessions, map[string]interface{}{
-			"id":         session.ID,
-			"title":      session.Title,
-			"lastRunId":  session.LastRunID,
-			"lastSeenAt": session.LastSeenAt,
-			"createdAt":  session.CreatedAt,
-		})
+		respSessions = append(respSessions, serializeSession(session))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -59,23 +53,30 @@ func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 	respFiles := make([]map[string]interface{}, 0, len(files))
 	for _, file := range files {
-		respFiles = append(respFiles, map[string]interface{}{
-			"fileId": file.ID,
-			"name":   file.DisplayName,
-			"size":   file.SizeBytes,
-		})
+		respFiles = append(respFiles, serializeFile(file))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"session": map[string]interface{}{
-			"id":         session.ID,
-			"title":      session.Title,
-			"lastRunId":  session.LastRunID,
-			"lastSeenAt": session.LastSeenAt,
-			"createdAt":  session.CreatedAt,
-		},
-		"files": respFiles,
-		"runs":  serializeRuns(runs),
+		"session": serializeSession(*session),
+		"files":   respFiles,
+		"runs":    serializeRuns(runs),
+	})
+}
+
+func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
+	identity, _ := auth.FromContext(r.Context())
+	session, err := ensureSession(r.Context(), identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"session": serializeSession(*session),
+		"files":   []map[string]interface{}{},
+		"runs":    []map[string]interface{}{},
 	})
 }

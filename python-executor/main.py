@@ -5,20 +5,21 @@ Python Executor MCP Server
 """
 
 import io
+import logging
 import os
-import sys
 import json
 import time
-import uuid
 import traceback
 import contextlib
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="Python Executor MCP", version="1.0.0")
+logger = logging.getLogger("python-executor")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 # 工作目录：存放生成的文件（图表等）
 WORK_DIR = Path("/app/workspace")
@@ -70,6 +71,22 @@ class ExecuteResponse(BaseModel):
     error: str | None = None
     files: list[str] = []  # 生成的文件路径
     duration_ms: int = 0
+
+
+@app.middleware("http")
+async def quiet_health_logs(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    path = request.url.path
+    if path not in {"/health", "/tools"}:
+        logger.info(
+            "http method=%s path=%s status=%s duration_ms=%d",
+            request.method,
+            path,
+            response.status_code,
+            int((time.time() - start) * 1000),
+        )
+    return response
 
 
 @app.get("/health")
@@ -146,6 +163,14 @@ def execute_code(req: ExecuteRequest):
     new_files = [str(f.name) for f in (files_after - files_before)]
 
     duration_ms = int((time.time() - start) * 1000)
+    logger.info(
+        "execute success=%s duration_ms=%d files=%d stdout_chars=%d stderr_chars=%d",
+        success,
+        duration_ms,
+        len(new_files),
+        len(stdout_buf.getvalue()),
+        len(stderr_buf.getvalue()),
+    )
 
     return ExecuteResponse(
         success=success,
@@ -169,4 +194,4 @@ def get_file(filename: str):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", "8081"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port, access_log=False)

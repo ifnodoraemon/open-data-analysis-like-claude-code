@@ -79,6 +79,7 @@ func (s *Store) migrate() error {
 			workspace_id TEXT NOT NULL,
 			uploaded_by TEXT NOT NULL,
 			display_name TEXT NOT NULL,
+			purpose TEXT NOT NULL DEFAULT 'source',
 			content_type TEXT NOT NULL DEFAULT '',
 			size_bytes INTEGER NOT NULL,
 			storage_provider TEXT NOT NULL,
@@ -122,6 +123,15 @@ func (s *Store) migrate() error {
 
 	if err := ensureColumn(s.DB, "analysis_runs", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	if err := ensureColumn(s.DB, "files", "purpose", "TEXT NOT NULL DEFAULT 'source'"); err != nil {
+		return err
+	}
+	if _, err := s.DB.Exec(`UPDATE files SET purpose = 'report' WHERE purpose = 'source' AND storage_key LIKE '%/report/%'`); err != nil {
+		return fmt.Errorf("回填 report 文件用途失败: %w", err)
+	}
+	if _, err := s.DB.Exec(`UPDATE files SET purpose = 'artifact' WHERE purpose = 'source' AND storage_key LIKE '%/artifacts/%'`); err != nil {
+		return fmt.Errorf("回填 artifact 文件用途失败: %w", err)
 	}
 
 	return nil
