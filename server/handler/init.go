@@ -8,7 +8,8 @@ import (
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/repository/memory"
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/metadata"
+	sqliterepo "github.com/ifnodoraemon/open-data-analysis-like-claude-code/repository/sqlite"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/session"
 	localstorage "github.com/ifnodoraemon/open-data-analysis-like-claude-code/storage/local"
@@ -17,6 +18,7 @@ import (
 var (
 	defaultIdentity auth.Identity
 	fileService     *service.FileService
+	metadataStore   *metadata.Store
 )
 
 func Initialize() {
@@ -28,9 +30,16 @@ func Initialize() {
 		Workspace:   config.Cfg.DefaultWorkspaceName,
 	}
 
-	userRepo := memory.NewUserRepository()
-	workspaceRepo := memory.NewWorkspaceRepository()
-	fileRepo := memory.NewFileRepository()
+	store, err := metadata.Open(config.Cfg.MetadataDBPath)
+	if err != nil {
+		panic(err)
+	}
+	metadataStore = store
+
+	userRepo := sqliterepo.NewUserRepository(store.DB)
+	workspaceRepo := sqliterepo.NewWorkspaceRepository(store.DB)
+	fileRepo := sqliterepo.NewFileRepository(store.DB)
+	sessionRepo := sqliterepo.NewSessionRepository(store.DB)
 
 	now := time.Now()
 	_ = userRepo.Create(context.Background(), &domain.User{
@@ -65,6 +74,7 @@ func Initialize() {
 	}
 
 	sessionManager = session.NewManager(config.Cfg.CacheRoot, defaultIdentity.WorkspaceID, defaultIdentity.UserID, fileService)
+	sessionManager.SetSessionRepository(sessionRepo)
 }
 
 func AuthMiddleware(next http.Handler) http.Handler {

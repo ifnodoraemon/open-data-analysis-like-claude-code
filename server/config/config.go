@@ -19,6 +19,7 @@ type Config struct {
 	ServerPort           string
 	StorageRoot          string
 	CacheRoot            string
+	MetadataDBPath       string
 	TempDir              string
 	DefaultUserID        string
 	DefaultUserEmail     string
@@ -53,6 +54,7 @@ func Load() {
 		ServerPort:           getEnv("SERVER_PORT", "8080"),
 		StorageRoot:          getEnv("STORAGE_ROOT", "./storage"),
 		CacheRoot:            getEnv("CACHE_ROOT", "./data/cache"),
+		MetadataDBPath:       getEnv("METADATA_DB_PATH", "./data/metadata/app.db"),
 		TempDir:              getEnv("TEMP_DIR", "./tmp"),
 		DefaultUserID:        getEnv("DEFAULT_USER_ID", "u_demo"),
 		DefaultUserEmail:     getEnv("DEFAULT_USER_EMAIL", "demo@example.com"),
