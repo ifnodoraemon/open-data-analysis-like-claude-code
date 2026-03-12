@@ -3,12 +3,14 @@ package session
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
@@ -75,14 +77,21 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	registry.Register(&tools.DescribeDataTool{Ingester: s.Ingester})
 	registry.Register(&tools.QueryDataTool{Ingester: s.Ingester})
 	registry.Register(&tools.CreateChartTool{ReportState: s.ReportState})
-	registry.Register(&tools.RunPythonTool{})
+	pythonTool := &tools.RunPythonTool{MCPEndpoint: config.Cfg.PythonMCPURL}
+	pythonEnabled := true
+	if err := pythonTool.HealthCheck(context.Background()); err != nil {
+		pythonEnabled = false
+		log.Printf("run_python disabled for session %s: %v", id, err)
+	} else {
+		registry.Register(pythonTool)
+	}
 	registry.Register(&tools.WriteSectionTool{ReportState: s.ReportState})
 	finalizeTool := &tools.FinalizeReportTool{ReportState: s.ReportState}
 	registry.Register(finalizeTool)
 
 	s.Registry = registry
 	s.FinalizeTool = finalizeTool
-	s.Engine = agent.NewEngine(registry, nil)
+	s.Engine = agent.NewEngine(registry, agent.BuildSystemPrompt(pythonEnabled), nil)
 
 	return s, nil
 }

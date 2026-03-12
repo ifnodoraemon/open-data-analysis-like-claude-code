@@ -16,26 +16,31 @@ const MaxIterations = 25
 
 // Engine Agent 主循环引擎
 type Engine struct {
-	llm      *LLMClient
-	registry *tools.Registry
-	emitter  func(event WSEvent)
-	messages []openai.ChatCompletionMessage
-	mu       sync.Mutex
+	llm          *LLMClient
+	registry     *tools.Registry
+	emitter      func(event WSEvent)
+	messages     []openai.ChatCompletionMessage
+	systemPrompt string
+	mu           sync.Mutex
 }
 
 // NewEngine 创建 Agent 引擎（支持多轮对话）
-func NewEngine(registry *tools.Registry, emitter func(event WSEvent)) *Engine {
+func NewEngine(registry *tools.Registry, systemPrompt string, emitter func(event WSEvent)) *Engine {
 	if emitter == nil {
 		emitter = func(WSEvent) {}
 	}
+	if systemPrompt == "" {
+		systemPrompt = BuildSystemPrompt(true)
+	}
 	return &Engine{
-		llm:      NewLLMClient(),
-		registry: registry,
-		emitter:  emitter,
+		llm:          NewLLMClient(),
+		registry:     registry,
+		emitter:      emitter,
+		systemPrompt: systemPrompt,
 		messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
-				Content: SystemPrompt,
+				Content: systemPrompt,
 			},
 		},
 	}
@@ -56,7 +61,7 @@ func (e *Engine) ResetMessages() {
 	e.messages = []openai.ChatCompletionMessage{
 		{
 			Role:    openai.ChatMessageRoleSystem,
-			Content: SystemPrompt,
+			Content: e.systemPrompt,
 		},
 	}
 }

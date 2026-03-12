@@ -15,6 +15,8 @@ type Config struct {
 	LLMAPIEndpoint string
 	LLMAPIKey      string
 	LLMModel       string
+	LLMDebug       bool
+	LLMDebugDir    string
 
 	// 服务配置
 	ServerPort           string
@@ -22,6 +24,7 @@ type Config struct {
 	CacheRoot            string
 	MetadataDBPath       string
 	TempDir              string
+	PythonMCPURL         string
 	AuthSecret           string
 	DefaultUserID        string
 	DefaultUserEmail     string
@@ -57,11 +60,14 @@ func Load() {
 		LLMAPIEndpoint:       getEnv("LLM_API_ENDPOINT", defaultAPIEndpoint),
 		LLMAPIKey:            getEnv("LLM_API_KEY", ""),
 		LLMModel:             getEnv("LLM_MODEL", defaultModel),
+		LLMDebug:             getEnvBool("LLM_DEBUG", false),
+		LLMDebugDir:          getEnv("LLM_DEBUG_DIR", "./data/llm-debug"),
 		ServerPort:           getEnv("SERVER_PORT", "8080"),
 		StorageRoot:          getEnv("STORAGE_ROOT", "./storage"),
 		CacheRoot:            getEnv("CACHE_ROOT", "./data/cache"),
 		MetadataDBPath:       getEnv("METADATA_DB_PATH", "./data/metadata/app.db"),
 		TempDir:              getEnv("TEMP_DIR", "./tmp"),
+		PythonMCPURL:         getEnv("PYTHON_MCP_URL", ""),
 		AuthSecret:           getEnv("AUTH_SECRET", ""),
 		DefaultUserID:        getEnv("DEFAULT_USER_ID", ""),
 		DefaultUserEmail:     getEnv("DEFAULT_USER_EMAIL", ""),
@@ -83,4 +89,19 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }

@@ -1,0 +1,13 @@
+sku,category,product_name,warehouse,on_hand,reorder_point,avg_daily_sales,lead_time_days,unit_cost,status
+SKU1001,Electronics,Bluetooth Earbuds,East Hub,420,260,18,12,118,healthy
+SKU1002,Electronics,Smart Fitness Band,East Hub,180,220,14,18,146,risk
+SKU1003,Home,Air Fryer 5L,North Hub,96,140,9,21,188,risk
+SKU1004,Home,Cordless Vacuum,North Hub,155,120,6,20,265,healthy
+SKU1005,Fashion,Running Shoes Pro,South Hub,260,180,11,14,82,healthy
+SKU1006,Fashion,Lightweight Jacket,South Hub,88,130,7,19,74,risk
+SKU1007,Beauty,Vitamin C Serum,West Hub,340,210,16,10,36,healthy
+SKU1008,Beauty,Hydration Mask Set,West Hub,72,100,8,16,29,risk
+SKU1009,Office,Mechanical Keyboard,East Hub,144,110,5,24,210,healthy
+SKU1010,Office,Ergonomic Mouse,North Hub,68,95,6,17,98,risk
+SKU1011,Kitchen,Stainless Bottle,South Hub,410,240,15,11,42,healthy
+SKU1012,Kitchen,Electric Kettle,West Hub,54,90,5,22,96,risk

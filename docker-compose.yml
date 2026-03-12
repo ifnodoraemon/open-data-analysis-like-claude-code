@@ -5,7 +5,8 @@ services:
     restart: unless-stopped
     env_file: ./server/.env
     environment:
-      - PYTHON_MCP_URL=http://python-executor:8081
+      LLM_DEBUG: "true"
+      LLM_DEBUG_DIR: /app/data/llm-debug
     ports:
       - "8080:8080"
     volumes:
@@ -14,7 +15,12 @@ services:
       - python-workspace:/app/python-workspace
     depends_on:
       python-executor:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   python-executor:
     build: ./python-executor
@@ -26,6 +32,11 @@ services:
       - ./data:/app/data:ro
       - uploads:/app/uploads:ro
       - python-workspace:/app/workspace
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   client:
     build: ./client
@@ -34,7 +45,8 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - server
+      server:
+        condition: service_healthy
 
 volumes:
   uploads:

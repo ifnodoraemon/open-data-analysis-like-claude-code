@@ -337,5 +337,21 @@ export function useWebSocket() {
     send('reset_session', { keepFiles })
   }
 
-  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, openRun, disconnect, sendMessage, stop, resetSession }
+  async function createNewSession() {
+    disconnect()
+    store.resetAnalysis({ keepFiles: false })
+    store.setSession('')
+    store.updateReport('')
+    connect()
+    // 等待连接建立后刷新 session 列表
+    setTimeout(async () => {
+      try {
+        await loadSessions()
+      } catch (e) {
+        console.error('刷新 session 列表失败:', e)
+      }
+    }, 1000)
+  }
+
+  return { connected, bootstrap, connect, login, switchWorkspace, loadSessions, openSession, openRun, disconnect, sendMessage, stop, resetSession, createNewSession }
 }

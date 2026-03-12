@@ -12,6 +12,10 @@ server/.env
 # Data cache
 server/data/cache/*.db
 server/uploads/
+data/
+server/data/metadata/
+server/storage/
+server/tmp/
 
 # IDE
 .vscode/

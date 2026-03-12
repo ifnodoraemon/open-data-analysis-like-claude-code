@@ -56,6 +56,16 @@ Current default implementation:
 - 上传文件对象 key：`workspaces/{workspace_id}/files/{file_id}/source/{filename}`
 - 报告对象 key：`workspaces/{workspace_id}/runs/{run_id}/report/report.html`
 
+### Local Docker debugging / 本地 Docker 调试
+
+When started with `docker compose`, the server enables `LLM_DEBUG=true` by default and writes model request/response traces to a separate JSONL directory:
+
+通过 `docker compose` 启动本地环境时，服务端默认开启 `LLM_DEBUG=true`，并将模型输入输出写入独立的 JSONL 调试目录：
+
+- Path / 路径: `data/llm-debug/`
+- Format / 格式: one JSON record per line / 每行一个 JSON 记录
+- Separation / 隔离: kept outside normal app stdout logs / 不与程序标准日志混写
+
 ## Tech Stack / 技术栈
 
 | Layer | Stack |

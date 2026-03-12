@@ -1,5 +1,5 @@
 <template>
-  <LoginScreen v-if="!isAuthenticated" @success="initApp" />
+  <LoginScreen v-if="!isAuthenticated" />
   <div v-else class="app">
     <TopNav />
     <div class="main-content">
@@ -12,7 +12,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useWebSocket } from './composables/useWebSocket.js'
 import { useAgentStore } from './stores/agent.js'
 import TopNav from './components/layout/TopNav.vue'
@@ -29,6 +29,12 @@ const isAuthenticated = computed(() => !!store.token && !!store.user)
 
 onMounted(() => {
   if (store.token) {
+    initApp()
+  }
+})
+
+watch(isAuthenticated, (next, prev) => {
+  if (next && !prev) {
     initApp()
   }
 })

@@ -34,13 +34,13 @@ import { computed } from 'vue'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
-const { connected, resetSession, disconnect, switchWorkspace } = useWebSocket()
+const { connected, createNewSession, disconnect, switchWorkspace } = useWebSocket()
 const store = useAgentStore()
 const workspaceOptions = computed(() => store.workspaces || [])
 const workspaceId = computed(() => store.workspace?.id || '')
 
 function clearAll() {
-  resetSession(true)
+  createNewSession()
 }
 
 async function handleWorkspaceChange(event) {

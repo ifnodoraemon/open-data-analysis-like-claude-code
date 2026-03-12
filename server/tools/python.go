@@ -2,11 +2,11 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -60,6 +60,32 @@ type pyExecResponse struct {
 	DurationMs int      `json:"duration_ms"`
 }
 
+func (t *RunPythonTool) Endpoint() string {
+	endpoint := strings.TrimSpace(t.MCPEndpoint)
+	if endpoint == "" {
+		endpoint = "http://python-executor:8081"
+	}
+	return strings.TrimRight(endpoint, "/")
+}
+
+func (t *RunPythonTool) HealthCheck(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Endpoint()+"/health", nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 	var params struct {
 		Code    string `json:"code"`
@@ -72,13 +98,7 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 		params.Timeout = 30
 	}
 
-	endpoint := t.MCPEndpoint
-	if endpoint == "" {
-		endpoint = os.Getenv("PYTHON_MCP_URL")
-	}
-	if endpoint == "" {
-		endpoint = "http://python-executor:8081"
-	}
+	endpoint := t.Endpoint()
 
 	// 调用 Python MCP 服务
 	reqBody, _ := json.Marshal(pyExecRequest{

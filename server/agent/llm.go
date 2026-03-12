@@ -91,6 +91,19 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 	if err != nil {
 		return nil, fmt.Errorf("序列化 Responses 请求失败: %w", err)
 	}
+	start := time.Now()
+	traceID := llmDebugWriter.NewTraceID()
+	requestPath := llmDebugWriter.WriteBlob(traceID, "request.json", reqBytes)
+	l.debugLog(traceID, "llm.request", map[string]interface{}{
+		"provider":      l.provider,
+		"model":         l.model,
+		"endpoint":      endpoint,
+		"messages":      len(messages),
+		"tools":         summarizeTools(tools),
+		"instructions":  clipText(reqBody.Instructions, 1200),
+		"input_preview": clipText(string(reqBytes), 2000),
+		"request_path":  requestPath,
+	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBytes))
 	if err != nil {
@@ -107,13 +120,32 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		responsePath := llmDebugWriter.WriteBlob(traceID, "response.error.txt", body)
+		l.debugLog(traceID, "llm.error", map[string]interface{}{
+			"status":      resp.StatusCode,
+			"duration_ms": time.Since(start).Milliseconds(),
+			"body":        clipText(string(body), 2000),
+			"response_path": responsePath,
+		})
 		return nil, fmt.Errorf("OpenAI Responses API 调用失败: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取 Responses 响应失败: %w", err)
+	}
+	responsePath := llmDebugWriter.WriteBlob(traceID, "response.json", respBytes)
+
 	var apiResp responsesAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+	if err := json.Unmarshal(respBytes, &apiResp); err != nil {
 		return nil, fmt.Errorf("解析 Responses 响应失败: %w", err)
 	}
+	l.debugLog(traceID, "llm.response", map[string]interface{}{
+		"duration_ms":    time.Since(start).Milliseconds(),
+		"output_preview": clipText(apiResp.OutputText, 1200),
+		"items":          len(apiResp.Output),
+		"response_path":  responsePath,
+	})
 	return l.convertResponsesResponse(&apiResp), nil
 }
 
@@ -246,6 +278,12 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 					Arguments: item.Arguments,
 				},
 			})
+		default:
+			l.debugLog("", "llm.output_item", map[string]interface{}{
+				"type": item.Type,
+				"name": item.Name,
+				"id":   item.ID,
+			})
 		}
 	}
 
@@ -253,6 +291,32 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 	return &openai.ChatCompletionResponse{
 		Choices: []openai.ChatCompletionChoice{choice},
 	}
+}
+
+func (l *LLMClient) debugLog(traceID, event string, payload map[string]interface{}) {
+	llmDebugWriter.WriteRecord(traceID, event, payload)
+}
+
+func summarizeTools(tools []openai.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Function != nil {
+			names = append(names, tool.Function.Name)
+		}
+	}
+	return names
+}
+
+func clipText(input string, max int) string {
+	input = strings.TrimSpace(input)
+	if input == "" || max <= 0 {
+		return input
+	}
+	runes := []rune(input)
+	if len(runes) <= max {
+		return input
+	}
+	return string(runes[:max]) + "...(truncated)"
 }
 
 // chatAnthropic Anthropic 格式调用，转换为统一的 OpenAI 格式返回

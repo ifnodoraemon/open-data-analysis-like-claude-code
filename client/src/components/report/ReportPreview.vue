@@ -13,7 +13,7 @@
         <div class="empty-icon">📊</div>
         <p>研究报告将在这里实时渲染</p>
       </div>
-      <iframe v-else-if="mode === 'preview'" :srcdoc="reportHTML" class="report-iframe" sandbox="allow-scripts"></iframe>
+      <iframe v-else-if="mode === 'preview'" :srcdoc="reportHTML" class="report-iframe" sandbox="allow-scripts allow-same-origin"></iframe>
       <pre v-else class="source-code">{{ reportHTML }}</pre>
     </div>
   </div>
