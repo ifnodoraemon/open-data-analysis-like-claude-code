@@ -56,6 +56,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	registry.Register(&tools.DescribeDataTool{Ingester: ingester})
 	registry.Register(&tools.QueryDataTool{Ingester: ingester})
 	registry.Register(&tools.CreateChartTool{Charts: &charts})
+	registry.Register(&tools.RunPythonTool{})
 	registry.Register(&tools.WriteSectionTool{ReportSections: &reportSections})
 	registry.Register(&tools.FinalizeReportTool{
 		ReportSections: &reportSections,
