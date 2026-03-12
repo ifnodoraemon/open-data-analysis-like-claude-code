@@ -206,13 +206,13 @@ type ReportSection struct {
 
 func (t *WriteSectionTool) Name() string { return "write_section" }
 func (t *WriteSectionTool) Description() string {
-	return "向研究报告中追加一个章节。支持的章节类型: title(报告标题), summary(执行摘要), overview(数据概述), analysis(分析章节), chart(图表描述), conclusion(结论与建议)。内容使用 Markdown 格式。"
+	return "向研究报告中追加一个章节。支持的章节类型: title(报告标题), summary(执行摘要), overview(数据概述), analysis(分析章节，含图表和解读), conclusion(结论与建议)。图表解读应写在 analysis 章节内，紧跟 {{chart:chart_id}} 之后，不要创建单独的图表说明章节。内容使用 Markdown 格式。"
 }
 func (t *WriteSectionTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"section_type": {"type": "string", "enum": ["title", "summary", "overview", "analysis", "chart", "conclusion"], "description": "章节类型"},
+			"section_type": {"type": "string", "enum": ["title", "summary", "overview", "analysis", "conclusion"], "description": "章节类型"},
 			"title": {"type": "string", "description": "章节标题"},
 			"content": {"type": "string", "description": "章节内容 (Markdown 格式)"}
 		},

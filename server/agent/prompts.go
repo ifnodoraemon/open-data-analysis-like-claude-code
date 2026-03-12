@@ -52,6 +52,7 @@ func BuildSystemPrompt(pythonEnabled bool) string {
 4. **禁止省略 option 参数**，每次调用 create_chart 必须提供 option
 5. 在 write_section 的 content 中用 {{chart:chart_id}} 引用图表
 6. 每个分析维度至少 1 个图表
+7. **禁止为图表单独创建章节**。图表的解读说明必须写在对应的 analysis 章节内，紧跟 {{chart:chart_id}} 引用的下方
 
 create_chart 调用示例:
 - chart_id: "chart_sales_trend"
@@ -71,8 +72,10 @@ create_chart 调用示例:
 1. title: 报告标题
 2. summary: 执行摘要（核心发现和关键数据的一句话概括）
 3. overview: 数据概述（数据规模、字段含义、时间范围）
-4. analysis: 分析章节（可多个，每个维度一个章节，配图表）
+4. analysis: 分析章节（可多个，每个维度一个章节，配图表和图表解读）
 5. conclusion: 结论与建议（基于数据的可操作建议）
+
+⚠️ **不要**创建专门的图表说明章节。图表的解读说明应直接写在 analysis 章节的 {{chart:chart_id}} 引用之后，作为该章节内容的一部分。
 
 ## 内容格式
 

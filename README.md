@@ -232,4 +232,10 @@ This repository is being built as a new product, so the priority is reducing fut
 
 ## License / 许可证
 
-MIT
+Apache License 2.0 with Commons Clause — see [LICENSE](LICENSE) for details.
+
+This means you can freely use, modify, and distribute the code, but you may not sell it as a commercial product or service.
+
+本项目采用 Apache License 2.0 + Commons Clause 许可证，详见 [LICENSE](LICENSE)。
+
+你可以自由使用、修改和分发代码，但不得将其作为商业产品或服务进行销售。

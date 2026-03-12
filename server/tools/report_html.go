@@ -47,19 +47,11 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 					<h2>%s</h2>
 					<div class="summary-box">%s</div>
 				</div>`, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
-		case "overview", "analysis":
+		case "overview", "analysis", "chart":
 			chapterNum++
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
 			bodyHTML.WriteString(fmt.Sprintf(`
 				<div class="section" id="section-%d">
-					<h2>%d. %s</h2>
-					<div class="content">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
-		case "chart":
-			chapterNum++
-			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
-			bodyHTML.WriteString(fmt.Sprintf(`
-				<div class="section chart-section" id="section-%d">
 					<h2>%d. %s</h2>
 					<div class="content">%s</div>
 				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
