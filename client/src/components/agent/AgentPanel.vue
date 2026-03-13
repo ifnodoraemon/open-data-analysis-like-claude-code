@@ -1,21 +1,5 @@
 <template>
   <div class="agent-panel">
-    <div class="panel-header">
-      <div class="header-main">
-        <span>🤖 Agent 执行</span>
-        <select
-          v-if="sessions.length > 0"
-          class="session-select"
-          :value="currentSessionId"
-          @change="handleSessionChange"
-        >
-          <option v-for="session in sessions" :key="session.id" :value="session.id">
-            {{ formatSessionLabel(session) }}
-          </option>
-        </select>
-      </div>
-      <span class="msg-count">{{ messages.length }} 条消息 / {{ runs.length }} 个任务</span>
-    </div>
     <div v-if="activeRun || selectedRun" class="run-summary">
       <span v-if="activeRun" class="summary-pill live">
         正在执行 {{ truncate(activeRun.summary || activeRun.inputMessage || activeRun.id, 36) }}
@@ -141,14 +125,12 @@ import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
 
 const store = useAgentStore()
-const { openSession, openRun } = useWebSocket()
+const { openRun } = useWebSocket()
 const messages = computed(() => store.messages)
 const isRunning = computed(() => store.isRunning)
-const sessions = computed(() => store.sessions || [])
 const runs = computed(() => store.runs || [])
 const selectedRunId = computed(() => store.selectedRunId)
 const activeRunId = computed(() => store.activeRunId)
-const currentSessionId = computed(() => store.sessionId || '')
 const selectedRun = computed(() => runs.value.find(run => run.id === selectedRunId.value) || null)
 const activeRun = computed(() => runs.value.find(run => run.id === activeRunId.value) || null)
 const messagesEl = ref(null)
@@ -182,23 +164,8 @@ function truncate(str, max) {
   return str.length > max ? str.slice(0, max) + '\n... (已截断)' : str
 }
 
-function formatSessionLabel(session) {
-  const date = session.lastSeenAt ? new Date(session.lastSeenAt).toLocaleDateString() : ''
-  return `${session.title || session.id}${date ? ` · ${date}` : ''}`
-}
-
 function renderMarkdown(content) {
   return marked.parse(String(content || ''))
-}
-
-async function handleSessionChange(event) {
-  const sessionId = event.target.value
-  if (!sessionId || sessionId === currentSessionId.value) return
-  try {
-    await openSession(sessionId)
-  } catch (err) {
-    console.error('open session failed:', err)
-  }
 }
 
 async function handleRunClick(runId) {
@@ -217,38 +184,6 @@ async function handleRunClick(runId) {
   flex-direction: column;
   height: 100%;
   background: var(--bg-primary);
-}
-
-.panel-header {
-  padding: 10px 16px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.header-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.msg-count { color: var(--text-muted); font-weight: 400; }
-
-.session-select {
-  min-width: 180px;
-  max-width: 280px;
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  padding: 4px 8px;
-  border-radius: 8px;
-  outline: none;
 }
 
 .run-history {
@@ -450,59 +385,31 @@ async function handleRunClick(runId) {
   color: var(--text-muted);
 }
 
-.msg-user { background: var(--bg-tertiary); }
-.msg-thinking { background: rgba(88, 166, 255, 0.05); border-left: 2px solid var(--accent-blue); }
-.msg-tool_call { background: rgba(188, 140, 255, 0.05); border-left: 2px solid var(--accent-purple); }
-.msg-tool_result { background: rgba(63, 185, 80, 0.05); border-left: 2px solid var(--accent-green); }
-.msg-complete { background: rgba(63, 185, 80, 0.08); border-left: 2px solid var(--accent-green); }
-.msg-error { background: rgba(248, 81, 73, 0.08); border-left: 2px solid var(--accent-red); }
+.msg-user {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.msg-thinking, .msg-tool_call, .msg-tool_result, .msg-complete, .msg-error {
+  background: transparent;
+  border-left: none;
+}
+
+.msg-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 2px; }
+
+.thinking { color: var(--text-muted); font-style: italic; }
 
 .tool-name {
-  background: var(--accent-purple);
-  color: white;
-  padding: 1px 6px;
-  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 6px;
   font-size: 0.7rem;
   margin-left: 6px;
+  border: 1px solid var(--border);
 }
-
-.duration {
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  margin-left: 8px;
-}
-
-.tool-details {
-  margin-top: 6px;
-}
-
-.tool-details summary {
-  font-size: 0.75rem;
-  color: var(--accent-blue);
-  cursor: pointer;
-  user-select: none;
-}
-
-.tool-args, .tool-result {
-  font-size: 0.75rem;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  background: var(--bg-secondary);
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin-top: 6px;
-  overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--text-secondary);
-}
-
-.complete-label { color: var(--accent-green); }
-.error-label { color: var(--accent-red); }
-.error-content { color: var(--accent-red); }
-
-.thinking { color: var(--accent-blue); font-style: italic; }
 
 .running-indicator {
   display: flex;

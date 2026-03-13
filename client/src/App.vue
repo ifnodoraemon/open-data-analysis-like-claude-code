@@ -9,13 +9,21 @@
   </div>
   <LoginScreen v-else-if="!isAuthenticated" />
   <div v-else class="app">
-    <TopNav />
+    <Sidebar v-if="isSidebarOpen" @toggle="toggleSidebar" />
     <div class="main-content">
-      <AgentPanel class="panel-left" :style="{ width: leftWidth + '%' }" />
+      <div class="chat-area" :style="{ width: leftWidth + '%' }">
+        <div class="top-bar-minimal">
+          <button v-if="!isSidebarOpen" class="toggle-sidebar-btn" @click="toggleSidebar" title="展开侧边栏">
+            <span class="icon">▤</span>
+          </button>
+          <span class="logo">📊 数据分析智能体</span>
+        </div>
+        <AgentPanel class="panel-left" />
+        <InputBar class="input-bar-container" />
+      </div>
       <div class="splitter" @mousedown="startDrag" :class="{ dragging: isDragging }"></div>
       <ReportPreview class="panel-right" :style="{ width: (100 - leftWidth) + '%' }" />
     </div>
-    <InputBar />
   </div>
 </template>
 
@@ -23,7 +31,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import { useWebSocket } from './composables/useWebSocket.js'
 import { useAgentStore } from './stores/agent.js'
-import TopNav from './components/layout/TopNav.vue'
+import Sidebar from './components/layout/Sidebar.vue'
 import AgentPanel from './components/agent/AgentPanel.vue'
 import ReportPreview from './components/report/ReportPreview.vue'
 import InputBar from './components/layout/InputBar.vue'
@@ -31,8 +39,9 @@ import LoginScreen from './components/auth/LoginScreen.vue'
 
 const { initializeApp } = useWebSocket()
 const store = useAgentStore()
-const leftWidth = ref(45)
+const leftWidth = ref(50)
 const isDragging = ref(false)
+const isSidebarOpen = ref(true)
 const isAuthenticated = computed(() => !!store.token && !!store.user)
 const isRestoring = computed(() => store.bootstrapState === 'loading')
 const hasRestoreError = computed(() => store.bootstrapState === 'error' && !!store.token)
@@ -60,6 +69,10 @@ function initApp() {
 
 function retryInit() {
   void initApp()
+}
+
+function toggleSidebar() {
+  isSidebarOpen.value = !isSidebarOpen.value
 }
 
 function startDrag(e) {
@@ -127,18 +140,83 @@ function startDrag(e) {
 .app {
   height: 100vh;
   display: flex;
-  flex-direction: column;
   background: var(--bg-primary);
+  overflow: hidden;
 }
 
 .main-content {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
+  background: var(--bg-primary);
 }
 
-.panel-left, .panel-right {
+.chat-area {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 300px;
+  background: var(--bg-primary);
+}
+
+.top-bar-minimal {
+  padding: 16px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.toggle-sidebar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-right: 12px;
+  transition: all var(--transition);
+}
+
+.toggle-sidebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.panel-left {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.input-bar-container {
+  padding: 16px;
+  background: var(--bg-primary);
+  border-top: none;
+  /* Instead of a full-width border, we use background. Let AgentPanel handle its bottom padding. */
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.panel-right {
   overflow: hidden;
+  min-width: 300px;
 }
 
 .splitter {
@@ -147,6 +225,7 @@ function startDrag(e) {
   cursor: col-resize;
   transition: background var(--transition);
   flex-shrink: 0;
+  z-index: 10;
 }
 
 .splitter:hover, .splitter.dragging {

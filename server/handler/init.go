@@ -26,6 +26,7 @@ var (
 	runRepo         repository.RunRepository
 	sessionRepo     repository.SessionRepository
 	reportRepo      repository.ReportRepository
+	messageRepo     repository.MessageRepository
 )
 
 func Initialize() {
@@ -51,6 +52,7 @@ func Initialize() {
 	reportRepo = sqliterepo.NewReportRepository(store.DB)
 	sessionRepo = sqliterepo.NewSessionRepository(store.DB)
 	runRepo = sqliterepo.NewRunRepository(store.DB)
+	messageRepo = sqliterepo.NewMessageRepository(store.DB)
 
 	now := time.Now()
 	_ = userRepo.Create(context.Background(), &domain.User{

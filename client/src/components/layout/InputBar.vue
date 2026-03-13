@@ -110,8 +110,7 @@ function formatSize(bytes) {
 
 <style scoped>
 .input-bar {
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  background: transparent;
   padding: 8px 16px;
   flex-shrink: 0;
 }
@@ -135,7 +134,7 @@ function formatSize(bytes) {
   background: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 12px;
   cursor: pointer;
   transition: all var(--transition);
@@ -144,7 +143,6 @@ function formatSize(bytes) {
 
 .template-btn:hover {
   background: var(--bg-hover);
-  border-color: var(--accent-blue);
   color: var(--text-primary);
 }
 
@@ -157,7 +155,7 @@ function formatSize(bytes) {
 
 .file-tag {
   font-size: 0.75rem;
-  background: var(--bg-card);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   padding: 2px 8px;
   border-radius: 4px;
@@ -170,6 +168,11 @@ function formatSize(bytes) {
   display: flex;
   align-items: center;
   gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
 }
 
 .upload-btn {
@@ -178,31 +181,29 @@ function formatSize(bytes) {
   padding: 4px;
   border-radius: 6px;
   transition: background var(--transition);
+  color: var(--text-secondary);
 }
 
-.upload-btn:hover { background: var(--bg-hover); }
+.upload-btn:hover { background: var(--border-light); }
 .upload-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 
 .input-field {
   flex: 1;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   font-family: inherit;
   resize: none;
   outline: none;
-  transition: border-color var(--transition);
 }
 
-.input-field:focus { border-color: var(--accent-blue); }
 .input-field::placeholder { color: var(--text-muted); }
 
 .send-btn, .stop-btn {
-  padding: 8px 16px;
-  border-radius: 8px;
+  padding: 6px 14px;
+  border-radius: 12px;
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
@@ -211,17 +212,18 @@ function formatSize(bytes) {
 }
 
 .send-btn {
-  background: var(--accent-blue);
-  color: white;
+  background: var(--text-primary);
+  color: var(--bg-primary);
 }
 
-.send-btn:hover:not(:disabled) { opacity: 0.9; }
-.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.send-btn:hover:not(:disabled) { opacity: 0.85; }
+.send-btn:disabled { opacity: 0.3; cursor: not-allowed; background: var(--text-muted); }
 
 .stop-btn {
-  background: var(--accent-red);
-  color: white;
+  background: var(--bg-primary);
+  color: var(--accent-red);
+  border: 1px solid var(--border);
 }
 
-.stop-btn:hover { opacity: 0.9; }
+.stop-btn:hover { background: rgba(220, 38, 38, 0.05); }
 </style>

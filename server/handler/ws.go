@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
@@ -121,6 +123,13 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				})
 				continue
 			}
+			
+			// Persist UserMessage
+			saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
+				Type: "user",
+				Data: userMsg,
+			})
+
 			_ = sessionRepo.UpdateLastRun(r.Context(), sess.ID, runID)
 			if record, err := sessionRepo.GetByID(r.Context(), sess.ID); err == nil {
 				if record.Title == "" || record.Title == "未命名分析" {
@@ -136,17 +145,20 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			runEmitter := func(runID string) func(agent.WSEvent) {
 				return func(ev agent.WSEvent) {
 					sendSessionEvent(conn, &writeMu, sess.ID, runID, ev)
+					saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, ev)
 
 					if ev.Type == agent.EventToolResult {
 						if result, ok := ev.Data.(agent.ToolResultData); ok {
 							switch result.Name {
 							case "write_section":
-								sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+								updateEv := agent.WSEvent{
 									Type: agent.EventReportUpdate,
 									Data: agent.ReportUpdateData{
 										HTML: tools.RenderReportHTML("", "", sess.ReportState),
 									},
-								})
+								}
+								sendSessionEvent(conn, &writeMu, sess.ID, runID, updateEv)
+								saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, updateEv)
 							case "finalize_report":
 								finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
 								if reportFile, err := fileService.SaveReportHTML(r.Context(), service.SaveReportInput{
@@ -162,21 +174,25 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 									_ = runRepo.BindReportFile(r.Context(), runID, reportFile.ID)
 									log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
 								} else {
-									sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+									errEv := agent.WSEvent{
 										Type: agent.EventError,
 										Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
-									})
+									}
+									sendSessionEvent(conn, &writeMu, sess.ID, runID, errEv)
+									saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, errEv)
 								}
 								if title := strings.TrimSpace(sess.ReportState.FinalTitle); title != "" {
 									_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, title)
 								}
-								sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+								finalEv := agent.WSEvent{
 									Type: agent.EventReportFinal,
 									Data: agent.ReportUpdateData{
 										HTML:  finalHTML,
 										Title: strings.TrimSpace(sess.ReportState.FinalTitle),
 									},
-								})
+								}
+								sendSessionEvent(conn, &writeMu, sess.ID, runID, finalEv)
+								saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, finalEv)
 							}
 						}
 					}
@@ -280,6 +296,54 @@ func deriveSessionTitle(input string) string {
 		return string(runes[:28]) + "..."
 	}
 	return title
+}
+
+func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev agent.WSEvent) {
+	if messageRepo == nil {
+		return
+	}
+
+	msg := &domain.RunMessage{
+		ID:          uuid.New().String(),
+		RunID:       runID,
+		SessionID:   sessionID,
+		WorkspaceID: workspaceID,
+		Type:        string(ev.Type),
+		CreatedAt:   time.Now(),
+	}
+
+	switch data := ev.Data.(type) {
+	case agent.UserMessage:
+		msg.Content = data.Content
+	case agent.ThinkingData:
+		msg.Content = data.Content
+	case agent.ToolCallData:
+		msg.Name = data.Name
+		argsBytes, _ := json.Marshal(data.Arguments)
+		msg.Content = string(argsBytes)
+	case agent.ToolResultData:
+		msg.Name = data.Name
+		msg.Content = string(data.Result)
+		msg.Duration = &data.Duration
+		success := data.Success
+		msg.Success = &success
+	case agent.ErrorData:
+		msg.Content = data.Message
+	case agent.CompleteData:
+		msg.Content = data.Summary
+	case agent.ReportUpdateData:
+		msg.Content = "Report updating..."
+	default:
+		// Attempt to marshal any other unhandled types as JSON
+		contentBytes, err := json.Marshal(ev.Data)
+		if err == nil {
+			msg.Content = string(contentBytes)
+		}
+	}
+
+	if err := messageRepo.Create(ctx, msg); err != nil {
+		log.Printf("Failed to save event to db run_id=%s type=%s err=%v", runID, ev.Type, err)
+	}
 }
 
 func sendSessionEvent(conn *websocket.Conn, mu *sync.Mutex, sessionID, runID string, event agent.WSEvent) {

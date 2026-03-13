@@ -80,3 +80,61 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 		"runs":    []map[string]interface{}{},
 	})
 }
+
+func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
+	identity, _ := auth.FromContext(r.Context())
+	sessionID := chi.URLParam(r, "sessionID")
+
+	session, err := sessionRepo.GetByID(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "无权修改该会话", http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "无效的请求体", http.StatusBadRequest)
+		return
+	}
+
+	if req.Title != "" {
+		if err := sessionRepo.UpdateTitle(r.Context(), sessionID, req.Title); err != nil {
+			http.Error(w, "更新标题失败", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	session.Title = req.Title
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"session": serializeSession(*session),
+	})
+}
+
+func DeleteSessionHandler(w http.ResponseWriter, r *http.Request) {
+	identity, _ := auth.FromContext(r.Context())
+	sessionID := chi.URLParam(r, "sessionID")
+
+	session, err := sessionRepo.GetByID(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "无权删除该会话", http.StatusForbidden)
+		return
+	}
+
+	if err := sessionRepo.Delete(r.Context(), sessionID); err != nil {
+		http.Error(w, "删除会话失败", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

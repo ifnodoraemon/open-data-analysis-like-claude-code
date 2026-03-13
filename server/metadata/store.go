@@ -125,6 +125,19 @@ func (s *Store) migrate() error {
 			snapshot_json TEXT NOT NULL,
 			created_at DATETIME NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS run_messages (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			workspace_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			name TEXT,
+			content TEXT NOT NULL,
+			success BOOLEAN,
+			duration INTEGER,
+			created_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_run_messages_run ON run_messages(run_id)`,
 	}
 
 	for _, stmt := range stmts {

@@ -194,6 +194,38 @@ export function useWebSocket() {
     if (!runId) return
     store.setSelectedRun(runId)
     store.updateReport('')
+    
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
+        headers: authHeaders(),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data && data.messages) {
+          const historicalMessages = data.messages.map(msg => {
+            let parsedArgs = msg.content
+            if (msg.type === 'tool_call') {
+              try { parsedArgs = JSON.parse(msg.content) } catch (e) {}
+            }
+            return {
+              id: msg.id,
+              type: msg.type,
+              content: msg.type !== 'tool_call' && msg.type !== 'tool_result' ? msg.content : undefined,
+              name: msg.name,
+              arguments: msg.type === 'tool_call' ? parsedArgs : undefined,
+              result: msg.type === 'tool_result' ? msg.content : undefined,
+              duration: msg.duration,
+              success: msg.success,
+              timestamp: new Date(msg.createdAt).toLocaleTimeString()
+            }
+          })
+          store.setMessages(historicalMessages)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load run messages:', err)
+    }
+
     await loadRunReport(runId)
   }
 
@@ -533,7 +565,41 @@ export function useWebSocket() {
     await connect()
   }
 
-  return { connected, bootstrap, initializeApp, connect, login, switchWorkspace, loadSessions, openSession, openRun, downloadRunReport, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession }
+  async function renameSession(sessionId, title) {
+    if (!sessionId || !title.trim()) return
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ title: title.trim() }),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    const data = await res.json()
+    if (data.session) {
+      store.upsertSession(data.session)
+    }
+  }
+
+  async function deleteSession(sessionId) {
+    if (!sessionId) return
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      throw new Error(await res.text())
+    }
+    await loadSessions()
+    if (store.sessionId === sessionId) {
+      await createNewSession()
+    }
+  }
+
+  return { connected, bootstrap, initializeApp, connect, login, switchWorkspace, loadSessions, openSession, openRun, downloadRunReport, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession, renameSession, deleteSession }
 }
 
 function getDownloadFilename(contentDisposition) {

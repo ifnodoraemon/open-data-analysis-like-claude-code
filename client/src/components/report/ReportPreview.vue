@@ -93,19 +93,21 @@ function exportHTML() {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border);
 }
 
 .panel-header {
-  padding: 10px 16px;
-  font-size: 0.8rem;
+  padding: 16px;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
+  background: var(--bg-primary);
 }
 
 .header-main {
@@ -115,58 +117,67 @@ function exportHTML() {
 }
 
 .run-meta {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   font-weight: 400;
 }
 
-.toolbar { display: flex; gap: 4px; }
+.toolbar { display: flex; gap: 8px; }
 
 .toolbar-btn {
-  background: var(--bg-card);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  padding: 2px 10px;
-  border-radius: 4px;
-  font-size: 0.7rem;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.75rem;
   cursor: pointer;
   transition: all var(--transition);
 }
 
-.toolbar-btn:hover { border-color: var(--accent-blue); color: var(--text-primary); }
-.toolbar-btn.active { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
-.toolbar-btn.export { background: var(--accent-green); color: white; border-color: var(--accent-green); }
-.toolbar-btn.export:hover { opacity: 0.9; }
+.toolbar-btn:hover { border-color: var(--border-light); color: var(--text-primary); background: var(--bg-hover); }
+.toolbar-btn.active { background: var(--text-primary); color: var(--bg-primary); border-color: var(--text-primary); }
+.toolbar-btn.export { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
+.toolbar-btn.export:hover { opacity: 0.9; background: var(--accent-blue); }
 
 .preview-area {
   flex: 1;
   overflow: hidden;
   position: relative;
+  background: var(--bg-secondary);
 }
 
 .empty-state {
   text-align: center;
   padding: 4rem 2rem;
   color: var(--text-muted);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
 }
 
-.empty-icon { font-size: 3rem; margin-bottom: 1rem; }
+.empty-icon { font-size: 3rem; margin-bottom: 1rem; opacity: 0.5; }
 
 .report-iframe {
   width: 100%;
   height: 100%;
   border: none;
-  background: white;
+  background: var(--bg-primary);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.02);
 }
 
 .source-code {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-family: 'SF Mono', 'Fira Code', monospace;
-  padding: 16px;
+  padding: 24px;
   overflow: auto;
   height: 100%;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-all;
+  background: var(--bg-primary);
+  margin: 0;
 }
 </style>

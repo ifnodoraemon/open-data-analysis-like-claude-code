@@ -43,6 +43,8 @@ func main() {
 		protected.Post("/api/sessions", handler.CreateSessionHandler)
 		protected.Get("/api/sessions", handler.ListSessionsHandler)
 		protected.Get("/api/sessions/{sessionID}", handler.GetSessionHandler)
+		protected.Put("/api/sessions/{sessionID}", handler.UpdateSessionHandler)
+		protected.Delete("/api/sessions/{sessionID}", handler.DeleteSessionHandler)
 		protected.Get("/api/runs", handler.ListRunsHandler)
 		protected.Get("/api/runs/{runID}", handler.GetRunHandler)
 		protected.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)

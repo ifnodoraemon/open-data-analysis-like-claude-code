@@ -14,6 +14,7 @@ type FileRepository struct{ db *sql.DB }
 type ReportRepository struct{ db *sql.DB }
 type SessionRepository struct{ db *sql.DB }
 type RunRepository struct{ db *sql.DB }
+type MessageRepository struct{ db *sql.DB }
 
 func NewUserRepository(db *sql.DB) *UserRepository           { return &UserRepository{db: db} }
 func NewWorkspaceRepository(db *sql.DB) *WorkspaceRepository { return &WorkspaceRepository{db: db} }
@@ -21,6 +22,7 @@ func NewFileRepository(db *sql.DB) *FileRepository           { return &FileRepos
 func NewReportRepository(db *sql.DB) *ReportRepository       { return &ReportRepository{db: db} }
 func NewSessionRepository(db *sql.DB) *SessionRepository     { return &SessionRepository{db: db} }
 func NewRunRepository(db *sql.DB) *RunRepository             { return &RunRepository{db: db} }
+func NewMessageRepository(db *sql.DB) *MessageRepository     { return &MessageRepository{db: db} }
 
 func (r *UserRepository) GetByID(ctx context.Context, userID string) (*domain.User, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT id, email, password_hash, name, avatar_url, status, created_at, updated_at, last_login_at FROM users WHERE id = ?`, userID)
@@ -255,6 +257,11 @@ func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID, title st
 	return err
 }
 
+func (r *SessionRepository) Delete(ctx context.Context, sessionID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, sessionID)
+	return err
+}
+
 func (r *SessionRepository) UpdateLastSeen(ctx context.Context, sessionID string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ?, updated_at = ? WHERE id = ?`, time.Now(), time.Now(), sessionID)
 	return err
@@ -354,4 +361,48 @@ func (r *RunRepository) UpdateSummary(ctx context.Context, runID, summary string
 func (r *RunRepository) BindReportFile(ctx context.Context, runID, reportFileID string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE analysis_runs SET report_file_id = ?, updated_at = ? WHERE id = ?`, reportFileID, time.Now(), runID)
 	return err
+}
+
+func (r *MessageRepository) Create(ctx context.Context, msg *domain.RunMessage) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO run_messages (id, run_id, session_id, workspace_id, type, name, content, success, duration, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, msg.ID, msg.RunID, msg.SessionID, msg.WorkspaceID, msg.Type, msg.Name, msg.Content, msg.Success, msg.Duration, msg.CreatedAt)
+	return err
+}
+
+func (r *MessageRepository) ListByRun(ctx context.Context, runID string) ([]domain.RunMessage, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, run_id, session_id, workspace_id, type, name, content, success, duration, created_at
+		FROM run_messages
+		WHERE run_id = ?
+		ORDER BY created_at ASC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []domain.RunMessage
+	for rows.Next() {
+		var msg domain.RunMessage
+		var success sql.NullBool
+		var duration sql.NullInt64
+		if err := rows.Scan(
+			&msg.ID, &msg.RunID, &msg.SessionID, &msg.WorkspaceID,
+			&msg.Type, &msg.Name, &msg.Content, &success, &duration, &msg.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if success.Valid {
+			s := success.Bool
+			msg.Success = &s
+		}
+		if duration.Valid {
+			d := duration.Int64
+			msg.Duration = &d
+		}
+		messages = append(messages, msg)
+	}
+	return messages, rows.Err()
 }

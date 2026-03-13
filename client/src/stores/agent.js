@@ -93,6 +93,10 @@ export const useAgentStore = defineStore('agent', () => {
     runs.value = items || []
   }
 
+  function setMessages(items) {
+    messages.value = items || []
+  }
+
   function setConnectionState(state) {
     connectionState.value = state
   }
@@ -183,6 +187,7 @@ export const useAgentStore = defineStore('agent', () => {
     upsertSession,
     setRuns,
     upsertRun,
+    setMessages,
     setConnectionState,
     setBootstrapState,
     startRun,

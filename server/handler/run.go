@@ -62,6 +62,14 @@ func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"run": serializeRun(r.Context(), *run),
 	}
+
+	messages, err := messageRepo.ListByRun(r.Context(), runID)
+	if err == nil {
+		resp["messages"] = messages
+	} else {
+		resp["messages"] = []domain.RunMessage{}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

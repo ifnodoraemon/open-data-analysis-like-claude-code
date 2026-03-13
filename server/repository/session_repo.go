@@ -13,4 +13,5 @@ type SessionRepository interface {
 	UpdateTitle(ctx context.Context, sessionID, title string) error
 	UpdateLastSeen(ctx context.Context, sessionID string) error
 	UpdateLastRun(ctx context.Context, sessionID, runID string) error
+	Delete(ctx context.Context, sessionID string) error
 }
