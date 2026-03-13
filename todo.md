@@ -692,3 +692,34 @@
 - 第三阶段再评估 Snowflake、BigQuery、ClickHouse
 - 不支持要求开超级权限或关闭数据库安全策略的接入方案
 - 当表名/列名/关系含义不清时，默认先走“小样本 AI 预分析 + 人工确认”，不直接硬分析
+
+## Agentic 架构底层重构建议 (Codebase Architecture)
+
+经过对当前 `server/agent/engine.go` 等代码的审查，当前的本质是一个**单次 Prompt 的 ReAct 扁平大循环**（最多 25 转），缺乏真正 Agent 所需的认知架构。为了支撑上文提到的 P0/P1 能力，建议按以下方向对底层进行重构：
+
+### 1. 引擎状态机化 (State Machine Engine)
+- **现状**：`Engine.Run` 只是一个 `for i := 0; i < MaxIterations; i++` 循环，把所有上下文（用户 input + 所有 tool calls）塞进历史记录中，指望 LLM 靠单体 prompt 搞定全部。
+- **重构**：引入有限状态机（FSM）或基于图的路由（参考 LangGraph 模式）。将 Run 的执行显式切分为：`Plan (规划)` -> `Execute (数据获取/SQL/Python)` -> `Reflect (自我校验)` -> `Synthesize (总结/报告)`。这能极大降低单步 LLM 决策出错的概率。
+
+### 2. Planner-Worker 模式划分
+- **现状**：当前的系统 prompt（`prompts.go`）既要求模型理解数据、写 SQL，又要求它绘图、写报告，职责过大，长上下文极易漂移。
+- **重构**：拆解为多 Agent 协同：
+  - **Planner Agent**：拆解用户的目标为子任务（写到 Sub-goal 列表中），调度具体 Worker。
+  - **Data Worker**：专门接手某个子任务（比如“计算 ROI”），只负责调用 `query_data` 或 `run_python` 拿到确定结果并返回。
+  - **Writer/Reporter Agent**：专门根据 Worker 产出的确凿证据（Evidence）来调用 `write_section`。
+
+### 3. 加入显式的 Working Memory (工作记忆)
+- **现状**：全靠 message history 记住过去的步骤，一旦历史记录达到模型 context 上限或多轮次干扰，前面的重要发现（比如某个复杂计算口径）就会被“遗忘”。
+- **重构**：在 `Session` 或 `RunState` 级别剥离出独立的 `WorkingMemory`。为 LLM 提供 `save_to_memory(key, fact)` 和 `remove_from_memory(key)` 工具。每次 Prompt 组装时，强行把 Memory 里的摘要放在最前面。分析阶段的中间大段 SQL 结果阅后即焚，不进 History，只留结论进 Memory。
+
+### 4. 明确的 `ask_user` 能力与中断恢复机制
+- **现状**：Run 在 WebSocket 内用 goroutine 一杆子执行到底，若需要提问，仅靠抛错或者乱猜。
+- **重构**：
+  - 在 Registry 注册真实的 `ask_user(question, options)` 工具。
+  - LLM 调用该工具时，Engine **立即挂起**，保存断点状态。
+  - 前端收到专用 Event，渲染交互界面等待用户选择。
+  - 用户回复后，通过特定接口带上 RunID 唤醒 Engine，将用户输入作为 Tool Result 继续流转。
+
+### 5. 强制的自我校验边界 (Reflection Check)
+- **现状**：LLM 感觉写完了就去调 `finalize_report`，没有质量卡口。
+- **重构**：在尝试生成报告前（或 Planner 任务完结时），执行一次强制的自我校验节点：把原始问题和收集到的 Evidence 给到一个独立的 `Reviewer Agent`（或带专用 Prompt 的调用），询问“这些证据是否足够且正确地回答了问题？能否互相印证？”。如果 Review 不通过，说明歧义未解决或证据不足，强制退回探索阶段或触发 `ask_user`。

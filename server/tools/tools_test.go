@@ -1,13 +1,28 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
+	"github.com/sashabaranov/go-openai"
 )
+
+func TestMain(m *testing.M) {
+	config.Cfg = &config.Config{
+		LLMAPIKey: "mock-key",
+	}
+	data.AnalyzeTableSemantics = func(ctx context.Context, client *openai.Client, schema *data.SchemaInfo, activeTables []string) (*data.SemanticProfile, error) {
+		return &data.SemanticProfile{
+			TableSummary: "Mock test semantics",
+		}, nil
+	}
+	os.Exit(m.Run())
+}
 
 func TestListTablesToolReturnsStructuredEmptyState(t *testing.T) {
 	t.Parallel()

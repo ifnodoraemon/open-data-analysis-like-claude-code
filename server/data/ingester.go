@@ -485,51 +485,42 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 		return fmt.Errorf("提取概要失败: %w", err)
 	}
 
-	// 2.1 获取目前环境中的其他表 Schema 供大模型做 Join 探测
-	var activeSchemas []SchemaInfo
-	tableRows, _ := ing.db.Query(`SELECT table_name, schema_json FROM _oda_table_metadata`)
+	// 2.1 获取目前环境中的其他表名供大模型做 Join 探测
+	var activeTables []string
+	tableRows, _ := ing.db.Query(`SELECT table_name FROM _oda_table_metadata`)
 	if tableRows != nil {
 		for tableRows.Next() {
-			var tName, sJSON string
-			if err := tableRows.Scan(&tName, &sJSON); err == nil {
-				// 对于现有未用大模型分析过去的纯 SchemaInfo，兼容解析
-				var pastSchema SchemaInfo
-				if json.Unmarshal([]byte(sJSON), &pastSchema) == nil {
-					activeSchemas = append(activeSchemas, pastSchema)
-				}
+			var tName string
+			if err := tableRows.Scan(&tName); err == nil {
+                if tName != schema.TableName {
+				    activeTables = append(activeTables, tName)
+                }
 			}
 		}
 		tableRows.Close()
 	}
 
 	// 2.2 小样本语义大模型预分析 (Item 10)
-	var finalMetadataBytes []byte
-	if config.Cfg == nil {
-		fmt.Printf("[Warning] config.Cfg 未初始化，跳过 LLM Semantics Analyzer，降级采用基础 Schema\n")
-		finalMetadataBytes, _ = json.Marshal(schema)
-	} else if config.Cfg.LLMAPIKey == "" {
-		fmt.Printf("[Warning] LLMAPIKey 为空，跳过 LLM Semantics Analyzer，降级采用基础 Schema\n")
-		finalMetadataBytes, _ = json.Marshal(schema)
-	} else {
-		client := openai.NewClient(config.Cfg.LLMAPIKey)
-		if config.Cfg.LLMBaseURL != "" {
-			cfg := openai.DefaultConfig(config.Cfg.LLMAPIKey)
-			cfg.BaseURL = config.Cfg.LLMBaseURL
-			client = openai.NewClientWithConfig(cfg)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		profile, metaErr := AnalyzeTableSemantics(ctx, client, schema, activeSchemas)
-		if metaErr == nil {
-			fmt.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s\n", tableName)
-			finalMetadataBytes, _ = json.Marshal(profile)
-		} else {
-			// 降级使用基础 SchemaInfo
-			fmt.Printf("[Warning] LLM Semantics Analyzer 失败 (%v)，降级采用基础 Schema\n", metaErr)
-			finalMetadataBytes, _ = json.Marshal(schema)
-		}
+	if config.Cfg == nil || config.Cfg.LLMAPIKey == "" {
+		return fmt.Errorf("系统未配置 LLMAPIKey，无法执行小样本语义预分析")
 	}
+
+	client := openai.NewClient(config.Cfg.LLMAPIKey) // 或其它途径初始化，此处假定能全局读到配置
+	if config.Cfg.LLMBaseURL != "" {
+		cfg := openai.DefaultConfig(config.Cfg.LLMAPIKey)
+		cfg.BaseURL = config.Cfg.LLMBaseURL
+		client = openai.NewClientWithConfig(cfg)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	profile, metaErr := AnalyzeTableSemantics(ctx, client, schema, activeTables)
+	if metaErr != nil {
+		return fmt.Errorf("大模型语义分析失败: %w", metaErr)
+	}
+
+	fmt.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s\n", tableName)
+	finalMetadataBytes, _ := json.Marshal(profile)
 
 	// 2.3 将结果保存到内置元数据表
 	_, _ = ing.db.Exec(`

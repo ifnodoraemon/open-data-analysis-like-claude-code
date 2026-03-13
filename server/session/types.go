@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -128,8 +127,7 @@ func (s *Session) BuildFileContext() string {
 		return ""
 	}
 
-	var parsedSchemas []data.SchemaInfo
-	lines := "当前会话已上传文件及数据概况:\n"
+	lines := "当前会话已上传文件与数据语义概况:\n"
 	for _, file := range files {
 		lines += fmt.Sprintf("=== 文件: %s (ID: %s) ===\n", file.DisplayName, file.ID)
 		
@@ -140,28 +138,12 @@ func (s *Session) BuildFileContext() string {
 		if s.Ingester != nil {
 			schemaJSON, metaErr := s.Ingester.GetTableMetadata(tableName)
 			if metaErr == nil {
-				lines += fmt.Sprintf("数据概况(JSON):\n%s\n", schemaJSON)
-				
-				var extracted data.SchemaInfo
-				if unmarshalErr := json.Unmarshal([]byte(schemaJSON), &extracted); unmarshalErr == nil {
-					parsedSchemas = append(parsedSchemas, extracted)
-				}
+				lines += fmt.Sprintf("AI 语义分析结果:\n%s\n", schemaJSON)
 			} else {
-				lines += "数据概况: 尚未生成或读取失败\n"
+				lines += "语义分析结果: 尚未生成或读取失败\n"
 			}
 		}
 		lines += "\n"
-	}
-
-	// 执行候选多表关系探测
-	candidates := data.DiscoverRelations(parsedSchemas)
-	if len(candidates) > 0 {
-		lines += "=== 系统预诊断的潜在多表关联关系 (JOIN Candidates) ===\n"
-		for _, cand := range candidates {
-			lines += fmt.Sprintf("- 推荐关联: 表 `%s` (字段: %s) <=> 表 `%s` (字段: %s)\n", cand.LeftTable, cand.LeftColumn, cand.RightTable, cand.RightColumn)
-			lines += fmt.Sprintf("  置信度: %.2f | 匹配理由: %s\n", cand.Confidence, cand.Reason)
-		}
-		lines += "(在写 SQL 时，优先参考上述可能的 JOIN 关系)\n\n"
 	}
 
 	return lines

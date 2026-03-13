@@ -28,20 +28,14 @@ type SemanticProfile struct {
 }
 
 // AnalyzeTableSemantics 利用大模型分析表结构的小样本并生成语义化档案
-func AnalyzeTableSemantics(ctx context.Context, client *openai.Client, schema *SchemaInfo, activeSchemas []SchemaInfo) (*SemanticProfile, error) {
+var AnalyzeTableSemantics = func(ctx context.Context, client *openai.Client, schema *SchemaInfo, activeTables []string) (*SemanticProfile, error) {
 	// 构造待分析内容概要
 	schemaBytes, _ := json.MarshalIndent(schema, "", "  ")
 
 	// 构造环境里其它表的简易上下文以找出关联机会
-	var contextTables []string
-	for _, s := range activeSchemas {
-		if s.TableName != schema.TableName {
-			contextTables = append(contextTables, s.TableName)
-		}
-	}
 	tablesCtx := "当前会话环境无其他表。"
-	if len(contextTables) > 0 {
-		tablesCtx = fmt.Sprintf("当前会话环境还有如下表存在，可分析 Join 关系: %s", strings.Join(contextTables, ", "))
+	if len(activeTables) > 0 {
+		tablesCtx = fmt.Sprintf("当前会话环境还有如下表存在，可分析 Join 关系: %s", strings.Join(activeTables, ", "))
 	}
 
 	prompt := fmt.Sprintf(`你是资深数据分析师。你需要对以下刚刚抽取的新表 Schema 进行业务语义预分析。
