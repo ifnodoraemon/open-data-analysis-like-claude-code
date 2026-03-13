@@ -163,7 +163,7 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	return rowCount, colCount, nil
 }
 
-// importExcel 导入 Excel 文件
+// importExcel 导入 Excel 文件（流式处理，带行数硬上限）
 func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
@@ -173,55 +173,105 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 
 	// 默认使用第一个 sheet
 	sheetName := f.GetSheetName(0)
-	rows, err := f.GetRows(sheetName)
+	rows, err := f.Rows(sheetName)
 	if err != nil {
 		return 0, 0, fmt.Errorf("读取 Excel 数据失败: %w", err)
 	}
+	defer rows.Close()
 
-	if len(rows) < 1 {
+	if !rows.Next() {
 		return 0, 0, fmt.Errorf("Excel 文件为空")
 	}
 
 	// 表头
-	headers := rows[0]
+	headers, err := rows.Columns()
+	if err != nil {
+		return 0, 0, fmt.Errorf("读取 Excel 表头失败: %w", err)
+	}
 	colCount := len(headers)
+	if colCount == 0 {
+		return 0, 0, fmt.Errorf("Excel 文件没有表头")
+	}
+
 	sanitizedHeaders := make([]string, colCount)
 	for i, h := range headers {
 		sanitizedHeaders[i] = sanitizeColumnName(h)
 	}
 
-	// 数据行
-	dataRows := rows[1:]
+	// 明确产品上限：最多支持 10 万行
+	const maxExcelRows = 100000
 
-	// 补齐列数
-	normalizedRows := make([][]string, len(dataRows))
-	for j, row := range dataRows {
-		if len(row) < colCount {
-			padded := make([]string, colCount)
-			copy(padded, row)
-			normalizedRows[j] = padded
-		} else {
-			normalizedRows[j] = row[:colCount]
+	// 读取部分数据进行类型推断（最多扫描 500 行）
+	sampleSize := 500
+	var sampleRows [][]string
+	rowsRead := 0
+
+	for i := 0; i < sampleSize; i++ {
+		if !rows.Next() {
+			break
 		}
+		row, err := rows.Columns()
+		if err != nil {
+			continue
+		}
+		// 补齐或截断列数
+		padded := make([]string, colCount)
+		copy(padded, row)
+		sampleRows = append(sampleRows, padded)
+		rowsRead++
+	}
+
+	if rowsRead == 0 {
+		return 0, 0, fmt.Errorf("Excel 数据区为空")
 	}
 
 	// 类型推断
-	colTypes := inferColumnTypes(normalizedRows, colCount)
+	colTypes := inferColumnTypes(sampleRows, colCount)
 
 	// 创建表
 	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
 		return 0, 0, err
 	}
 
-	// 批量插入
-	batchSize := 500
+	// 插入已经读出的 sample 行
 	rowCount := 0
-	for i := 0; i < len(normalizedRows); i += batchSize {
-		end := i + batchSize
-		if end > len(normalizedRows) {
-			end = len(normalizedRows)
+	if len(sampleRows) > 0 {
+		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, sampleRows); err != nil {
+			return rowCount, colCount, err
 		}
-		batch := normalizedRows[i:end]
+		rowCount += len(sampleRows)
+	}
+
+	// 流式读取剩余数据并批量插入
+	batchSize := 500
+	batch := make([][]string, 0, batchSize)
+
+	for rows.Next() {
+		if rowCount+len(batch) >= maxExcelRows {
+			return 0, 0, fmt.Errorf("Excel 文件行数超过 %d 行的上限，若是较大数据集建议转换为 CSV 格式后再上传", maxExcelRows)
+		}
+
+		row, err := rows.Columns()
+		if err != nil {
+			continue // 跳过错误行
+		}
+
+		// 补齐或截断列数
+		padded := make([]string, colCount)
+		copy(padded, row)
+		batch = append(batch, padded)
+
+		if len(batch) >= batchSize {
+			if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
+				return rowCount, colCount, err
+			}
+			rowCount += len(batch)
+			batch = batch[:0] // 复用 slice
+		}
+	}
+
+	// 插入最后不足一个 batch 的数据
+	if len(batch) > 0 {
 		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
 			return rowCount, colCount, err
 		}
