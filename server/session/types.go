@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,11 +127,32 @@ func (s *Session) BuildFileContext() string {
 		return ""
 	}
 
-	lines := "当前会话已上传文件:\n"
+	lines := "当前会话已上传文件及数据概况:\n"
 	for _, file := range files {
-		lines += fmt.Sprintf("- file_id: %s, name: %s\n", file.ID, file.DisplayName)
+		lines += fmt.Sprintf("=== 文件: %s (ID: %s) ===\n", file.DisplayName, file.ID)
+		
+		// 尝试从 Ingester 获取该文件（表名）的预分析语义摘要
+		tableName := strings.TrimSuffix(file.DisplayName, filepath.Ext(file.DisplayName))
+		tableName = sanitizeTableName(tableName)
+
+		if s.Ingester != nil {
+			schemaJSON, metaErr := s.Ingester.GetTableMetadata(tableName)
+			if metaErr == nil {
+				lines += fmt.Sprintf("数据概况(JSON):\n%s\n", schemaJSON)
+			} else {
+				lines += "数据概况: 尚未生成或读取失败\n"
+			}
+		}
+		lines += "\n"
 	}
 	return lines
+}
+
+// sanitizeTableName 保持与 Ingester 中相同的逻辑以便匹配表名
+func sanitizeTableName(name string) string {
+	name = strings.ReplaceAll(name, " ", "_")
+	name = strings.ReplaceAll(name, "-", "_")
+	return strings.ToLower(name)
 }
 
 func (s *Session) StartRun(parent context.Context) (string, context.Context, error) {

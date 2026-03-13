@@ -3,6 +3,7 @@ package data
 import (
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -480,6 +481,28 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 		return err
 	}
 
+	// 2.1 将 schema 结果序列化保存到内置元数据表，供 Agent 直接读取
+	_, _ = ing.db.Exec(`
+		CREATE TABLE IF NOT EXISTS _oda_table_metadata (
+			table_name TEXT PRIMARY KEY,
+			schema_json TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+
+	schemaBytes, err := json.Marshal(schema)
+	if err == nil {
+		_, err = ing.db.Exec(
+			`INSERT INTO _oda_table_metadata (table_name, schema_json, updated_at) 
+			 VALUES (?, ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(table_name) DO UPDATE SET schema_json=excluded.schema_json, updated_at=excluded.updated_at`,
+			tableName, string(schemaBytes),
+		)
+		if err != nil {
+			fmt.Printf("[Warning] Failed to save schema metadata for %s: %v\n", tableName, err)
+		}
+	}
+
 	for _, col := range schema.Columns {
 		// 如果唯一值数量 > 1 并且非空，且唯一值占比小于 20%（说明有大量重复的类别）
 		// 或者列名为常见 id (如 user_id, org_id)，自动建立索引
@@ -498,4 +521,17 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 	}
 
 	return nil
+}
+
+// GetTableMetadata 从内置表读取预先提取的 Schema 返回 JSON
+func (ing *Ingester) GetTableMetadata(tableName string) (string, error) {
+	if ing.db == nil {
+		return "", fmt.Errorf("数据库未初始化")
+	}
+	var schemaJSON string
+	err := ing.db.QueryRow(`SELECT schema_json FROM _oda_table_metadata WHERE table_name = ?`, tableName).Scan(&schemaJSON)
+	if err != nil {
+		return "", err
+	}
+	return schemaJSON, nil
 }
