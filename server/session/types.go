@@ -91,7 +91,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 
 	s.Registry = registry
 	s.FinalizeTool = finalizeTool
-	s.Engine = agent.NewEngine(registry, agent.BuildSystemPrompt(pythonEnabled), nil)
+	s.Engine = agent.NewEngine(registry, agent.BuildSystemPrompt(pythonEnabled))
 
 	return s, nil
 }
@@ -100,10 +100,6 @@ func (s *Session) Touch() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.LastSeenAt = time.Now()
-}
-
-func (s *Session) SetEmitter(emitter func(agent.WSEvent)) {
-	s.Engine.SetEmitter(emitter)
 }
 
 func (s *Session) FilesForClient() []agent.UploadedFile {
@@ -140,8 +136,8 @@ func (s *Session) StartRun(parent context.Context) (string, context.Context, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.ActiveRun != nil && s.ActiveRun.Status == "running" {
-		return "", nil, fmt.Errorf("已有任务运行中，请先停止当前任务")
+	if s.ActiveRun != nil {
+		return "", nil, fmt.Errorf("已有任务正在行中或尚未清理，请稍候停止后再试")
 	}
 
 	runID := "r_" + uuid.New().String()[:8]

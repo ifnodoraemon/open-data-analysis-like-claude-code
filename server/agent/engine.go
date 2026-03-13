@@ -19,24 +19,19 @@ const MaxIterations = 25
 type Engine struct {
 	llm          *LLMClient
 	registry     *tools.Registry
-	emitter      func(event WSEvent)
 	messages     []openai.ChatCompletionMessage
 	systemPrompt string
 	mu           sync.Mutex
 }
 
 // NewEngine 创建 Agent 引擎（支持多轮对话）
-func NewEngine(registry *tools.Registry, systemPrompt string, emitter func(event WSEvent)) *Engine {
-	if emitter == nil {
-		emitter = func(WSEvent) {}
-	}
+func NewEngine(registry *tools.Registry, systemPrompt string) *Engine {
 	if systemPrompt == "" {
 		systemPrompt = BuildSystemPrompt(true)
 	}
 	return &Engine{
 		llm:          NewLLMClient(),
 		registry:     registry,
-		emitter:      emitter,
 		systemPrompt: systemPrompt,
 		messages: []openai.ChatCompletionMessage{
 			{
@@ -45,15 +40,6 @@ func NewEngine(registry *tools.Registry, systemPrompt string, emitter func(event
 			},
 		},
 	}
-}
-
-func (e *Engine) SetEmitter(emitter func(event WSEvent)) {
-	if emitter == nil {
-		emitter = func(WSEvent) {}
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.emitter = emitter
 }
 
 func (e *Engine) ResetMessages() {
@@ -67,17 +53,12 @@ func (e *Engine) ResetMessages() {
 	}
 }
 
-func (e *Engine) emit(event WSEvent) {
-	e.mu.Lock()
-	emitter := e.emitter
-	e.mu.Unlock()
-	if emitter != nil {
-		emitter(event)
-	}
-}
-
 // Run 执行 Agent 主循环
-func (e *Engine) Run(ctx context.Context, userInput string) {
+func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) {
+	if emit == nil {
+		emit = func(WSEvent) {}
+	}
+
 	e.mu.Lock()
 	// 添加用户消息
 	e.messages = append(e.messages, openai.ChatCompletionMessage{
@@ -91,13 +72,13 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 	for i := 0; i < MaxIterations; i++ {
 		select {
 		case <-ctx.Done():
-			e.emit(WSEvent{Type: EventRunCancelled, Data: ErrorData{Message: "任务被取消"}})
+			emit(WSEvent{Type: EventRunCancelled, Data: ErrorData{Message: "任务被取消"}})
 			return
 		default:
 		}
 
 		// 通知前端: 正在思考
-		e.emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i+1)}})
+		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i+1)}})
 
 		// 调用 LLM
 		e.mu.Lock()
@@ -105,12 +86,12 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 		e.mu.Unlock()
 		resp, err := e.llm.ChatWithTools(ctx, messages, oaiTools)
 		if err != nil {
-			e.emit(WSEvent{Type: EventError, Data: ErrorData{Message: err.Error()}})
+			emit(WSEvent{Type: EventError, Data: ErrorData{Message: err.Error()}})
 			return
 		}
 
 		if len(resp.Choices) == 0 {
-			e.emit(WSEvent{Type: EventError, Data: ErrorData{Message: "LLM 返回空响应"}})
+			emit(WSEvent{Type: EventError, Data: ErrorData{Message: "LLM 返回空响应"}})
 			return
 		}
 
@@ -120,13 +101,13 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 		if choice.Message.Content != "" {
 			if len(choice.Message.ToolCalls) > 0 {
 				// 有文本 + 有工具调用 → 推送思考内容
-				e.emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: choice.Message.Content}})
+				emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: choice.Message.Content}})
 			} else {
 				// 有文本 + 无工具调用 → 最终回复
 				e.mu.Lock()
 				e.messages = append(e.messages, choice.Message)
 				e.mu.Unlock()
-				e.emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
+				emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
 				return
 			}
 		}
@@ -136,7 +117,7 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 			e.mu.Lock()
 			e.messages = append(e.messages, choice.Message)
 			e.mu.Unlock()
-			e.emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
+			emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
 			return
 		}
 
@@ -157,7 +138,7 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 				)
 
 				// 通知前端: 工具调用
-				e.emit(WSEvent{
+				emit(WSEvent{
 					Type: EventToolCall,
 					Data: ToolCallData{
 						ID:        toolCall.ID,
@@ -179,6 +160,11 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 				result, execErr := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 				duration := time.Since(start).Milliseconds()
 
+				// If we got canceled during execution (or context ended), drop the result, abort tool loop, allow ctx.Done to catch in next loop
+				if ctx.Err() != nil {
+					return
+				}
+
 				success := toolCallSucceeded(result, execErr)
 				if execErr != nil {
 					result = fmt.Sprintf("工具执行错误: %s", execErr.Error())
@@ -199,7 +185,7 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 				})
 
 				// 通知前端: 工具结果
-				e.emit(WSEvent{
+				emit(WSEvent{
 					Type: EventToolResult,
 					Data: ToolResultData{
 						ID:       toolCall.ID,
@@ -224,11 +210,11 @@ func (e *Engine) Run(ctx context.Context, userInput string) {
 		}
 
 		// 默认结束
-		e.emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: "分析完成"}})
+		emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: "分析完成"}})
 		return
 	}
 
-	e.emit(WSEvent{Type: EventError, Data: ErrorData{Message: "达到最大迭代次数"}})
+	emit(WSEvent{Type: EventError, Data: ErrorData{Message: "达到最大迭代次数"}})
 }
 
 func errorString(err error) string {

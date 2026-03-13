@@ -43,9 +43,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ws connected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 	defer log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 
-	sess.SetEmitter(func(event agent.WSEvent) {
-		sendSessionEvent(conn, &writeMu, sess.ID, "", event)
-	})
+
 
 	sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 		Type: agent.EventSessionReady,
@@ -225,8 +223,6 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}(runID)
 
-			sess.SetEmitter(runEmitter)
-
 			userContent := strings.TrimSpace(userMsg.Content)
 			if fileContext := sess.BuildFileContext(); fileContext != "" {
 				userContent = fileContext + "\n用户指令: " + userContent
@@ -238,7 +234,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				RunID:       runID,
 			})
 
-			go sess.Engine.Run(ctx, userContent)
+			go sess.Engine.Run(ctx, userContent, runEmitter)
 
 		case agent.EventStop:
 			dataBytes, _ := json.Marshal(event.Data)
