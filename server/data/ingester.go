@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -10,7 +11,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
+	"github.com/sashabaranov/go-openai"
 	"github.com/xuri/excelize/v2"
 	_ "modernc.org/sqlite"
 )
@@ -477,11 +481,57 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 
 	// 2. 根据 `ExtractSchema` 或自定义逻辑，给具有适当基数特性的列添加索引
 	schema, err := ExtractSchema(ing.db, tableName)
-	if err != nil || schema.RowCount == 0 {
-		return err
+	if err != nil {
+		return fmt.Errorf("提取概要失败: %w", err)
 	}
 
-	// 2.1 将 schema 结果序列化保存到内置元数据表，供 Agent 直接读取
+	// 2.1 获取目前环境中的其他表 Schema 供大模型做 Join 探测
+	var activeSchemas []SchemaInfo
+	tableRows, _ := ing.db.Query(`SELECT table_name, schema_json FROM _oda_table_metadata`)
+	if tableRows != nil {
+		for tableRows.Next() {
+			var tName, sJSON string
+			if err := tableRows.Scan(&tName, &sJSON); err == nil {
+				// 对于现有未用大模型分析过去的纯 SchemaInfo，兼容解析
+				var pastSchema SchemaInfo
+				if json.Unmarshal([]byte(sJSON), &pastSchema) == nil {
+					activeSchemas = append(activeSchemas, pastSchema)
+				}
+			}
+		}
+		tableRows.Close()
+	}
+
+	// 2.2 小样本语义大模型预分析 (Item 10)
+	var finalMetadataBytes []byte
+	if config.Cfg == nil {
+		fmt.Printf("[Warning] config.Cfg 未初始化，跳过 LLM Semantics Analyzer，降级采用基础 Schema\n")
+		finalMetadataBytes, _ = json.Marshal(schema)
+	} else if config.Cfg.LLMAPIKey == "" {
+		fmt.Printf("[Warning] LLMAPIKey 为空，跳过 LLM Semantics Analyzer，降级采用基础 Schema\n")
+		finalMetadataBytes, _ = json.Marshal(schema)
+	} else {
+		client := openai.NewClient(config.Cfg.LLMAPIKey)
+		if config.Cfg.LLMBaseURL != "" {
+			cfg := openai.DefaultConfig(config.Cfg.LLMAPIKey)
+			cfg.BaseURL = config.Cfg.LLMBaseURL
+			client = openai.NewClientWithConfig(cfg)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		profile, metaErr := AnalyzeTableSemantics(ctx, client, schema, activeSchemas)
+		if metaErr == nil {
+			fmt.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s\n", tableName)
+			finalMetadataBytes, _ = json.Marshal(profile)
+		} else {
+			// 降级使用基础 SchemaInfo
+			fmt.Printf("[Warning] LLM Semantics Analyzer 失败 (%v)，降级采用基础 Schema\n", metaErr)
+			finalMetadataBytes, _ = json.Marshal(schema)
+		}
+	}
+
+	// 2.3 将结果保存到内置元数据表
 	_, _ = ing.db.Exec(`
 		CREATE TABLE IF NOT EXISTS _oda_table_metadata (
 			table_name TEXT PRIMARY KEY,
@@ -490,19 +540,19 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 		)
 	`)
 
-	schemaBytes, err := json.Marshal(schema)
-	if err == nil {
+	if len(finalMetadataBytes) > 0 {
 		_, err = ing.db.Exec(
 			`INSERT INTO _oda_table_metadata (table_name, schema_json, updated_at) 
 			 VALUES (?, ?, CURRENT_TIMESTAMP)
 			 ON CONFLICT(table_name) DO UPDATE SET schema_json=excluded.schema_json, updated_at=excluded.updated_at`,
-			tableName, string(schemaBytes),
+			tableName, string(finalMetadataBytes),
 		)
 		if err != nil {
 			fmt.Printf("[Warning] Failed to save schema metadata for %s: %v\n", tableName, err)
 		}
 	}
 
+	// 3. 构建索引尝试
 	for _, col := range schema.Columns {
 		// 如果唯一值数量 > 1 并且非空，且唯一值占比小于 20%（说明有大量重复的类别）
 		// 或者列名为常见 id (如 user_id, org_id)，自动建立索引
