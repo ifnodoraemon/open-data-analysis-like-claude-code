@@ -160,6 +160,9 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		rowCount += len(batch)
 	}
 
+	// 自动生成系统统计和索引
+	_ = ing.GenerateStatsAndIndexes(tableName)
+
 	return rowCount, colCount, nil
 }
 
@@ -277,6 +280,9 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 		}
 		rowCount += len(batch)
 	}
+
+	// 自动生成系统统计和索引
+	_ = ing.GenerateStatsAndIndexes(tableName)
 
 	return rowCount, colCount, nil
 }
@@ -454,4 +460,42 @@ func sanitizeColumnName(name string) string {
 	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ReplaceAll(name, "-", "_")
 	return strings.ToLower(name)
+}
+
+// GenerateStatsAndIndexes 针对表生成统计信息并按基数自动创建索引
+func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
+	if ing.db == nil {
+		return fmt.Errorf("数据库未初始化")
+	}
+
+	// 1. 生成系统级统计 (用于 SQL Query Planner)
+	_, err := ing.db.Exec(fmt.Sprintf("ANALYZE \"%s\"", tableName))
+	if err != nil {
+		fmt.Printf("[Warning] Failed to analyze table %s: %v\n", tableName, err)
+	}
+
+	// 2. 根据 `ExtractSchema` 或自定义逻辑，给具有适当基数特性的列添加索引
+	schema, err := ExtractSchema(ing.db, tableName)
+	if err != nil || schema.RowCount == 0 {
+		return err
+	}
+
+	for _, col := range schema.Columns {
+		// 如果唯一值数量 > 1 并且非空，且唯一值占比小于 20%（说明有大量重复的类别）
+		// 或者列名为常见 id (如 user_id, org_id)，自动建立索引
+		isNominal := float64(col.UniqueCount)/float64(schema.RowCount) < 0.20 && col.UniqueCount > 1
+		isID := strings.HasSuffix(strings.ToLower(col.Name), "_id") || strings.ToLower(col.Name) == "id"
+
+		if isNominal || isID {
+			idxName := fmt.Sprintf("idx_%s_%s", sanitizeTableName(tableName), sanitizeColumnName(col.Name))
+			// 因为 SQLite 的标识符长度有限但此处通常够用，直接创建
+			createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (\"%s\")", idxName, tableName, col.Name)
+			_, err := ing.db.Exec(createIdxSQL)
+			if err != nil {
+				fmt.Printf("[Warning] Failed to create index %s on table %s: %v\n", idxName, tableName, err)
+			}
+		}
+	}
+
+	return nil
 }
