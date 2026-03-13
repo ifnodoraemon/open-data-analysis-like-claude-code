@@ -14,6 +14,12 @@ type ChartData struct {
 	Height string          `json:"height,omitempty"`
 }
 
+func init() {
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &CreateChartTool{ReportState: ctx.ReportState}
+	})
+}
+
 type createChartParams struct {
 	ChartID    string             `json:"chart_id"`
 	Title      string             `json:"title"`

@@ -12,6 +12,8 @@ services:
     volumes:
       - ./data:/app/data
       - python-workspace:/app/python-workspace
+    networks:
+      - app-network
     depends_on:
       python-executor:
         condition: service_healthy
@@ -30,6 +32,8 @@ services:
     volumes:
       - ./data:/app/data:ro
       - python-workspace:/app/workspace
+    networks:
+      - app-network
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()"]
       interval: 10s
@@ -42,9 +46,15 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    networks:
+      - app-network
     depends_on:
       server:
         condition: service_healthy
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   python-workspace:

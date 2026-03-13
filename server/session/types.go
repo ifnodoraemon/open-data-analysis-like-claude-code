@@ -60,9 +60,14 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		LastSeenAt:  time.Now(),
 	}
 
-	registry := tools.NewRegistry()
-	registry.Register(&tools.LoadDataTool{
-		Ingester: s.Ingester,
+	memory := agent.NewWorkingMemory()
+	subgoals := agent.NewSubgoalManager()
+
+	ctx := tools.ToolContext{
+		Ingester:         s.Ingester,
+		ReportState:      s.ReportState,
+		Memory:           memory,
+		Subgoals:         subgoals,
 		FileMaterializer: func(fileID string) (*tools.FileReference, error) {
 			tempPath, file, err := s.FileService.MaterializeToTemp(context.Background(), fileID)
 			if err != nil {
@@ -74,26 +79,36 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 				StoredPath:  tempPath,
 			}, nil
 		},
-	})
-	registry.Register(&tools.ListTablesTool{Ingester: s.Ingester})
-	registry.Register(&tools.DescribeDataTool{Ingester: s.Ingester})
-	registry.Register(&tools.QueryDataTool{Ingester: s.Ingester})
-	registry.Register(&tools.CreateChartTool{ReportState: s.ReportState})
-	pythonTool := &tools.RunPythonTool{MCPEndpoint: config.Cfg.PythonMCPURL}
-	pythonEnabled := true
-	if err := pythonTool.HealthCheck(context.Background()); err != nil {
-		pythonEnabled = false
-		log.Printf("run_python disabled for session %s: %v", id, err)
-	} else {
-		registry.Register(pythonTool)
 	}
-	registry.Register(&tools.WriteSectionTool{ReportState: s.ReportState})
-	finalizeTool := &tools.FinalizeReportTool{ReportState: s.ReportState}
-	registry.Register(finalizeTool)
 
-	s.Registry = registry
-	s.FinalizeTool = finalizeTool
-	s.Engine = agent.NewEngine(registry, agent.BuildSystemPrompt(pythonEnabled))
+	masterReg := tools.NewRegistry()
+	masterReg.LoadGlobalTools(ctx)
+
+	// 配置 Worker 的可用工具
+	workerAllowed := []string{"list_tables", "describe_data", "query_data", "create_chart"}
+	if pt, err := masterReg.Get("run_python"); err == nil {
+		if runPython, ok := pt.(*tools.RunPythonTool); ok {
+			runPython.MCPEndpoint = config.Cfg.PythonMCPURL
+			if err := runPython.HealthCheck(context.Background()); err != nil {
+				log.Printf("run_python disabled for session %s: %v", id, err)
+			} else {
+				workerAllowed = append(workerAllowed, "run_python")
+			}
+		}
+	}
+	workerRegistry := masterReg.CloneFiltered(workerAllowed)
+
+	// 配置 Planner 的可用工具
+	plannerAllowed := []string{"load_data", "write_section", "finalize_report", "save_to_memory", "manage_subgoals", "ask_user"}
+	plannerRegistry := masterReg.CloneFiltered(plannerAllowed)
+
+	s.Registry = plannerRegistry
+	if ft, err := plannerRegistry.Get("finalize_report"); err == nil {
+		s.FinalizeTool = ft.(*tools.FinalizeReportTool)
+	}
+
+	plannerPrompt := agent.BuildPlannerPrompt()
+	s.Engine = agent.NewEngine(plannerRegistry, workerRegistry, plannerPrompt, memory, subgoals)
 
 	return s, nil
 }
@@ -186,6 +201,33 @@ func (s *Session) FinishRun(runID, status string) {
 		s.ActiveRun = nil
 	}
 	s.LastSeenAt = time.Now()
+}
+
+func (s *Session) SuspendRun(runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ActiveRun != nil && s.ActiveRun.RunID == runID {
+		s.ActiveRun.Status = "waiting_user_input"
+	}
+	s.LastSeenAt = time.Now()
+}
+
+func (s *Session) ResumeRun(runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ActiveRun != nil && s.ActiveRun.RunID == runID {
+		s.ActiveRun.Status = "running"
+	}
+	s.LastSeenAt = time.Now()
+}
+
+func (s *Session) GetWaitingRunID() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ActiveRun != nil && s.ActiveRun.Status == "waiting_user_input" {
+		return s.ActiveRun.RunID, true
+	}
+	return "", false
 }
 
 func (s *Session) CancelRun(runID string) bool {

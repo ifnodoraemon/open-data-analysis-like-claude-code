@@ -15,6 +15,24 @@ type FileReference struct {
 	StoredPath  string `json:"storedPath"`
 }
 
+func init() {
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &LoadDataTool{
+			Ingester:         ctx.Ingester,
+			FileMaterializer: ctx.FileMaterializer,
+		}
+	})
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &ListTablesTool{Ingester: ctx.Ingester}
+	})
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &DescribeDataTool{Ingester: ctx.Ingester}
+	})
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &QueryDataTool{Ingester: ctx.Ingester}
+	})
+}
+
 type FileMaterializer func(fileID string) (*FileReference, error)
 
 type ReportState struct {
@@ -225,6 +243,15 @@ func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
 		"rows":         rows,
 		"summary_text": fmt.Sprintf("SQL 查询成功，返回 %d 行", len(rows)),
 	}), nil
+}
+
+func init() {
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &WriteSectionTool{ReportState: ctx.ReportState}
+	})
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		return &FinalizeReportTool{ReportState: ctx.ReportState}
+	})
 }
 
 // WriteSectionTool 向研报写入章节

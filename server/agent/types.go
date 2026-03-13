@@ -24,6 +24,7 @@ const (
 	EventRunCancelled = "run_cancelled"
 	EventStop         = "stop_run"
 	EventReset        = "reset_session"
+	EventAskUser      = "ask_user"
 )
 
 // UserMessage 用户输入
@@ -78,6 +79,12 @@ type ToolResultData struct {
 	Result   string `json:"result"`
 	Duration int64  `json:"duration"` // 毫秒
 	Success  bool   `json:"success"`
+}
+
+// AskUserData 等待用户回答事件
+type AskUserData struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
 }
 
 // ReportUpdateData 研报更新事件

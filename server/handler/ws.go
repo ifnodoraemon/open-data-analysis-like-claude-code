@@ -91,55 +91,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			runID, ctx, err := sess.StartRun(r.Context())
-			if err != nil {
-				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
-					Type: agent.EventError,
-					Data: agent.ErrorData{Message: err.Error()},
-				})
-				continue
-			}
-
-			now := time.Now()
-			rawInput := strings.TrimSpace(userMsg.Content)
-			log.Printf("run started run_id=%s session_id=%s workspace_id=%s user_id=%s input_chars=%d", runID, sess.ID, sess.WorkspaceID, identity.UserID, len([]rune(rawInput)))
-			if err := runRepo.Create(r.Context(), &domain.AnalysisRun{
-				ID:           runID,
-				SessionID:    sess.ID,
-				WorkspaceID:  sess.WorkspaceID,
-				UserID:       identity.UserID,
-				Status:       domain.RunStatusRunning,
-				InputMessage: rawInput,
-				StartedAt:    &now,
-				CreatedAt:    now,
-				UpdatedAt:    now,
-			}); err != nil {
-				sess.CancelRun(runID)
-				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
-					Type: agent.EventError,
-					Data: agent.ErrorData{Message: "创建任务记录失败: " + err.Error()},
-				})
-				continue
-			}
-			
-			// Persist UserMessage
-			saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
-				Type: "user",
-				Data: userMsg,
-			})
-
-			_ = sessionRepo.UpdateLastRun(r.Context(), sess.ID, runID)
-			if record, err := sessionRepo.GetByID(r.Context(), sess.ID); err == nil {
-				if record.Title == "" || record.Title == "未命名分析" {
-					_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, deriveSessionTitle(rawInput))
-				}
-			}
-
-			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
-				Type: agent.EventRunStarted,
-				Data: agent.RunStartedData{RunID: runID},
-			})
-
+			// Define runEmitter once for the entire EventUserMessage case
 			runEmitter := func(runID string) func(agent.WSEvent) {
 				return func(ev agent.WSEvent) {
 					sendSessionEvent(conn, &writeMu, sess.ID, runID, ev)
@@ -196,6 +148,10 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					switch ev.Type {
+					case agent.EventAskUser:
+						sess.SuspendRun(runID)
+						_ = runRepo.UpdateStatus(r.Context(), runID, "waiting_user_input", nil)
+						log.Printf("run suspended waiting_user_input run_id=%s session_id=%s", runID, sess.ID)
 					case agent.EventRunCompleted:
 						sess.FinishRun(runID, "completed")
 						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCompleted, nil)
@@ -221,7 +177,90 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
-			}(runID)
+			}
+
+			// 检查是否正在等待用户回答
+			activeRunID, isWaiting := sess.GetWaitingRunID()
+
+			if isWaiting {
+				err := sess.Engine.ProvideAskUserResult(userMsg.Content)
+				if err != nil {
+					sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{
+						Type: agent.EventError,
+						Data: agent.ErrorData{Message: err.Error()},
+					})
+					continue
+				}
+
+				// 将用户的回答也写入数据库历史
+				saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, activeRunID, agent.WSEvent{
+					Type: "user",
+					Data: userMsg,
+				})
+
+				sess.ResumeRun(activeRunID)
+				_ = runRepo.UpdateStatus(r.Context(), activeRunID, domain.RunStatusRunning, nil)
+
+				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "已收到反馈，继续分析..."}})
+
+				// 恢复执行 (传入空 userInput，因为问题已作为 tool result)
+				resumeCtx := agent.WithTraceMetadata(r.Context(), agent.TraceMetadata{
+					WorkspaceID: sess.WorkspaceID,
+					SessionID:   sess.ID,
+					RunID:       activeRunID,
+				})
+				go sess.Engine.Run(resumeCtx, "", runEmitter(activeRunID))
+				continue
+			}
+
+			runID, ctx, err := sess.StartRun(r.Context())
+			if err != nil {
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: err.Error()},
+				})
+				continue
+			}
+
+			now := time.Now()
+			rawInput := strings.TrimSpace(userMsg.Content)
+			log.Printf("run started run_id=%s session_id=%s workspace_id=%s user_id=%s input_chars=%d", runID, sess.ID, sess.WorkspaceID, identity.UserID, len([]rune(rawInput)))
+			if err := runRepo.Create(r.Context(), &domain.AnalysisRun{
+				ID:           runID,
+				SessionID:    sess.ID,
+				WorkspaceID:  sess.WorkspaceID,
+				UserID:       identity.UserID,
+				Status:       domain.RunStatusRunning,
+				InputMessage: rawInput,
+				StartedAt:    &now,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}); err != nil {
+				sess.CancelRun(runID)
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: "创建任务记录失败: " + err.Error()},
+				})
+				continue
+			}
+			
+			// Persist UserMessage
+			saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
+				Type: "user",
+				Data: userMsg,
+			})
+
+			_ = sessionRepo.UpdateLastRun(r.Context(), sess.ID, runID)
+			if record, err := sessionRepo.GetByID(r.Context(), sess.ID); err == nil {
+				if record.Title == "" || record.Title == "未命名分析" {
+					_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, deriveSessionTitle(rawInput))
+				}
+			}
+
+			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+				Type: agent.EventRunStarted,
+				Data: agent.RunStartedData{RunID: runID},
+			})
 
 			userContent := strings.TrimSpace(userMsg.Content)
 			if fileContext := sess.BuildFileContext(); fileContext != "" {
@@ -234,7 +273,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				RunID:       runID,
 			})
 
-			go sess.Engine.Run(ctx, userContent, runEmitter)
+			go sess.Engine.Run(ctx, userContent, runEmitter(runID))
 
 		case agent.EventStop:
 			dataBytes, _ := json.Marshal(event.Data)
@@ -313,6 +352,9 @@ func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev
 		msg.Content = data.Content
 	case agent.ThinkingData:
 		msg.Content = data.Content
+	case agent.AskUserData:
+		argsBytes, _ := json.Marshal(data)
+		msg.Content = string(argsBytes)
 	case agent.ToolCallData:
 		msg.Name = data.Name
 		argsBytes, _ := json.Marshal(data.Arguments)

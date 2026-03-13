@@ -63,6 +63,25 @@
             </div>
           </template>
 
+          <!-- 提问用户 (Human in loop) -->
+          <template v-else-if="msg.type === 'ask_user'">
+            <div class="msg-icon">🙋</div>
+            <div class="msg-body">
+              <div class="msg-label ask-user-label">需要您确认</div>
+              <div class="msg-content markdown-body ask-user-question" v-html="renderMarkdown(msg.question)"></div>
+              <div v-if="msg.options && msg.options.length > 0" class="ask-options">
+                <button 
+                  v-for="(opt, idx) in msg.options" 
+                  :key="idx" 
+                  class="ask-option-btn"
+                  @click="handleOptionClick(opt)"
+                >
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+          </template>
+
           <!-- 工具结果 -->
           <template v-else-if="msg.type === 'tool_result'">
             <div class="msg-icon">{{ msg.success ? '✅' : '❌' }}</div>
@@ -175,6 +194,11 @@ async function handleRunClick(runId) {
   } catch (err) {
     console.error('open run failed:', err)
   }
+}
+
+function handleOptionClick(opt) {
+  const { sendMessage } = useWebSocket()
+  sendMessage(opt)
 }
 </script>
 
@@ -428,4 +452,42 @@ async function handleRunClick(runId) {
 
 .running-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
 .running-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+
+.msg-ask_user {
+  background: rgba(255, 152, 0, 0.08);
+  border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+.ask-user-label {
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+
+.ask-user-question {
+  margin-top: 4px;
+}
+
+.ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ask-option-btn {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ask-option-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
 </style>

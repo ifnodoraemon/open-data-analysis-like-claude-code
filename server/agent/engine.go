@@ -19,20 +19,26 @@ const MaxIterations = 25
 type Engine struct {
 	llm          *LLMClient
 	registry     *tools.Registry
+	workerReg    *tools.Registry
 	messages     []openai.ChatCompletionMessage
 	systemPrompt string
+	memory       *WorkingMemory
+	subgoals     *SubgoalManager
 	mu           sync.Mutex
 }
 
 // NewEngine 创建 Agent 引擎（支持多轮对话）
-func NewEngine(registry *tools.Registry, systemPrompt string) *Engine {
+func NewEngine(registry, workerReg *tools.Registry, systemPrompt string, memory *WorkingMemory, subgoals *SubgoalManager) *Engine {
 	if systemPrompt == "" {
-		systemPrompt = BuildSystemPrompt(true)
+		systemPrompt = BuildPlannerPrompt()
 	}
 	return &Engine{
 		llm:          NewLLMClient(),
 		registry:     registry,
+		workerReg:    workerReg,
 		systemPrompt: systemPrompt,
+		memory:       memory,
+		subgoals:     subgoals,
 		messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
@@ -157,7 +163,47 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 
 				// 执行工具
 				start := time.Now()
-				result, execErr := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+				
+				var result string
+				var execErr error
+				
+				if toolCall.Function.Name == "manage_subgoals" {
+					var payload struct {
+						Action      string `json:"action"`
+						Description string `json:"description"`
+					}
+					_ = json.Unmarshal([]byte(toolCall.Function.Arguments), &payload)
+					
+					// Planner 下发了新任务
+					if payload.Action == "add" && payload.Description != "" {
+						emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "Planner 正在下发查数任务给 DataWorker..."}})
+						
+						goalID := e.subgoals.AddGoal(payload.Description)
+						
+						worker := NewDataWorkerAgent(e.workerReg)
+						workerRes, workerErr := worker.RunWorker(ctx, payload.Description, emit)
+						
+						if workerErr != nil {
+							execErr = fmt.Errorf("Data Worker Failed: %v", workerErr)
+							_ = e.subgoals.UpdateGoalStatus(goalID, StatusRejected, execErr.Error())
+							result = fmt.Sprintf("子目标执行失败被退回: %v", workerErr)
+						} else {
+							_ = e.subgoals.UpdateGoalStatus(goalID, StatusComplete, workerRes)
+							result = fmt.Sprintf("Data Worker 已成功完成目标[%s]，返回结论: %s", goalID, workerRes)
+							emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "DataWorker 成功提交结论返回给 Planner！"}})
+						}
+					} else {
+						// 正常执行完成/放弃状态流转
+						result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+					}
+				} else if toolCall.Function.Name == "finalize_report" {
+					// 省略原版的 Review 环节以简化流程，直接结案
+					emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "开始生成最终报告..."}})
+					result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+				} else {
+					result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+				}
+
 				duration := time.Since(start).Milliseconds()
 
 				// If we got canceled during execution (or context ended), drop the result, abort tool loop, allow ctx.Done to catch in next loop
@@ -344,4 +390,39 @@ func toolCallSucceeded(result string, execErr error) bool {
 	}
 
 	return true
+}
+
+// ProvideAskUserResult 将用户的直接回复作为 ask_user 工具的执行结果注入 LLM 对话上下文
+func (e *Engine) ProvideAskUserResult(userResponse string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var toolCallID string
+	for i := len(e.messages) - 1; i >= 0; i-- {
+		msg := e.messages[i]
+		if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				if tc.Function.Name == "ask_user" {
+					toolCallID = tc.ID
+					break
+				}
+			}
+		}
+		if toolCallID != "" {
+			break
+		}
+	}
+
+	if toolCallID == "" {
+		return fmt.Errorf("没有找到正在等待的用户确认 (ask_user) 工具调用")
+	}
+
+	e.messages = append(e.messages, openai.ChatCompletionMessage{
+		Role:       openai.ChatMessageRoleTool,
+		Content:    userResponse,
+		ToolCallID: toolCallID,
+		Name:       "ask_user",
+	})
+
+	return nil
 }

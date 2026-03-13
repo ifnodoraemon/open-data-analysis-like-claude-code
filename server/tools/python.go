@@ -16,6 +16,13 @@ type RunPythonTool struct {
 	MCPEndpoint string // Python MCP 服务地址，如 http://python-executor:8081
 }
 
+func init() {
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		// PythonTool 的真正激活在引擎层判断，或在执行时进行 health check
+		return &RunPythonTool{MCPEndpoint: ""} // 默认配置，由引擎初始化或读取全局 config
+	})
+}
+
 func (t *RunPythonTool) Name() string { return "run_python" }
 func (t *RunPythonTool) Description() string {
 	return `在安全的 Python 沙箱环境中执行代码。预装了 pandas, numpy, matplotlib, scipy, scikit-learn。

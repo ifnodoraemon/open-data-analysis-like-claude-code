@@ -57,40 +57,29 @@
 
 ## P0：AI 数据分析产品最先补齐的能力
 
-### 0. Agent 任务状态机、工作记忆与停手条件
+### 0. Agent 动态任务树与工作记忆层
 
 目标：
 
-- 让 agent 像分析师一样明确自己当前在做什么、还差什么、什么时候该停下来
+- 彻底抛弃硬编码的单维 Pipeline（理解->假设->生成->报告），让 Agent 凭借工具自己维护“解决问题树 (Tree of Tasks)”和独立记忆。
 
 需求：
 
-- 为 run 增加显式阶段：
-  - source understanding
-  - schema understanding
-  - hypothesis building
-  - evidence gathering
-  - report drafting
-- 为 run 增加子目标列表：
-  - 待确认字段语义
-  - 待确认 join 关系
-  - 待验证关键数字
-  - 待补图表或章节
-- 建 working memory，保存：
-  - 已确认口径
-  - 已确认 join
-  - 已验证发现
-  - 已否定假设
-  - 待确认问题
-- 定义 agent 的 stop criteria：
-  - 证据是否足够
-  - 主要歧义是否已处理
-  - 是否可以进入报告阶段
+- 为 Agent 引入 `manage_subgoals` 工具：
+  - 允许 Agent 动态添加、完成、废弃子任务（如：查清某字段口径、核对某两个表的 join 关系）。
+  - 引擎提取这棵“子任务树”并在前端可视化，让用户随时知道 Agent 脑子里在计划什么。
+- 剥离独立的 Working Memory 层：
+  - 为 Agent 引入 `save_to_memory(key, fact)` 工具。
+  - 把“已确认的业务口径、已验证的中间结论、已排除的关联关系”从长文本 History 中提取到高优先级的 Memory Block。
+  - 每次 LLM 思考前，强行在 System Prompt 顶部注入当前 Memory 摘要。
+- 制定基于任务树的停手条件（Stop Criteria）：
+  - Agent 不再是通过循环次数耗尽或简单的“我觉得分析够了”来停止。
+  - 必须是：当前活跃的子任务已全部划掉，且最终目标关联的 Evidence 已经满足要求，才能走向 `finalize_report`。
 
 验收标准：
 
-- agent 不会在数据理解不足时过早写报告
-- 长任务中 agent 不会反复忘记前面已经确认的关键事实
+- 前端能实时渲染 Agent 自己拆解并不断更新的子任务树。
+- 经历长程复杂的多表尝试后，Agent 不会遗忘在第一步就查清的特殊指标口径（因为它存在 Memory 里而不是被挤出 Context）。
 
 ### 1. 数据语义层与导入元数据收口
 
@@ -222,30 +211,23 @@
 
 ## P1：产品可用性与交互稳定性
 
-### 5. Agent 上下文按阶段拆分
+### 5. 阅后即焚与上下文动态修剪
 
 目标：
 
-- 控制 prompt 体积，降低长任务后半程漂移
+- 解决大段 SQL 结果、冗长的试错过程导致的 Context 撑爆和注意力漂移问题，保持 Agent 始终专注。
 
 需求：
 
-- 把长任务拆成至少两个阶段：
-  - analysis phase
-  - report phase
-- 明确阶段切换时保留内容：
-  - 数据摘要
-  - 已确认口径
-  - 已产出的关键发现
-- 明确阶段切换时丢弃内容：
-  - 大段原始 SQL 结果
-  - 图表参数草稿
-  - 重复的推理碎片
+- 引入“阅后即焚”机制：
+  - 对于海量的 `query_data` 返回结果，强制要求 Agent 将“结论”或“关键数字”提取到 Memory 或 Evidence，随后截断该步骤的详细 history。
+- 动态上下文组装：
+  - 当前分析什么任务，只挂载必要的表 Schema。
+  - 明确阶段性丢弃内容：废弃的临时 SQL、测试失败的 Python 图表配置。
 
 验收标准：
 
-- 长任务后半程的 prompt 体积和响应延迟明显下降
-- 报告阶段不再反复携带大段分析中间结果
+- 即便经历了 20+ 次的 SQL/Python 调试，最终生成报告那一轮的 Prompt 体积只有核心结论和 Memory，大幅降低耗时与漂移。
 
 ### 6. 运行链路串行化和状态边界收紧
 
@@ -613,13 +595,13 @@
 
 以下拆分默认对应可以直接建 issue 的粒度，优先覆盖第一批工作。
 
-### A. Agent 认知结构
+### A. Agent 认知结构与动态任务树
 
-1. 为 run 引入显式阶段状态，区分 understanding / hypothesis / evidence / report
-2. 为 run 引入子目标列表，记录待确认问题、待验证假设和待补章节
-3. 增加 working memory，保存已确认语义、已确认 join、已验证发现、已否定假设
-4. 定义 stop criteria，判断何时证据已足够输出，何时必须继续查数
-5. 增加 premature report guard，防止未查清就开始写报告
+1. 开发 `manage_subgoals` 工具，允许 Agent 增删改查当前子任务状态。
+2. 在前端增加交互，实时可视化渲染 Agent 规划的“待办/进行中/已完成”状态树。
+3. 建立 Memory Store，开发 `save_to_memory` / `read_memory` 工具，从 History 中剥离知识。
+4. 开发“阅后即焚”流水线：大段查询结果一旦经过 Agent 提取摘要，立即从下一轮对话上下文中截断淘汰。
+5. 重构 Stop Criteria 控制逻辑：依靠子任务列表清空与 Evidence 阈值来放行报告生成，而非随机的主观结束。
 
 ### B. 数据语义层
 
@@ -697,9 +679,9 @@
 
 经过对当前 `server/agent/engine.go` 等代码的审查，当前的本质是一个**单次 Prompt 的 ReAct 扁平大循环**（最多 25 转），缺乏真正 Agent 所需的认知架构。为了支撑上文提到的 P0/P1 能力，建议按以下方向对底层进行重构：
 
-### 1. 引擎状态机化 (State Machine Engine)
-- **现状**：`Engine.Run` 只是一个 `for i := 0; i < MaxIterations; i++` 循环，把所有上下文（用户 input + 所有 tool calls）塞进历史记录中，指望 LLM 靠单体 prompt 搞定全部。
-- **重构**：引入有限状态机（FSM）或基于图的路由（参考 LangGraph 模式）。将 Run 的执行显式切分为：`Plan (规划)` -> `Execute (数据获取/SQL/Python)` -> `Reflect (自我校验)` -> `Synthesize (总结/报告)`。这能极大降低单步 LLM 决策出错的概率。
+### 1. 动态子目标与状态树管理 (Goal-driven & Dynamic Sub-tasking) 
+- **现状**：`Engine.Run` 只是一个扁平的 `for i := 0; i < MaxIterations; i++` 循环，指望 LLM 靠单次硬 Prompt（包含所有规则和流程约束）搞定全部，没有中间状态的认知。而传统的 FSM (如 LangGraph 预设的 Plan->Execute->Report 流水线) 本质上是工作流，剥夺了 Agent 的自主权。
+- **重构**：保持 Agent 的内在自主性，不写死执行流转。通过给 Agent 提供 `manage_subgoals` (增删查改当前子任务) 和 `update_state` (更新当前阶段认知) 等工具，让 Agent 自己维护一张“解决问题树（Tree of Tasks）”。遇到复杂问题，Agent 自主决定把大问题拆成子问题放入清单；拿到一个子结果，自主划掉对应的子任务。外部引擎只负责兜底超时循环、上下文长度和向前端展示这棵状态树的状态。
 
 ### 2. Planner-Worker 模式划分
 - **现状**：当前的系统 prompt（`prompts.go`）既要求模型理解数据、写 SQL，又要求它绘图、写报告，职责过大，长上下文极易漂移。

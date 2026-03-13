@@ -451,6 +451,15 @@ export function useWebSocket() {
         store.addMessage({ type: 'error', content: event.data.message })
         store.finishRun(event.runId)
         break
+      case 'ask_user':
+        // 挂起状态，将提问显示到信息流中
+        store.setRunning(false)
+        store.addMessage({
+          type: 'ask_user',
+          question: event.data.question,
+          options: event.data.options,
+        })
+        break
     }
   }
 
