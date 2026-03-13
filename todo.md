@@ -625,9 +625,7 @@
 
 6. 新增导入元数据表，持久化行数、列数、类型、非空率、样本值
 7. 为 `describe_data` 增加可缓存 schema summary 输出，不再每次全量临时计算
-9. 增加多表候选关系发现服务，输出 join key 候选与置信度
 10. 增加小样本语义预分析器，输出字段别名、口径猜测和低置信度告警
-11. 把 schema summary 和关系候选接入 agent file/source context
 
 ### C. 可信答案机制
 
