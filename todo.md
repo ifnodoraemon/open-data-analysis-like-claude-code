@@ -613,51 +613,75 @@
 
 以下拆分默认对应可以直接建 issue 的粒度，优先覆盖第一批工作。
 
-### A. 数据语义层
+### A. Agent 认知结构
 
-3. 增加字段角色识别器，标注时间/金额/比例/类别/主键候选
-4. 增加多表候选关系发现服务，输出 join key 候选与置信度
-5. 增加小样本语义预分析器，输出字段别名、口径猜测和低置信度告警
-6. 把 schema summary 和关系候选接入 agent file/source context
+1. 为 run 引入显式阶段状态，区分 understanding / hypothesis / evidence / report
+2. 为 run 引入子目标列表，记录待确认问题、待验证假设和待补章节
+3. 增加 working memory，保存已确认语义、已确认 join、已验证发现、已否定假设
+4. 定义 stop criteria，判断何时证据已足够输出，何时必须继续查数
+5. 增加 premature report guard，防止未查清就开始写报告
 
-### B. 可信答案机制
+### B. 数据语义层
 
-7. 为每次工具调用保存结构化 trace，至少包含输入、输出摘要、成功失败、耗时
-8. 为 SQL/Python 结果建立可回溯 evidence 对象，供报告章节引用
-9. 为报告章节补“来源引用”结构，支持关联表、SQL、图表、分析步骤
-10. 对 join 歧义、时间范围歧义、指标口径歧义增加中断确认协议
-11. 设计 `ask_user` 协议，统一承载歧义确认、口径确认、join 确认和预测参数确认
+6. 新增导入元数据表，持久化行数、列数、类型、非空率、样本值
+7. 为 `describe_data` 增加可缓存 schema summary 输出，不再每次全量临时计算
+9. 增加多表候选关系发现服务，输出 join key 候选与置信度
+10. 增加小样本语义预分析器，输出字段别名、口径猜测和低置信度告警
+11. 把 schema summary 和关系候选接入 agent file/source context
 
-### C. 执行路由
+### C. 可信答案机制
 
-12. 在 agent 层增加 SQL vs Python 路由策略说明，要求显式给出选择原因
-13. 收紧 `run_python` 边界，默认只读、限制输入规模、禁止无边界全表加载
-14. 增加高级分析能力标签，为 forecast/anomaly/segmentation 预留执行入口
+12. 为每次工具调用保存结构化 trace，至少包含输入、输出摘要、成功失败、耗时
+13. 为 SQL/Python 结果建立可回溯 evidence 对象，供报告章节引用
+14. 为报告章节补“来源引用”结构，支持关联表、SQL、图表、分析步骤
+15. 对 join 歧义、时间范围歧义、指标口径歧义增加中断确认协议
+16. 设计 `ask_user` 协议，统一承载歧义确认、口径确认、join 确认和预测参数确认
 
-### D. 大规模数据与导入
+### D. 执行路由与探索策略
 
-18. 在 README 中写清数据规模边界和 Python 分析建议上限
+17. 在 agent 层增加 SQL vs Python 路由策略说明，要求显式给出选择原因
+18. 收紧 `run_python` 边界，默认只读、限制输入规模、禁止无边界全表加载
+19. 增加高级分析能力标签，为 forecast/anomaly/segmentation 预留执行入口
+20. 增加最小必要查询策略，避免过早跑重查询、提前画图、提前写报告
+21. 给 agent 增加探索 / 验证 / 汇总三种模式标记
 
-### E. 数据库连接 MVP
+### E. 自我校验与恢复
 
-19. 设计 `data_source` 领域模型，区分 file source 和 database source
-20. 增加工作区级数据库连接仓储和迁移脚本
-21. 增加 secret 引用机制，避免明文落数据库
-22. 增加 PostgreSQL 连接测试接口和失败诊断信息
-23. 增加 schema/table allowlist 配置
-24. 增加“浏览数据库结构”接口，只返回可访问对象
-25. 增加“导入数据库表到当前 session”接口，落到现有 session analysis SQLite
-26. 导入数据库表后自动触发小样本语义预分析
-27. 在 agent context 中纳入数据库来源和导入时间
-28. 在前端补“新增数据库连接 / 测试连接 / 选择表导入”最小交互
+22. 对核心数字增加交叉验证和 join 风险复核
+23. 增加图表 grounding 校验，确保图表一定来自前序查询
+24. 定义常见工具失败的标准恢复动作和降级路径
+25. 为 agent 暴露最近一次失败类型和建议恢复动作
 
-### F. 稳定性与评测
+### F. 大规模数据与导入
 
-29. 为 run 增加 `waiting_user_input` 状态，支持 `ask_user` 后暂停和恢复
-32. 增加 benchmark case：单表 SQL、多表 join、歧义追问、数据库快照导入
-33. 增加 benchmark case：上传后语义确认、多候选 join 人工确认
-34. 增加 benchmark case：`ask_user` 触发后恢复同一 run
-35. 增加 smoke case，覆盖上传文件和 PostgreSQL 导入两条主路径
+26. 把 CSV 导入改成真正流式实现，消除全量读内存路径
+27. 给 Excel 明确产品上限，并在超限时返回稳定错误而不是随机失稳
+28. 导入后自动生成表级统计和必要索引
+29. 在 README 中写清数据规模边界和 Python 分析建议上限
+
+### G. 数据库连接 MVP
+
+30. 设计 `data_source` 领域模型，区分 file source 和 database source
+31. 增加工作区级数据库连接仓储和迁移脚本
+32. 增加 secret 引用机制，避免明文落数据库
+33. 增加 PostgreSQL 连接测试接口和失败诊断信息
+34. 增加 schema/table allowlist 配置
+35. 增加“浏览数据库结构”接口，只返回可访问对象
+36. 增加“导入数据库表到当前 session”接口，落到现有 session analysis SQLite
+37. 导入数据库表后自动触发小样本语义预分析
+38. 在 agent context 中纳入数据库来源和导入时间
+39. 在前端补“新增数据库连接 / 测试连接 / 选择表导入”最小交互
+
+### H. 稳定性与评测
+
+40. 为 run 增加 `waiting_user_input` 状态，支持 `ask_user` 后暂停和恢复
+41. 收紧 session active run 约束，避免并发 run 竞争
+42. 清理旧 run emitter 污染新 run 的问题
+43. 增加 benchmark case：单表 SQL、多表 join、歧义追问、数据库快照导入
+44. 增加 benchmark case：上传后语义确认、多候选 join 人工确认
+45. 增加 benchmark case：`ask_user` 触发后恢复同一 run
+46. 增加 benchmark case：过早写报告保护、自我校验、失败恢复
+47. 增加 smoke case，覆盖上传文件和 PostgreSQL 导入两条主路径
 
 ## 数据库连接的明确产品范围
 

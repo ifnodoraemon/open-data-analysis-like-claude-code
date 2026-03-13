@@ -31,6 +31,7 @@ type ColumnInfo struct {
 	NonNullRate  float64  `json:"nonNullRate"`
 	UniqueCount  int      `json:"uniqueCount"`
 	SampleValues []string `json:"sampleValues"`
+	Roles        []string `json:"roles,omitempty"` // 语义角色：time, amount, ratio, category, pk_candidate 等
 	// 数值列统计
 	Min    *float64 `json:"min,omitempty"`
 	Max    *float64 `json:"max,omitempty"`
@@ -110,10 +111,69 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 			colInfo.Avg = &avg
 		}
 
+		colInfo.Roles = inferColumnRoles(colInfo, rowCount)
 		schema.Columns = append(schema.Columns, colInfo)
 	}
 
 	return schema, nil
+}
+
+// inferColumnRoles 基于字段名和列统计进行简单的语义角色识别
+func inferColumnRoles(info ColumnInfo, rowCount int) []string {
+	var roles []string
+	nameLower := strings.ToLower(info.Name)
+
+	// 1. time: 时间字段
+	isTime := strings.Contains(nameLower, "time") || strings.Contains(nameLower, "date") ||
+		strings.Contains(nameLower, "year") || strings.Contains(nameLower, "month") ||
+		strings.Contains(nameLower, "day") || strings.HasSuffix(nameLower, "_at") ||
+		strings.Contains(nameLower, "日期") || strings.Contains(nameLower, "时间")
+	if isTime {
+		roles = append(roles, "time")
+	}
+
+	// 2. amount: 金额字段
+	isAmount := strings.Contains(nameLower, "price") || strings.Contains(nameLower, "amount") ||
+		strings.Contains(nameLower, "cost") || strings.Contains(nameLower, "revenue") ||
+		strings.Contains(nameLower, "fee") || strings.Contains(nameLower, "金额") ||
+		strings.Contains(nameLower, "费用") || strings.Contains(nameLower, "钱") ||
+		strings.Contains(nameLower, "总价") || strings.Contains(nameLower, "单价")
+	if isAmount && info.Type == "NUMERIC" {
+		roles = append(roles, "amount")
+	}
+
+	// 3. ratio: 比例字段
+	isRatio := strings.Contains(nameLower, "rate") || strings.Contains(nameLower, "ratio") ||
+		strings.Contains(nameLower, "pct") || strings.Contains(nameLower, "占比") ||
+		strings.Contains(nameLower, "率") || strings.Contains(nameLower, "%") ||
+		strings.Contains(nameLower, "百分比")
+	if isRatio && info.Type == "NUMERIC" {
+		roles = append(roles, "ratio")
+	}
+
+	// 4. category: 类别字段
+	// 唯一值小于某个阈值，并且总行数较大时，视为 category
+	uniqueRatio := 1.0
+	if rowCount > 0 {
+		uniqueRatio = float64(info.UniqueCount) / float64(rowCount)
+	}
+	isCategoryKw := strings.Contains(nameLower, "type") || strings.Contains(nameLower, "category") ||
+		strings.Contains(nameLower, "status") || strings.Contains(nameLower, "类别") ||
+		strings.Contains(nameLower, "类型") || strings.Contains(nameLower, "状态")
+
+	// heuristics: 唯一值占比 < 20% 或者绝对唯一值 < 100，或者是相关关键词，并且不是数值 ID
+	if (uniqueRatio < 0.2 || info.UniqueCount < 100 || isCategoryKw) && !strings.HasSuffix(nameLower, "id") && info.Type != "NUMERIC" && info.UniqueCount > 0 && info.UniqueCount < rowCount {
+		roles = append(roles, "category")
+	}
+
+	// 5. pk_candidate: 主键候选
+	isPK := strings.HasSuffix(nameLower, "id") || strings.HasSuffix(nameLower, "_no") || nameLower == "id" ||
+		strings.Contains(nameLower, "编号") || strings.Contains(nameLower, "代码")
+	if isPK && uniqueRatio > 0.90 && info.NonNullRate > 0.95 {
+		roles = append(roles, "pk_candidate")
+	}
+
+	return roles
 }
 
 // GetSampleRows 获取采样行数据
