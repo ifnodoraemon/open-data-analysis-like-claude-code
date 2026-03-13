@@ -97,8 +97,41 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		sanitizedHeaders[i] = sanitizeColumnName(h)
 	}
 
-	// 读取全量数据（先缓存用于类型推断）
-	var allRows [][]string
+	// 读取部分数据进行类型推断（最多扫描 500 行）
+	sampleSize := 500
+	var sampleRows [][]string
+	for i := 0; i < sampleSize; i++ {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			continue // 跳过错误行
+		}
+		sampleRows = append(sampleRows, record)
+	}
+
+	// 类型推断
+	colTypes := inferColumnTypes(sampleRows, colCount)
+
+	// 创建表
+	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
+		return 0, 0, err
+	}
+
+	// 插入已经读出的 sample 行
+	rowCount := 0
+	if len(sampleRows) > 0 {
+		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, sampleRows); err != nil {
+			return rowCount, colCount, err
+		}
+		rowCount += len(sampleRows)
+	}
+
+	// 流式读取剩余数据并批量插入
+	batchSize := 500
+	batch := make([][]string, 0, batchSize)
+
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -107,27 +140,20 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		if err != nil {
 			continue // 跳过错误行
 		}
-		allRows = append(allRows, record)
-	}
 
-	// 类型推断（扫描前 100 行）
-	colTypes := inferColumnTypes(allRows, colCount)
+		batch = append(batch, record)
 
-	// 创建表
-	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
-		return 0, 0, err
-	}
-
-	// 批量插入数据
-	rowCount := 0
-	batchSize := 500
-
-	for i := 0; i < len(allRows); i += batchSize {
-		end := i + batchSize
-		if end > len(allRows) {
-			end = len(allRows)
+		if len(batch) >= batchSize {
+			if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
+				return rowCount, colCount, err
+			}
+			rowCount += len(batch)
+			batch = batch[:0] // 复用 slice
 		}
-		batch := allRows[i:end]
+	}
+
+	// 插入最后不足一个 batch 的数据
+	if len(batch) > 0 {
 		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
 			return rowCount, colCount, err
 		}
