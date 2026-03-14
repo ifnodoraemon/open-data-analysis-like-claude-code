@@ -7,8 +7,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/handler"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/handler"
 )
 
 func main() {
@@ -48,6 +48,7 @@ func main() {
 		protected.Get("/api/runs", handler.ListRunsHandler)
 		protected.Get("/api/runs/{runID}", handler.GetRunHandler)
 		protected.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)
+		protected.Post("/api/report-exports/docx", handler.ConvertReportDOCXHandler)
 		protected.Post("/api/upload", handler.UploadHandler)
 		protected.Get("/ws", handler.WSHandler)
 	})

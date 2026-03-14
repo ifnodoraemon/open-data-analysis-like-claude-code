@@ -44,11 +44,17 @@ export function useWebSocket() {
     }
   }
 
-  function applySessionState(sessionId, files, runs) {
+  function applyRuntimeState(runtimeState) {
+    store.setSubgoals(runtimeState?.subgoals || [])
+    store.setMemoryFacts(runtimeState?.memory || {})
+  }
+
+  function applySessionState(sessionId, files, runs, runtimeState = null) {
     store.resetAnalysis({ keepFiles: false })
     store.setSession(sessionId || '')
     store.replaceFiles(files || [])
     store.setRuns(runs || [])
+    applyRuntimeState(runtimeState)
 
     const latestRun = (runs || [])[0]
     store.setSelectedRun(latestRun?.id || '')
@@ -70,7 +76,7 @@ export function useWebSocket() {
   function restoreBootstrapState(data) {
     const nextSessionId = data.session?.id || ''
     store.setSessions(data.sessions || [])
-    return applySessionState(nextSessionId, data.files || [], data.runs || [])
+    return applySessionState(nextSessionId, data.files || [], data.runs || [], data.runtimeState)
   }
 
   async function bootstrap() {
@@ -142,7 +148,7 @@ export function useWebSocket() {
     if (data.session) {
       store.upsertSession(data.session)
     }
-    const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [])
+    const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [], data.runtimeState)
     if (refreshSessions) {
       await loadSessions()
     }
@@ -179,7 +185,7 @@ export function useWebSocket() {
     }
     const data = await res.json()
     disconnect()
-    const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [])
+    const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [], data.runtimeState)
     store.updateReport('')
     try {
       if (latestRun?.reportFileId) {
@@ -201,11 +207,18 @@ export function useWebSocket() {
       })
       if (res.ok) {
         const data = await res.json()
+        if (data.run) {
+          store.upsertRun(data.run)
+        }
         if (data && data.messages) {
           const historicalMessages = data.messages.map(msg => {
             let parsedArgs = msg.content
+            let parsedResult = null
             if (msg.type === 'tool_call') {
               try { parsedArgs = JSON.parse(msg.content) } catch (e) {}
+            }
+            if (msg.type === 'tool_result') {
+              try { parsedResult = JSON.parse(msg.content) } catch (e) {}
             }
             return {
               id: msg.id,
@@ -214,6 +227,7 @@ export function useWebSocket() {
               name: msg.name,
               arguments: msg.type === 'tool_call' ? parsedArgs : undefined,
               result: msg.type === 'tool_result' ? msg.content : undefined,
+              parsedResult: parsedResult,
               duration: msg.duration,
               success: msg.success,
               timestamp: new Date(msg.createdAt).toLocaleTimeString()
@@ -221,32 +235,13 @@ export function useWebSocket() {
           })
           store.setMessages(historicalMessages)
         }
+        applyRuntimeState(data.runtimeState)
       }
     } catch (err) {
       console.error('Failed to load run messages:', err)
     }
 
     await loadRunReport(runId)
-  }
-
-  async function downloadRunReport(runId) {
-    if (!runId) {
-      throw new Error('缺少 runId')
-    }
-    const res = await fetch(`/api/runs/${runId}/report`, {
-      headers: authHeaders(),
-    })
-    if (!res.ok) {
-      throw new Error(await res.text())
-    }
-
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = getDownloadFilename(res.headers.get('Content-Disposition')) || `report-${runId}.html`
-    a.click()
-    URL.revokeObjectURL(url)
   }
 
   function connect() {
@@ -354,7 +349,14 @@ export function useWebSocket() {
     if (event.sessionId && store.sessionId && event.sessionId !== store.sessionId) {
       return
     }
-    if (event.runId && store.activeRunId && event.runId !== store.activeRunId && event.type !== 'run_started') {
+    const relevantRunIds = [store.activeRunId, store.selectedRunId].filter(Boolean)
+    if (
+      event.runId &&
+      relevantRunIds.length > 0 &&
+      !relevantRunIds.includes(event.runId) &&
+      event.type !== 'run_started' &&
+      event.type !== 'state_child_runs_updated'
+    ) {
       return
     }
 
@@ -362,6 +364,7 @@ export function useWebSocket() {
       case 'session_ready':
         store.setSession(event.data.sessionId)
         store.replaceFiles(event.data.files || [])
+        applyRuntimeState(event.data)
         store.upsertSession({
           id: event.data.sessionId,
           title: '未命名分析',
@@ -383,9 +386,15 @@ export function useWebSocket() {
         })
         break
       case 'thinking':
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) {
+          break
+        }
         store.addMessage({ type: 'thinking', content: event.data.content })
         break
       case 'tool_call':
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) {
+          break
+        }
         store.addMessage({
           type: 'tool_call',
           name: event.data.name,
@@ -394,10 +403,18 @@ export function useWebSocket() {
         })
         break
       case 'tool_result':
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) {
+          break
+        }
+        let parsedResult = null
+        try {
+          parsedResult = JSON.parse(event.data.result)
+        } catch (e) {}
         store.addMessage({
           type: 'tool_result',
           name: event.data.name,
           result: event.data.result,
+          parsedResult: parsedResult,
           duration: event.data.duration,
           success: event.data.success,
           id: event.data.id,
@@ -409,8 +426,10 @@ export function useWebSocket() {
         }
         break
       case 'report_final':
-        store.setSelectedRun(event.runId)
-        store.updateReport(event.data.html)
+        if (!store.selectedRunId || store.selectedRunId === event.runId) {
+          store.setSelectedRun(event.runId)
+          store.updateReport(event.data.html)
+        }
         if (event.data.title && store.sessionId) {
           store.upsertSession({
             id: store.sessionId,
@@ -421,44 +440,85 @@ export function useWebSocket() {
         store.addMessage({ type: 'complete', content: '✅ 研究报告已生成完成，可点击右上角导出。' })
         break
       case 'run_completed':
-        store.upsertRun({
-          id: event.runId,
+        if (!store.patchRun(event.runId, {
           status: 'completed',
           summary: event.data.summary,
           updatedAt: new Date().toISOString(),
-        })
-        store.addMessage({ type: 'complete', content: event.data.summary })
+        })) {
+          store.upsertRun({
+            id: event.runId,
+            status: 'completed',
+            summary: event.data.summary,
+            updatedAt: new Date().toISOString(),
+          })
+        }
+        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
+          store.addMessage({ type: 'complete', content: event.data.summary })
+        }
         store.finishRun(event.runId)
         break
       case 'run_cancelled':
-        store.upsertRun({
-          id: event.runId,
+        if (!store.patchRun(event.runId, {
           status: 'cancelled',
           updatedAt: new Date().toISOString(),
-        })
-        store.addMessage({ type: 'cancelled', content: event.data.message || '任务已取消' })
+        })) {
+          store.upsertRun({
+            id: event.runId,
+            status: 'cancelled',
+            updatedAt: new Date().toISOString(),
+          })
+        }
+        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
+          store.addMessage({ type: 'cancelled', content: event.data.message || '任务已取消' })
+        }
         store.finishRun(event.runId)
         break
       case 'error':
         if (event.runId) {
-          store.upsertRun({
-            id: event.runId,
+          if (!store.patchRun(event.runId, {
             status: 'failed',
             errorMessage: event.data.message,
             updatedAt: new Date().toISOString(),
-          })
+          })) {
+            store.upsertRun({
+              id: event.runId,
+              status: 'failed',
+              errorMessage: event.data.message,
+              updatedAt: new Date().toISOString(),
+            })
+          }
         }
-        store.addMessage({ type: 'error', content: event.data.message })
+        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
+          store.addMessage({ type: 'error', content: event.data.message })
+        }
         store.finishRun(event.runId)
         break
-      case 'ask_user':
+      case 'user_request_input':
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) {
+          break
+        }
         // 挂起状态，将提问显示到信息流中
         store.setRunning(false)
         store.addMessage({
-          type: 'ask_user',
+          type: 'user_request_input',
           question: event.data.question,
           options: event.data.options,
         })
+        break
+      case 'state_subgoals_updated':
+        if (event.data && event.data.goals) {
+          store.setSubgoals(event.data.goals)
+        }
+        break
+      case 'state_memory_updated':
+        if (event.data && event.data.facts) {
+          store.setMemoryFacts(event.data.facts)
+        }
+        break
+      case 'state_child_runs_updated':
+        if (event.data && Array.isArray(event.data.childRuns)) {
+          store.setRunChildren(event.data.parentRunId, event.data.childRuns)
+        }
         break
     }
   }
@@ -608,15 +668,5 @@ export function useWebSocket() {
     }
   }
 
-  return { connected, bootstrap, initializeApp, connect, login, switchWorkspace, loadSessions, openSession, openRun, downloadRunReport, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession, renameSession, deleteSession }
-}
-
-function getDownloadFilename(contentDisposition) {
-  const value = String(contentDisposition || '')
-  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i)
-  if (utf8Match?.[1]) {
-    return decodeURIComponent(utf8Match[1])
-  }
-  const basicMatch = value.match(/filename="?([^"]+)"?/i)
-  return basicMatch?.[1] || ''
+  return { connected, bootstrap, initializeApp, connect, login, switchWorkspace, loadSessions, openSession, openRun, disconnect, sendMessage, stop, resetSession, createNewSession, ensureSession, renameSession, deleteSession }
 }

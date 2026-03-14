@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/server .
 # Runtime stage
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata pandoc
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
