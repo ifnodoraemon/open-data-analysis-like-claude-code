@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
 )
 
 func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +55,7 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			resp["files"] = respFiles
 		}
+		attachRuntimeState(r.Context(), resp, identity.WorkspaceID, identity.UserID, latestSession.ID)
 	} else if err == nil {
 		session, createErr := ensureSession(r.Context(), identity)
 		if createErr == nil && session != nil {
@@ -62,6 +63,7 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 			resp["sessions"] = []map[string]interface{}{serializeSession(*session)}
 			resp["files"] = []map[string]interface{}{}
 			resp["runs"] = []map[string]interface{}{}
+			attachRuntimeState(r.Context(), resp, identity.WorkspaceID, identity.UserID, session.ID)
 		}
 	}
 

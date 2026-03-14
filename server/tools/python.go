@@ -23,23 +23,9 @@ func init() {
 	})
 }
 
-func (t *RunPythonTool) Name() string { return "run_python" }
+func (t *RunPythonTool) Name() string { return "code_run_python" }
 func (t *RunPythonTool) Description() string {
-	return `在安全的 Python 沙箱环境中执行代码。预装了 pandas, numpy, matplotlib, scipy, scikit-learn。
-
-适用场景:
-- 复杂统计分析（回归、聚类、假设检验）
-- 数据清洗和转换（pandas DataFrame 操作）
-- 高级可视化（matplotlib 图表保存到文件）
-- 机器学习建模（scikit-learn）
-- 自定义计算逻辑
-
-注意:
-- 代码中 print() 的输出会作为结果返回
-- 图表请用 plt.savefig(WORK_DIR / 'chart_name.png') 保存
-- 数据文件在 /app/data/ 目录下
-- 超时时间默认 30 秒
-- 最终结果请用 print() 输出，不要只赋值给变量`
+	return "在受限 Python 沙箱中执行代码，并返回 stdout、stderr、生成文件和耗时。"
 }
 
 func (t *RunPythonTool) Parameters() json.RawMessage {
@@ -138,7 +124,7 @@ func formatPythonResult(result pyExecResponse) string {
 	}
 	if result.Success {
 		payload["summary_text"] = fmt.Sprintf("Python 执行成功 (%dms)", result.DurationMs)
-		return toolSuccess("run_python", payload)
+		return toolSuccess("code_run_python", payload)
 	}
 
 	errorText := ""
@@ -150,6 +136,6 @@ func formatPythonResult(result pyExecResponse) string {
 	}
 	payload["detail"] = errorText
 	payload["summary_text"] = fmt.Sprintf("Python 执行失败 (%dms)", result.DurationMs)
-	payload["next_action"] = "根据错误信息修正代码后再次调用 run_python"
-	return toolFailure("run_python", "execution_failed", "Python 执行失败", payload)
+	payload["next_action"] = "根据错误信息修正代码后再次调用 code_run_python"
+	return toolFailure("code_run_python", "execution_failed", "Python 执行失败", payload)
 }

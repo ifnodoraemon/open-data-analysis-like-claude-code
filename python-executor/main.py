@@ -91,7 +91,7 @@ async def quiet_health_logs(request: Request, call_next):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "tools": ["run_python"]}
+    return {"status": "ok", "tools": ["code_run_python"]}
 
 
 @app.get("/tools")
@@ -100,7 +100,7 @@ def list_tools():
     return {
         "tools": [
             {
-                "name": "run_python",
+                "name": "code_run_python",
                 "description": (
                     "在安全的 Python 环境中执行代码。预装了 pandas, numpy, matplotlib, scipy。"
                     "可以进行数据处理、统计分析、机器学习、绘图等操作。"

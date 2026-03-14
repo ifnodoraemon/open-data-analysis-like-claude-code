@@ -61,8 +61,8 @@
 
 重点：
 
-- `load_data`
-- `describe_data`
+- `data_load_file`
+- `data_describe_table`
 - 多文件 / 多表命名稳定性
 
 ### 3. Python 分析层
@@ -79,7 +79,7 @@
 
 重点：
 
-- `run_python` 只在必要时使用
+- `code_run_python` 只在必要时使用
 - 工具不可用时是否降级到 SQL / 文本解释
 
 ### 4. 图表层
@@ -157,7 +157,7 @@ benchmarks/
 `task.md`：
 
 - 用户原始需求
-- 是否允许 `run_python`
+- 是否允许 `code_run_python`
 - 是否要求图表 / 报告
 
 `expected.json`：
@@ -204,16 +204,16 @@ benchmarks/
 
 - system prompt 变更
 - tool schema / tool description 变更
-- `query_data` / `run_python` 执行边界变更
+- `data_query_sql` / `code_run_python` 执行边界变更
 - 报告生成逻辑变更
 - session / run 恢复逻辑变更
 
 ## 当前已知需要重点盯的失败模式
 
 - 过早写报告，分析证据还不够
-- `create_chart` 参数过大，导致上下文快速膨胀
-- `write_section` 大段内容回灌历史，后续轮次 prompt 失控增长
-- `run_python` 在 SQL 足够时被误调用
+- `report_create_chart` 参数过大，导致上下文快速膨胀
+- `report_manage_blocks` 大段内容回灌历史，后续轮次 prompt 失控增长
+- `code_run_python` 在 SQL 足够时被误调用
 - 历史 run / 当前 run 状态混淆
 
 ## 实施顺序

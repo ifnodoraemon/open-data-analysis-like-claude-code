@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
+	"github.com/ifnodoraemon/openDataAnalysis/agent"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/data"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
 type RunState struct {
@@ -36,6 +36,8 @@ type Session struct {
 	Engine       *agent.Engine
 	ReportState  *tools.ReportState
 	FinalizeTool *tools.FinalizeReportTool
+	Memory       *agent.WorkingMemory
+	Subgoals     *agent.SubgoalManager
 	ActiveRun    *RunState
 	CreatedAt    time.Time
 	LastSeenAt   time.Time
@@ -48,6 +50,9 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		return nil, err
 	}
 
+	memory := agent.NewWorkingMemory()
+	subgoals := agent.NewSubgoalManager()
+
 	s := &Session{
 		ID:          id,
 		WorkspaceID: workspaceID,
@@ -56,18 +61,17 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		FileService: fileService,
 		Ingester:    ingester,
 		ReportState: &tools.ReportState{},
+		Memory:      memory,
+		Subgoals:    subgoals,
 		CreatedAt:   time.Now(),
 		LastSeenAt:  time.Now(),
 	}
 
-	memory := agent.NewWorkingMemory()
-	subgoals := agent.NewSubgoalManager()
-
 	ctx := tools.ToolContext{
-		Ingester:         s.Ingester,
-		ReportState:      s.ReportState,
-		Memory:           memory,
-		Subgoals:         subgoals,
+		Ingester:    s.Ingester,
+		ReportState: s.ReportState,
+		Memory:      memory,
+		Subgoals:    subgoals,
 		FileMaterializer: func(fileID string) (*tools.FileReference, error) {
 			tempPath, file, err := s.FileService.MaterializeToTemp(context.Background(), fileID)
 			if err != nil {
@@ -84,31 +88,51 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	masterReg := tools.NewRegistry()
 	masterReg.LoadGlobalTools(ctx)
 
-	// 配置 Worker 的可用工具
-	workerAllowed := []string{"list_tables", "describe_data", "query_data", "create_chart"}
-	if pt, err := masterReg.Get("run_python"); err == nil {
+	// 主控和子 Agent 使用同一套工具语义；子 Agent 只是按本次任务裁剪过工具边界的递归实例。
+	plannerAllowed := []string{
+		"data_load_file",
+		"data_list_tables",
+		"data_describe_table",
+		"data_query_sql",
+		"report_create_chart",
+		"report_manage_blocks",
+		"report_configure_layout",
+		"report_finalize",
+		"memory_save_fact",
+		"state_memory_inspect",
+		"state_goal_inspect",
+		"state_report_inspect",
+		"goal_manage",
+		"user_request_input",
+		"task_delegate",
+	}
+	if pt, err := masterReg.Get("code_run_python"); err == nil {
 		if runPython, ok := pt.(*tools.RunPythonTool); ok {
 			runPython.MCPEndpoint = config.Cfg.PythonMCPURL
 			if err := runPython.HealthCheck(context.Background()); err != nil {
-				log.Printf("run_python disabled for session %s: %v", id, err)
+				log.Printf("code_run_python disabled for session %s: %v", id, err)
 			} else {
-				workerAllowed = append(workerAllowed, "run_python")
+				plannerAllowed = append(plannerAllowed, "code_run_python")
 			}
 		}
 	}
-	workerRegistry := masterReg.CloneFiltered(workerAllowed)
-
-	// 配置 Planner 的可用工具
-	plannerAllowed := []string{"load_data", "write_section", "finalize_report", "save_to_memory", "manage_subgoals", "ask_user"}
 	plannerRegistry := masterReg.CloneFiltered(plannerAllowed)
 
 	s.Registry = plannerRegistry
-	if ft, err := plannerRegistry.Get("finalize_report"); err == nil {
+	if ft, err := plannerRegistry.Get("report_finalize"); err == nil {
 		s.FinalizeTool = ft.(*tools.FinalizeReportTool)
 	}
 
-	plannerPrompt := agent.BuildPlannerPrompt()
-	s.Engine = agent.NewEngine(plannerRegistry, workerRegistry, plannerPrompt, memory, subgoals)
+	if dt, err := plannerRegistry.Get("task_delegate"); err == nil {
+		if dtTool, ok := dt.(*agent.DelegateTaskTool); ok {
+			dtTool.BaseRegistry = plannerRegistry
+			dtTool.Subgoals = subgoals
+			dtTool.Memory = memory
+		}
+	}
+
+	plannerPrompt := agent.BuildPlannerPrompt(plannerRegistry)
+	s.Engine = agent.NewEngine(plannerRegistry, plannerPrompt)
 
 	return s, nil
 }
@@ -145,7 +169,7 @@ func (s *Session) BuildFileContext() string {
 	lines := "当前会话已上传文件与数据语义概况:\n"
 	for _, file := range files {
 		lines += fmt.Sprintf("=== 文件: %s (ID: %s) ===\n", file.DisplayName, file.ID)
-		
+
 		// 尝试从 Ingester 获取该文件（表名）的预分析语义摘要
 		tableName := strings.TrimSuffix(file.DisplayName, filepath.Ext(file.DisplayName))
 		tableName = sanitizeTableName(tableName)
@@ -251,12 +275,19 @@ func (s *Session) CancelRun(runID string) bool {
 func (s *Session) Reset(keepFiles bool) error {
 	s.CancelRun("")
 	s.Engine.ResetMessages()
+	if s.Memory != nil {
+		s.Memory.Reset()
+	}
+	if s.Subgoals != nil {
+		s.Subgoals.Reset()
+	}
 
 	s.mu.Lock()
-	s.ReportState.Sections = nil
+	s.ReportState.Blocks = nil
 	s.ReportState.Charts = nil
 	s.ReportState.FinalTitle = ""
 	s.ReportState.FinalAuthor = ""
+	s.ReportState.Layout = tools.ReportLayout{}
 	s.LastSeenAt = time.Now()
 	s.mu.Unlock()
 
@@ -267,4 +298,16 @@ func (s *Session) Reset(keepFiles bool) error {
 	// 文件元数据已经通过 FileRepository 与 session 关联，当前阶段 keepFiles=false 仅重置分析状态。
 	_ = keepFiles
 	return os.MkdirAll(s.FileService.TempDir, 0o755)
+}
+
+func (s *Session) RuntimeState() (map[string]string, []agent.Subgoal) {
+	var memory map[string]string
+	var subgoals []agent.Subgoal
+	if s.Memory != nil {
+		memory = s.Memory.Snapshot()
+	}
+	if s.Subgoals != nil {
+		subgoals = s.Subgoals.ListAll()
+	}
+	return memory, subgoals
 }

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -19,10 +19,16 @@ type Engine struct {
 	registry     *tools.Registry
 	messages     []openai.ChatCompletionMessage
 	systemPrompt string
-	memory       *WorkingMemory
-	subgoals     *SubgoalManager
 	mu           sync.Mutex
 }
+
+const (
+	contextBudgetTokens         = 128000
+	contextCompactTriggerTokens = contextBudgetTokens * 9 / 10
+	recentContextWindow         = 12
+	historyDigestPrefix         = "=== 历史执行摘要 ==="
+	maxDigestBulletCount        = 24
+)
 
 type eventEmitterAware interface {
 	SetEventEmitter(func(WSEvent))
@@ -35,7 +41,7 @@ type executionContextAware interface {
 type specialToolHandler func(context.Context, openai.ToolCall, func(WSEvent)) (string, error, bool)
 
 // NewEngine 创建 Agent 引擎（支持多轮对话）
-func NewEngine(registry *tools.Registry, systemPrompt string, memory *WorkingMemory, subgoals *SubgoalManager) *Engine {
+func NewEngine(registry *tools.Registry, systemPrompt string) *Engine {
 	if systemPrompt == "" {
 		systemPrompt = BuildPlannerPrompt(registry)
 	}
@@ -43,8 +49,6 @@ func NewEngine(registry *tools.Registry, systemPrompt string, memory *WorkingMem
 		llm:          NewLLMClient(),
 		registry:     registry,
 		systemPrompt: systemPrompt,
-		memory:       memory,
-		subgoals:     subgoals,
 		messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
@@ -63,6 +67,124 @@ func (e *Engine) ResetMessages() {
 			Content: e.systemPrompt,
 		},
 	}
+}
+
+func isHistoryDigestMessage(msg openai.ChatCompletionMessage) bool {
+	return msg.Role == openai.ChatMessageRoleSystem && strings.HasPrefix(strings.TrimSpace(msg.Content), historyDigestPrefix)
+}
+
+func compactTextForDigest(input string, limit int) string {
+	text := strings.Join(strings.Fields(strings.TrimSpace(input)), " ")
+	if text == "" || limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "...(truncated)"
+}
+
+func summarizeMessageForDigest(msg openai.ChatCompletionMessage) string {
+	switch msg.Role {
+	case openai.ChatMessageRoleUser:
+		if text := compactTextForDigest(msg.Content, 180); text != "" {
+			return "用户: " + text
+		}
+	case openai.ChatMessageRoleAssistant:
+		parts := make([]string, 0, len(msg.ToolCalls)+1)
+		if text := compactTextForDigest(msg.Content, 180); text != "" {
+			parts = append(parts, "助手: "+text)
+		}
+		if len(msg.ToolCalls) > 0 {
+			names := make([]string, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				names = append(names, tc.Function.Name)
+			}
+			parts = append(parts, "助手调用工具: "+strings.Join(names, ", "))
+		}
+		return strings.Join(parts, " | ")
+	case openai.ChatMessageRoleTool:
+		if summary := compactTextForDigest(extractToolSummary(msg.Content), 180); summary != "" {
+			return "工具结果: " + summary
+		}
+	}
+	return ""
+}
+
+func extractToolSummary(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
+			return summary
+		}
+		if result, ok := payload["result"].(string); ok && strings.TrimSpace(result) != "" {
+			return result
+		}
+		if tool, ok := payload["tool"].(string); ok {
+			return fmt.Sprintf("%s completed", tool)
+		}
+	}
+	return trimmed
+}
+
+func buildHistoryDigest(existing string, messages []openai.ChatCompletionMessage) string {
+	lines := make([]string, 0, len(messages)+1)
+	if trimmed := strings.TrimSpace(existing); trimmed != "" {
+		lines = append(lines, trimmed)
+	}
+	for _, msg := range messages {
+		if summary := summarizeMessageForDigest(msg); summary != "" {
+			lines = append(lines, "- "+summary)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > maxDigestBulletCount {
+		lines = append(lines[:maxDigestBulletCount-1], "- 更早的执行细节已被压缩，请优先依赖工作记忆、目标状态和最近几轮工具结果继续推进。")
+	}
+	return historyDigestPrefix + "\n" + strings.Join(lines, "\n")
+}
+
+func (e *Engine) compactMessagesLocked(promptTokens int) {
+	if len(e.messages) <= 2 {
+		return
+	}
+	if promptTokens <= 0 || promptTokens <= contextCompactTriggerTokens {
+		return
+	}
+
+	base := e.messages[0]
+	start := 1
+	existingDigest := ""
+	if len(e.messages) > 1 && isHistoryDigestMessage(e.messages[1]) {
+		existingDigest = strings.TrimSpace(strings.TrimPrefix(e.messages[1].Content, historyDigestPrefix))
+		start = 2
+	}
+	if len(e.messages)-start <= recentContextWindow {
+		return
+	}
+
+	recentStart := len(e.messages) - recentContextWindow
+	if recentStart < start {
+		recentStart = start
+	}
+	digest := buildHistoryDigest(existingDigest, e.messages[start:recentStart])
+	if digest == "" {
+		return
+	}
+
+	trimmed := []openai.ChatCompletionMessage{base, {
+		Role:    openai.ChatMessageRoleSystem,
+		Content: digest,
+	}}
+	trimmed = append(trimmed, e.messages[recentStart:]...)
+	e.messages = trimmed
 }
 
 func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
@@ -131,26 +253,14 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		messages := append([]openai.ChatCompletionMessage(nil), e.messages...)
 		e.mu.Unlock()
 
-		// 动态注入 Memory & Subgoal 上下文作为最新的 System Prompt
-		var stateContext string
-		if e.memory != nil {
-			stateContext += e.memory.GetSummary() + "\n\n"
-		}
-		if e.subgoals != nil {
-			stateContext += e.subgoals.GetSummary()
-		}
-		if stateContext != "" {
-			messages = append(messages, openai.ChatCompletionMessage{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: strings.TrimSpace(stateContext),
-			})
-		}
-
 		resp, err := e.llm.ChatWithTools(ctx, messages, oaiTools)
 		if err != nil {
 			emit(WSEvent{Type: EventError, Data: ErrorData{Message: err.Error()}})
 			return
 		}
+		e.mu.Lock()
+		e.compactMessagesLocked(resp.Usage.PromptTokens)
+		e.mu.Unlock()
 
 		if len(resp.Choices) == 0 {
 			emit(WSEvent{Type: EventError, Data: ErrorData{Message: "LLM 返回空响应"}})

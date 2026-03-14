@@ -1,6 +1,6 @@
 package handler
 
-import "github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+import "github.com/ifnodoraemon/openDataAnalysis/domain"
 
 func serializeFile(file domain.File) map[string]interface{} {
 	return map[string]interface{}{

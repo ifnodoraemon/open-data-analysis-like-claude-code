@@ -10,21 +10,24 @@ type WSEvent struct {
 
 // 事件类型常量
 const (
-	EventSessionReady = "session_ready"
-	EventSessionReset = "session_reset"
-	EventUserMessage  = "user_message"
-	EventRunStarted   = "run_started"
-	EventThinking     = "thinking"
-	EventToolCall     = "tool_call"
-	EventToolResult   = "tool_result"
-	EventReportUpdate = "report_update"
-	EventReportFinal  = "report_final"
-	EventError        = "error"
-	EventRunCompleted = "run_completed"
-	EventRunCancelled = "run_cancelled"
-	EventStop         = "stop_run"
-	EventReset        = "reset_session"
-	EventAskUser      = "ask_user"
+	EventSessionReady          = "session_ready"
+	EventSessionReset          = "session_reset"
+	EventUserMessage           = "user_message"
+	EventRunStarted            = "run_started"
+	EventThinking              = "thinking"
+	EventToolCall              = "tool_call"
+	EventToolResult            = "tool_result"
+	EventReportUpdate          = "report_update"
+	EventReportFinal           = "report_final"
+	EventError                 = "error"
+	EventRunCompleted          = "run_completed"
+	EventRunCancelled          = "run_cancelled"
+	EventStop                  = "stop_run"
+	EventReset                 = "reset_session"
+	EventUserRequestInput      = "user_request_input"
+	EventStateSubgoalsUpdated  = "state_subgoals_updated"
+	EventStateMemoryUpdated    = "state_memory_updated"
+	EventStateChildRunsUpdated = "state_child_runs_updated"
 )
 
 // UserMessage 用户输入
@@ -41,8 +44,10 @@ type ResetSessionRequest struct {
 }
 
 type SessionReadyData struct {
-	SessionID string         `json:"sessionId"`
-	Files     []UploadedFile `json:"files,omitempty"`
+	SessionID string            `json:"sessionId"`
+	Files     []UploadedFile    `json:"files,omitempty"`
+	Subgoals  []Subgoal         `json:"subgoals,omitempty"`
+	Memory    map[string]string `json:"memory,omitempty"`
 }
 
 type SessionResetData struct {
@@ -85,6 +90,15 @@ type ToolResultData struct {
 type AskUserData struct {
 	Question string   `json:"question"`
 	Options  []string `json:"options,omitempty"`
+}
+
+type MemoryUpdatedData struct {
+	Facts map[string]string `json:"facts"`
+}
+
+type ChildRunsUpdatedData struct {
+	ParentRunID string                   `json:"parentRunId"`
+	ChildRuns   []map[string]interface{} `json:"childRuns"`
 }
 
 // ReportUpdateData 研报更新事件

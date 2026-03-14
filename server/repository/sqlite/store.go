@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
 
 type UserRepository struct{ db *sql.DB }
@@ -273,20 +273,27 @@ func (r *SessionRepository) UpdateLastRun(ctx context.Context, sessionID, runID 
 }
 
 func (r *RunRepository) Create(ctx context.Context, run *domain.AnalysisRun) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO analysis_runs (id, session_id, workspace_id, user_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.SessionID, run.WorkspaceID, run.UserID, string(run.Status), run.InputMessage, run.Summary, run.ErrorMessage, run.ReportFileID, run.StartedAt, run.FinishedAt, run.CreatedAt, run.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO analysis_runs (id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.SessionID, run.WorkspaceID, run.UserID, run.ParentRunID, string(run.RunKind), run.DelegateRole, run.GoalID, string(run.Status), run.InputMessage, run.Summary, run.ErrorMessage, run.ReportFileID, run.StartedAt, run.FinishedAt, run.CreatedAt, run.UpdatedAt)
 	return err
 }
 
 func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.AnalysisRun, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE id = ?`, runID)
+	row := r.db.QueryRowContext(ctx, `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE id = ?`, runID)
 	var run domain.AnalysisRun
-	var status string
-	var errMsg, reportID sql.NullString
+	var status, runKind string
+	var parentRunID, errMsg, reportID, goalID sql.NullString
 	var startedAt, finishedAt sql.NullTime
-	if err := row.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
+	if err := row.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &parentRunID, &runKind, &run.DelegateRole, &goalID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
 		return nil, err
 	}
+	if parentRunID.Valid {
+		run.ParentRunID = &parentRunID.String
+	}
+	if goalID.Valid {
+		run.GoalID = &goalID.String
+	}
+	run.RunKind = domain.RunKind(runKind)
 	run.Status = domain.RunStatus(status)
 	if errMsg.Valid {
 		run.ErrorMessage = &errMsg.String
@@ -307,7 +314,7 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? AND (parent_run_id IS NULL OR parent_run_id = '') ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -316,12 +323,60 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 	runs := make([]domain.AnalysisRun, 0, limit)
 	for rows.Next() {
 		var run domain.AnalysisRun
-		var status string
-		var errMsg, reportID sql.NullString
+		var status, runKind string
+		var parentRunID, errMsg, reportID, goalID sql.NullString
 		var startedAt, finishedAt sql.NullTime
-		if err := rows.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &parentRunID, &runKind, &run.DelegateRole, &goalID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
+		if parentRunID.Valid {
+			run.ParentRunID = &parentRunID.String
+		}
+		if goalID.Valid {
+			run.GoalID = &goalID.String
+		}
+		run.RunKind = domain.RunKind(runKind)
+		run.Status = domain.RunStatus(status)
+		if errMsg.Valid {
+			run.ErrorMessage = &errMsg.String
+		}
+		if reportID.Valid {
+			run.ReportFileID = &reportID.String
+		}
+		if startedAt.Valid {
+			run.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			run.FinishedAt = &finishedAt.Time
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (r *RunRepository) ListByParent(ctx context.Context, parentRunID string) ([]domain.AnalysisRun, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE parent_run_id = ? ORDER BY created_at ASC`, parentRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := make([]domain.AnalysisRun, 0, 8)
+	for rows.Next() {
+		var run domain.AnalysisRun
+		var status, runKind string
+		var nextParentRunID, errMsg, reportID, goalID sql.NullString
+		var startedAt, finishedAt sql.NullTime
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.WorkspaceID, &run.UserID, &nextParentRunID, &runKind, &run.DelegateRole, &goalID, &status, &run.InputMessage, &run.Summary, &errMsg, &reportID, &startedAt, &finishedAt, &run.CreatedAt, &run.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if nextParentRunID.Valid {
+			run.ParentRunID = &nextParentRunID.String
+		}
+		if goalID.Valid {
+			run.GoalID = &goalID.String
+		}
+		run.RunKind = domain.RunKind(runKind)
 		run.Status = domain.RunStatus(status)
 		if errMsg.Valid {
 			run.ErrorMessage = &errMsg.String
@@ -403,6 +458,49 @@ func (r *MessageRepository) ListByRun(ctx context.Context, runID string) ([]doma
 			msg.Duration = &d
 		}
 		messages = append(messages, msg)
+	}
+	return messages, rows.Err()
+}
+
+func (r *MessageRepository) ListRecentByRun(ctx context.Context, runID string, limit int) ([]domain.RunMessage, error) {
+	if limit <= 0 {
+		limit = 3
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, run_id, session_id, workspace_id, type, name, content, success, duration, created_at
+		FROM run_messages
+		WHERE run_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, runID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []domain.RunMessage
+	for rows.Next() {
+		var msg domain.RunMessage
+		var success sql.NullBool
+		var duration sql.NullInt64
+		if err := rows.Scan(
+			&msg.ID, &msg.RunID, &msg.SessionID, &msg.WorkspaceID,
+			&msg.Type, &msg.Name, &msg.Content, &success, &duration, &msg.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if success.Valid {
+			s := success.Bool
+			msg.Success = &s
+		}
+		if duration.Valid {
+			d := duration.Int64
+			msg.Duration = &d
+		}
+		messages = append(messages, msg)
+	}
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
 	}
 	return messages, rows.Err()
 }

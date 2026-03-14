@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/repository"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/repository"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
 
 type Manager struct {
@@ -125,4 +125,18 @@ func (m *Manager) Get(sessionID, workspaceID, userID string) (*Session, error) {
 		_ = m.sessionRepo.UpdateLastSeen(context.Background(), sessionID)
 	}
 	return sess, nil
+}
+
+func (m *Manager) Peek(sessionID, workspaceID, userID string) (*Session, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return nil, false, nil
+	}
+	if sess.WorkspaceID != workspaceID || sess.UserID != userID {
+		return nil, false, fmt.Errorf("无权访问该会话")
+	}
+	return sess, true, nil
 }

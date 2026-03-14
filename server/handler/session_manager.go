@@ -1,5 +1,5 @@
 package handler
 
-import "github.com/ifnodoraemon/open-data-analysis-like-claude-code/session"
+import "github.com/ifnodoraemon/openDataAnalysis/session"
 
 var sessionManager *session.Manager

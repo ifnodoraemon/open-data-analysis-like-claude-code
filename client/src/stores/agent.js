@@ -18,6 +18,67 @@ export const useAgentStore = defineStore('agent', () => {
   const workspaces = ref([])
   const sessions = ref([])
   const runs = ref([])
+  const subgoals = ref([])
+  const memoryFacts = ref({})
+
+  function findRunById(items, runId) {
+    for (const item of items || []) {
+      if (item.id === runId) return item
+      const nested = findRunById(item.childRuns || [], runId)
+      if (nested) return nested
+    }
+    return null
+  }
+
+  function patchRunInTree(items, runId, patch) {
+    return (items || []).map(item => {
+      if (item.id === runId) {
+        return { ...item, ...patch }
+      }
+      if (item.childRuns?.length) {
+        return { ...item, childRuns: patchRunInTree(item.childRuns, runId, patch) }
+      }
+      return item
+    })
+  }
+
+  function replaceRunInTree(items, nextRun) {
+    return (items || []).map(item => {
+      if (item.id === nextRun.id) {
+        return { ...item, ...nextRun }
+      }
+      if (item.childRuns?.length) {
+        return { ...item, childRuns: replaceRunInTree(item.childRuns, nextRun) }
+      }
+      return item
+    })
+  }
+
+  function setChildRunsInTree(items, parentRunId, childRuns) {
+    return (items || []).map(item => {
+      if (item.id === parentRunId) {
+        return { ...item, childRuns: childRuns || [] }
+      }
+      if (item.childRuns?.length) {
+        return { ...item, childRuns: setChildRunsInTree(item.childRuns, parentRunId, childRuns) }
+      }
+      return item
+    })
+  }
+
+  function insertRunUnderParent(items, parentRunId, run) {
+    return (items || []).map(item => {
+      if (item.id === parentRunId) {
+        const existingChildren = item.childRuns || []
+        const nextChildren = [...existingChildren, run]
+        return { ...item, childRuns: nextChildren }
+      }
+      if (item.childRuns?.length) {
+        return { ...item, childRuns: insertRunUnderParent(item.childRuns, parentRunId, run) }
+      }
+      return item
+    })
+  }
 
   function addMessage(msg) {
     messages.value.push({
@@ -81,9 +142,12 @@ export const useAgentStore = defineStore('agent', () => {
 
   function upsertRun(run) {
     if (!run?.id) return
-    const index = runs.value.findIndex(item => item.id === run.id)
-    if (index >= 0) {
-      runs.value.splice(index, 1, { ...runs.value[index], ...run })
+    if (findRunById(runs.value, run.id)) {
+      runs.value = replaceRunInTree(runs.value, run)
+      return
+    }
+    if (run.parentRunId && findRunById(runs.value, run.parentRunId)) {
+      runs.value = insertRunUnderParent(runs.value, run.parentRunId, run)
       return
     }
     runs.value.unshift(run)
@@ -93,8 +157,33 @@ export const useAgentStore = defineStore('agent', () => {
     runs.value = items || []
   }
 
+  function setRunChildren(parentRunId, items) {
+    if (!parentRunId) return
+    runs.value = setChildRunsInTree(runs.value, parentRunId, items || [])
+  }
+
+  function patchRun(runId, patch) {
+    if (!runId) return false
+    if (!findRunById(runs.value, runId)) return false
+    runs.value = patchRunInTree(runs.value, runId, patch)
+    return true
+  }
+
+  function getRun(runId) {
+    if (!runId) return null
+    return findRunById(runs.value, runId)
+  }
+
   function setMessages(items) {
     messages.value = items || []
+  }
+
+  function setSubgoals(items) {
+    subgoals.value = items || []
+  }
+
+  function setMemoryFacts(items) {
+    memoryFacts.value = items || {}
   }
 
   function setConnectionState(state) {
@@ -140,6 +229,8 @@ export const useAgentStore = defineStore('agent', () => {
     selectedRunId.value = ''
     sessionId.value = ''
     runs.value = []
+    subgoals.value = []
+    memoryFacts.value = {}
     if (!keepFiles) {
       uploadedFiles.value = []
     }
@@ -174,6 +265,8 @@ export const useAgentStore = defineStore('agent', () => {
     workspaces,
     sessions,
     runs,
+    subgoals,
+    memoryFacts,
     addMessage,
     updateReport,
     setRunning,
@@ -186,8 +279,13 @@ export const useAgentStore = defineStore('agent', () => {
     setSessions,
     upsertSession,
     setRuns,
+    setRunChildren,
     upsertRun,
+    patchRun,
+    getRun,
     setMessages,
+    setSubgoals,
+    setMemoryFacts,
     setConnectionState,
     setBootstrapState,
     startRun,

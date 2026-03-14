@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 	anthropic "github.com/liushuangls/go-anthropic/v2"
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -66,14 +66,34 @@ func (l *LLMClient) initAnthropic() {
 	l.anthropicClient = anthropic.NewClient(config.Cfg.LLMAPIKey, opts...)
 }
 
-// ChatWithTools 统一的调用接口
+// ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑
 func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
-	switch l.provider {
-	case "anthropic":
-		return l.chatAnthropic(ctx, messages, tools)
-	default:
-		return l.chatOpenAI(ctx, messages, tools)
+	var resp *openai.ChatCompletionResponse
+	var err error
+
+	for retry := 0; retry < 3; retry++ {
+		// 检查 context 是否已被取消
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		switch l.provider {
+		case "anthropic":
+			resp, err = l.chatAnthropic(ctx, messages, tools)
+		default:
+			resp, err = l.chatOpenAI(ctx, messages, tools)
+		}
+
+		if err == nil {
+			return resp, nil
+		}
+
+		// 如果只有一次就不打印了，如果有重试，可以稍微等一等
+		// 这里的 err 往往是 TLS/网络中断等问题
+		time.Sleep(time.Second * 2)
 	}
+
+	return nil, fmt.Errorf("LLM API request failed after 3 retries: %v", err)
 }
 
 // chatOpenAI OpenAI 格式调用
@@ -146,15 +166,18 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 		return nil, fmt.Errorf("解析 Responses 响应失败: %w", err)
 	}
 	l.debugLog(span, "llm.response", map[string]interface{}{
-		"duration_ms":     time.Since(start).Milliseconds(),
-		"output_preview":  clipText(apiResp.OutputText, 300),
-		"output_chars":    len([]rune(apiResp.OutputText)),
-		"item_count":      len(apiResp.Output),
-		"tool_call_count": countResponsesToolCalls(apiResp.Output),
-		"tool_calls":      responseToolNames(apiResp.Output),
-		"response_bytes":  len(respBytes),
-		"response_sha256": blobSHA256(respBytes),
-		"response_path":   responsePath,
+		"duration_ms":        time.Since(start).Milliseconds(),
+		"output_preview":     clipText(apiResp.OutputText, 300),
+		"output_chars":       len([]rune(apiResp.OutputText)),
+		"item_count":         len(apiResp.Output),
+		"tool_call_count":    countResponsesToolCalls(apiResp.Output),
+		"tool_calls":         responseToolNames(apiResp.Output),
+		"usage_input_tokens": apiResp.Usage.InputTokens,
+		"usage_output_tokens": apiResp.Usage.OutputTokens,
+		"usage_total_tokens": apiResp.Usage.TotalTokens,
+		"response_bytes":     len(respBytes),
+		"response_sha256":    blobSHA256(respBytes),
+		"response_path":      responsePath,
 	})
 	return l.convertResponsesResponse(&apiResp), nil
 }
@@ -179,6 +202,13 @@ type responsesTool struct {
 type responsesAPIResponse struct {
 	OutputText string                `json:"output_text"`
 	Output     []responsesOutputItem `json:"output"`
+	Usage      responsesAPIUsage     `json:"usage"`
+}
+
+type responsesAPIUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
 }
 
 type responsesOutputItem struct {
@@ -300,6 +330,11 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 	choice.Message.Content = strings.TrimSpace(strings.Join(textParts, "\n"))
 	return &openai.ChatCompletionResponse{
 		Choices: []openai.ChatCompletionChoice{choice},
+		Usage: openai.Usage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		},
 	}
 }
 
@@ -497,15 +532,18 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCom
 	if respBytes, marshalErr := json.Marshal(resp); marshalErr == nil {
 		responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
 		l.debugLog(span, "llm.response", map[string]interface{}{
-			"duration_ms":     time.Since(start).Milliseconds(),
-			"output_preview":  clipText(firstAnthropicText(resp.Content), 300),
-			"output_chars":    len([]rune(firstAnthropicText(resp.Content))),
-			"item_count":      len(resp.Content),
-			"tool_call_count": countAnthropicToolUses(resp.Content),
-			"tool_calls":      anthropicToolNames(resp.Content),
-			"response_bytes":  len(respBytes),
-			"response_sha256": blobSHA256(respBytes),
-			"response_path":   responsePath,
+			"duration_ms":        time.Since(start).Milliseconds(),
+			"output_preview":     clipText(firstAnthropicText(resp.Content), 300),
+			"output_chars":       len([]rune(firstAnthropicText(resp.Content))),
+			"item_count":         len(resp.Content),
+			"tool_call_count":    countAnthropicToolUses(resp.Content),
+			"tool_calls":         anthropicToolNames(resp.Content),
+			"usage_input_tokens": resp.Usage.InputTokens,
+			"usage_output_tokens": resp.Usage.OutputTokens,
+			"usage_total_tokens": resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			"response_bytes":     len(respBytes),
+			"response_sha256":    blobSHA256(respBytes),
+			"response_path":      responsePath,
 		})
 	}
 
@@ -558,5 +596,10 @@ func (l *LLMClient) convertAnthropicResponse(resp *anthropic.MessagesResponse) *
 
 	return &openai.ChatCompletionResponse{
 		Choices: []openai.ChatCompletionChoice{choice},
+		Usage: openai.Usage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+		},
 	}
 }

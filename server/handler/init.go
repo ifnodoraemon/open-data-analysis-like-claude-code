@@ -5,15 +5,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/metadata"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/repository"
-	sqliterepo "github.com/ifnodoraemon/open-data-analysis-like-claude-code/repository/sqlite"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/session"
-	localstorage "github.com/ifnodoraemon/open-data-analysis-like-claude-code/storage/local"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/metadata"
+	"github.com/ifnodoraemon/openDataAnalysis/repository"
+	sqliterepo "github.com/ifnodoraemon/openDataAnalysis/repository/sqlite"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
+	"github.com/ifnodoraemon/openDataAnalysis/session"
+	localstorage "github.com/ifnodoraemon/openDataAnalysis/storage/local"
 )
 
 var (

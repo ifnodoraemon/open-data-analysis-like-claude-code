@@ -19,18 +19,30 @@ type Report struct {
 }
 
 type ReportSnapshot struct {
-	Version     string                  `json:"version"`
-	GeneratedAt time.Time               `json:"generatedAt"`
-	Title       string                  `json:"title"`
-	Author      string                  `json:"author,omitempty"`
-	Sections    []ReportSnapshotSection `json:"sections"`
-	Charts      []ReportSnapshotChart   `json:"charts"`
+	Version     string                `json:"version"`
+	GeneratedAt time.Time             `json:"generatedAt"`
+	Title       string                `json:"title"`
+	Author      string                `json:"author,omitempty"`
+	Layout      ReportSnapshotLayout  `json:"layout,omitempty"`
+	Blocks      []ReportSnapshotBlock `json:"blocks,omitempty"`
+	Charts      []ReportSnapshotChart `json:"charts"`
 }
 
-type ReportSnapshotSection struct {
-	Type    string `json:"type"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
+type ReportSnapshotLayout struct {
+	CustomHTMLShell string `json:"customHtmlShell,omitempty"`
+	CustomCSS       string `json:"customCss,omitempty"`
+	CustomJS        string `json:"customJs,omitempty"`
+	BodyClass       string `json:"bodyClass,omitempty"`
+	HideCover       bool   `json:"hideCover,omitempty"`
+	HideTOC         bool   `json:"hideToc,omitempty"`
+}
+
+type ReportSnapshotBlock struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	Title   string `json:"title,omitempty"`
+	Content string `json:"content,omitempty"`
+	ChartID string `json:"chartId,omitempty"`
 }
 
 type ReportSnapshotChart struct {

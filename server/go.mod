@@ -1,4 +1,4 @@
-module github.com/ifnodoraemon/open-data-analysis-like-claude-code
+module github.com/ifnodoraemon/openDataAnalysis
 
 go 1.26.1
 

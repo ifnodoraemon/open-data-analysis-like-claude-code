@@ -227,48 +227,6 @@ func (s *SubgoalManager) CanFinalize() (bool, []string) {
 	return len(blockers) == 0, blockers
 }
 
-// AutoCompleteReportGoals 在进入最终收尾前自动闭合明显属于“产出图表/报告”的根目标。
-func (s *SubgoalManager) AutoCompleteReportGoals(result string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	completed := 0
-	now := time.Now()
-	for i := range s.Goals {
-		goal := &s.Goals[i]
-		if strings.TrimSpace(goal.ParentGoalID) != "" {
-			continue
-		}
-		if isTerminalSubgoalStatus(goal.Status) {
-			continue
-		}
-		if !looksLikeReportGoal(goal.Description) {
-			continue
-		}
-		goal.Status = StatusComplete
-		if strings.TrimSpace(result) != "" {
-			goal.Result = result
-		}
-		goal.UpdatedAt = now
-		completed++
-	}
-	return completed
-}
-
-func looksLikeReportGoal(description string) bool {
-	hint := strings.ToLower(strings.TrimSpace(description))
-	if hint == "" {
-		return false
-	}
-	keywords := []string{"报告", "研报", "图表", "report", "chart", "dashboard", "finalize"}
-	for _, keyword := range keywords {
-		if strings.Contains(hint, keyword) {
-			return true
-		}
-	}
-	return false
-}
-
 // GetSummary 格式化输出供 LLM 使用的当前子任务树状态
 func (s *SubgoalManager) GetSummary() string {
 	s.mu.RLock()

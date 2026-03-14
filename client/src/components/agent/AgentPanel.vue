@@ -8,21 +8,9 @@
         当前查看历史任务 {{ truncate(selectedRun.summary || selectedRun.inputMessage || selectedRun.id, 36) }}
       </span>
     </div>
-    <div v-if="runs.length > 0" class="run-history">
-      <button
-        v-for="run in runs"
-        :key="run.id"
-        class="run-chip"
-        :class="{ active: run.id === selectedRunId, live: run.id === activeRunId }"
-        type="button"
-        @click="handleRunClick(run.id)"
-      >
-        <span class="run-status" :class="'status-' + run.status"></span>
-        <span class="run-label">{{ truncate(run.summary || run.inputMessage || run.id, 28) }}</span>
-        <span v-if="run.id === activeRunId" class="run-tag">实时</span>
-        <span v-else-if="run.id === selectedRunId" class="run-tag subtle">历史</span>
-      </button>
-    </div>
+    <RunTree />
+    <WorkingMemoryPanel />
+    <SubgoalTree />
     <div class="messages" ref="messagesEl">
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">🔍</div>
@@ -64,7 +52,7 @@
           </template>
 
           <!-- 提问用户 (Human in loop) -->
-          <template v-else-if="msg.type === 'ask_user'">
+          <template v-else-if="msg.type === 'user_request_input'">
             <div class="msg-icon">🙋</div>
             <div class="msg-body">
               <div class="msg-label ask-user-label">需要您确认</div>
@@ -89,6 +77,9 @@
               <div class="msg-label">
                 {{ msg.name }} 结果
                 <span class="duration">{{ msg.duration }}ms</span>
+              </div>
+              <div v-if="toolResultSummary(msg)" class="msg-content tool-result-summary">
+                {{ toolResultSummary(msg) }}
               </div>
               <details class="tool-details">
                 <summary>查看结果</summary>
@@ -142,16 +133,18 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
+import RunTree from './RunTree.vue'
+import SubgoalTree from './SubgoalTree.vue'
+import WorkingMemoryPanel from './WorkingMemoryPanel.vue'
 
 const store = useAgentStore()
 const { openRun } = useWebSocket()
 const messages = computed(() => store.messages)
 const isRunning = computed(() => store.isRunning)
-const runs = computed(() => store.runs || [])
 const selectedRunId = computed(() => store.selectedRunId)
 const activeRunId = computed(() => store.activeRunId)
-const selectedRun = computed(() => runs.value.find(run => run.id === selectedRunId.value) || null)
-const activeRun = computed(() => runs.value.find(run => run.id === activeRunId.value) || null)
+const selectedRun = computed(() => store.getRun(selectedRunId.value))
+const activeRun = computed(() => store.getRun(activeRunId.value))
 const messagesEl = ref(null)
 
 marked.setOptions({
@@ -183,6 +176,15 @@ function truncate(str, max) {
   return str.length > max ? str.slice(0, max) + '\n... (已截断)' : str
 }
 
+function toolResultSummary(msg) {
+  const payload = msg?.parsedResult
+  if (!payload || typeof payload !== 'object') return ''
+  if (typeof payload.summary_text === 'string' && payload.summary_text.trim()) return payload.summary_text
+  if (typeof payload.delegate_summary === 'string' && payload.delegate_summary.trim()) return payload.delegate_summary
+  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
+  return ''
+}
+
 function renderMarkdown(content) {
   return marked.parse(String(content || ''))
 }
@@ -210,15 +212,6 @@ function handleOptionClick(opt) {
   background: var(--bg-primary);
 }
 
-.run-history {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
-}
-
 .run-summary {
   display: flex;
   gap: 8px;
@@ -244,59 +237,6 @@ function handleOptionClick(opt) {
   color: var(--text-secondary);
   background: rgba(139, 148, 158, 0.12);
   border: 1px solid rgba(139, 148, 158, 0.2);
-}
-
-.run-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 0.72rem;
-  white-space: nowrap;
-}
-
-.run-chip.active {
-  border-color: var(--accent-blue);
-  color: var(--text-primary);
-}
-
-.run-chip.live {
-  box-shadow: inset 0 0 0 1px rgba(47, 129, 247, 0.25);
-}
-
-.run-status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.status-running { background: var(--accent-blue); }
-.status-completed { background: var(--accent-green); }
-.status-cancelled { background: var(--accent-orange); }
-.status-failed { background: var(--accent-red); }
-.status-queued { background: var(--text-muted); }
-
-.run-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.run-tag {
-  font-size: 0.65rem;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(47, 129, 247, 0.16);
-  color: #d2e9ff;
-}
-
-.run-tag.subtle {
-  background: rgba(139, 148, 158, 0.14);
-  color: var(--text-muted);
 }
 
 .messages {
@@ -339,6 +279,10 @@ function handleOptionClick(opt) {
   font-size: 0.85rem;
   line-height: 1.5;
   color: var(--text-primary);
+}
+
+.tool-result-summary {
+  margin-bottom: 8px;
 }
 
 .markdown-body :deep(p),
@@ -453,7 +397,7 @@ function handleOptionClick(opt) {
 .running-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
 .running-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
 
-.msg-ask_user {
+.msg-user_request_input {
   background: rgba(255, 152, 0, 0.08);
   border: 1px solid rgba(255, 152, 0, 0.3);
 }

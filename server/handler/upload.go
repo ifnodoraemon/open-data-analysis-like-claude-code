@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
 
 // UploadHandler 文件上传处理

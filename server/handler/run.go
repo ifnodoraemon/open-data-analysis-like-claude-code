@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
+
+const runPreviewLimit = 3
 
 func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
@@ -69,6 +71,7 @@ func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp["messages"] = []domain.RunMessage{}
 	}
+	attachRunRuntimeState(r.Context(), resp, *run)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -140,11 +143,19 @@ func serializeRun(ctx context.Context, run domain.AnalysisRun) map[string]interf
 		"id":           run.ID,
 		"sessionId":    run.SessionID,
 		"workspaceId":  run.WorkspaceID,
+		"runKind":      run.RunKind,
+		"delegateRole": run.DelegateRole,
 		"status":       run.Status,
 		"inputMessage": run.InputMessage,
 		"summary":      run.Summary,
 		"createdAt":    run.CreatedAt,
 		"updatedAt":    run.UpdatedAt,
+	}
+	if run.ParentRunID != nil {
+		item["parentRunId"] = *run.ParentRunID
+	}
+	if run.GoalID != nil {
+		item["goalId"] = *run.GoalID
 	}
 	if run.ErrorMessage != nil {
 		item["errorMessage"] = *run.ErrorMessage
@@ -163,7 +174,81 @@ func serializeRun(ctx context.Context, run domain.AnalysisRun) map[string]interf
 	if run.FinishedAt != nil {
 		item["finishedAt"] = *run.FinishedAt
 	}
+	if preview := buildRunPreview(ctx, run.ID); len(preview) > 0 {
+		item["previewMessages"] = preview
+	}
+	if childRuns, err := runRepo.ListByParent(ctx, run.ID); err == nil && len(childRuns) > 0 {
+		item["childRuns"] = serializeRuns(ctx, childRuns)
+	}
 	return item
+}
+
+func buildRunPreview(ctx context.Context, runID string) []map[string]interface{} {
+	if messageRepo == nil {
+		return nil
+	}
+	messages, err := messageRepo.ListRecentByRun(ctx, runID, runPreviewLimit)
+	if err != nil || len(messages) == 0 {
+		return nil
+	}
+	items := make([]map[string]interface{}, 0, len(messages))
+	for _, msg := range messages {
+		summary := summarizeRunMessage(msg)
+		if summary == "" {
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"type":    msg.Type,
+			"name":    msg.Name,
+			"summary": summary,
+		})
+	}
+	return items
+}
+
+func summarizeRunMessage(msg domain.RunMessage) string {
+	content := strings.TrimSpace(msg.Content)
+	switch msg.Type {
+	case "thinking":
+		return clipPreviewText(content, 120)
+	case "tool_call":
+		return msg.Name
+	case "tool_result":
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(content), &payload); err == nil {
+			if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
+				return clipPreviewText(summary, 120)
+			}
+			if summary, ok := payload["delegate_summary"].(string); ok && strings.TrimSpace(summary) != "" {
+				return clipPreviewText(summary, 120)
+			}
+			if message, ok := payload["message"].(string); ok && strings.TrimSpace(message) != "" {
+				return clipPreviewText(message, 120)
+			}
+		}
+		if msg.Name != "" {
+			return clipPreviewText(msg.Name+": "+content, 120)
+		}
+		return clipPreviewText(content, 120)
+	case "run_completed":
+		return clipPreviewText(content, 120)
+	case "error":
+		return clipPreviewText(content, 120)
+	default:
+		return clipPreviewText(content, 120)
+	}
+}
+
+func clipPreviewText(input string, max int) string {
+	input = strings.Join(strings.Fields(strings.TrimSpace(input)), " ")
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(input)
+	if len(runes) <= max {
+		return input
+	}
+	return string(runes[:max]) + "..."
 }
 
 func serializeReport(report domain.Report) map[string]interface{} {

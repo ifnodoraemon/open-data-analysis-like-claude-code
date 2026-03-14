@@ -14,7 +14,7 @@ func TestCreateChartToolReturnsStructuredValidationFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "请重新调用 create_chart") {
+	if strings.Contains(result, "请重新调用 report_create_chart") {
 		t.Fatalf("expected structured feedback instead of retry prompt, got %q", result)
 	}
 
@@ -110,5 +110,43 @@ func TestCreateChartToolBuildsOptionFromDSL(t *testing.T) {
 	}
 	if option["tooltip"] == nil {
 		t.Fatalf("expected default tooltip in option: %#v", option)
+	}
+}
+
+func TestCreateChartToolAcceptsRawOption(t *testing.T) {
+	t.Parallel()
+
+	tool := &CreateChartTool{ReportState: &ReportState{}}
+	result, err := tool.Execute(json.RawMessage(`{
+		"chart_id":"chart_custom",
+		"title":"自定义图",
+		"option":{
+			"tooltip":{"trigger":"item"},
+			"xAxis":{"type":"category","data":["A","B"]},
+			"yAxis":{"type":"value"},
+			"series":[{"type":"line","data":[1,2]}]
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json feedback, got %v", err)
+	}
+	if payload["ok"] != true {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+	if len(tool.ReportState.Charts) != 1 {
+		t.Fatalf("expected 1 chart, got %d", len(tool.ReportState.Charts))
+	}
+
+	var option map[string]interface{}
+	if err := json.Unmarshal(tool.ReportState.Charts[0].Option, &option); err != nil {
+		t.Fatalf("unmarshal option: %v", err)
+	}
+	if option["tooltip"] == nil || option["xAxis"] == nil {
+		t.Fatalf("expected raw option to be preserved: %#v", option)
 	}
 }

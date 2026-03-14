@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
 
 type loginRequest struct {

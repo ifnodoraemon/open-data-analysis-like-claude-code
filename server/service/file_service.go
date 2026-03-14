@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/repository"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/storage"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/repository"
+	"github.com/ifnodoraemon/openDataAnalysis/storage"
 )
 
 type UploadFileInput struct {

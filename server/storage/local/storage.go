@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/storage"
+	"github.com/ifnodoraemon/openDataAnalysis/storage"
 )
 
 type Storage struct {

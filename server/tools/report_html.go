@@ -341,7 +341,6 @@ body {
   transition: box-shadow 0.3s ease;
 }
 .chart-box:hover { box-shadow: var(--shadow-md); }
-
 /* === 表格 === */
 table {
   width: 100%%;

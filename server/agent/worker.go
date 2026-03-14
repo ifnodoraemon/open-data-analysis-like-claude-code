@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -72,10 +72,7 @@ func (t *ManageSubgoalsTool) Name() string {
 }
 
 func (t *ManageSubgoalsTool) Description() string {
-	return `管理你当前正在解决的目标拆解清单。
-这是你用于在白板上记录"有哪些子任务待办"、"哪些子任务已经完成"的工具。
-当你收到一个用户的复杂需求，你应该使用 action="add" 把步骤记录下来。
-但这仅仅是记录！系统不会替你自动执行任务。你可以自己继续调用分析工具，也可以在你认为划算时使用 task_delegate 派生一个子 Agent 去并行推进。`
+	return "记录或更新目标树中的节点状态。只修改状态，不执行任务。"
 }
 
 func (t *ManageSubgoalsTool) Parameters() json.RawMessage {
@@ -131,7 +128,7 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		}
 		id := t.Subgoals.AddGoal(payload.Description, payload.ParentGoalID)
 		t.emitUpdate()
-		return fmt.Sprintf("已在看板记录新目标，ID: %s。记住：这只是记录，你可以自己继续调用工具推进，或按需使用 task_delegate 派生子 Agent。", id), nil
+		return fmt.Sprintf("已记录目标，ID: %s。该记录不会自动执行。", id), nil
 	case "complete":
 		if payload.GoalID == "" {
 			return "", fmt.Errorf("goal_id is required for complete action")
@@ -191,8 +188,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return `按需派生一个子 Agent 去并行推进某个具体任务。
-子 Agent 不是另一种固定人格，而是你当前主控能力的一个受限实例：沿用同一套工具语义和推理模式，但只拿到你本次授权的工具边界与任务说明。`
+	return "创建一个受限子代理来执行指定任务。需要提供任务说明和允许使用的工具列表。"
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -201,24 +197,24 @@ func (t *DelegateTaskTool) Parameters() json.RawMessage {
 		"properties": {
 			"role_name": {
 				"type": "string",
-				"description": "这次子 Agent 的临时角色名，用于帮助你区分派生实例，例如 'SQL Explorer' 或 'Chart Synthesizer'。"
+				"description": "子代理的标签，用于区分不同实例。"
 			},
 			"system_prompt": {
 				"type": "string",
-				"description": "对子 Agent 的额外约束或工作纪律。它会叠加在基础 planner prompt 之上。"
+				"description": "附加给子代理的额外约束。"
 			},
 			"task_instruction": {
 				"type": "string",
-				"description": "子 Agent 本次要执行的具体任务内容。"
+				"description": "子代理本次要完成的具体任务。"
 			},
 			"allowed_tools": {
 				"type": "array",
 				"items": {"type": "string"},
-				"description": "本次派生允许使用的工具列表。子 Agent 只会拿到这些工具。若包含 task_delegate，则允许继续递归派生。"
+				"description": "子代理允许使用的工具列表。"
 			},
 			"goal_id": {
 				"type": "string",
-				"description": "可选。如果这次派生对应某个白板目标，请传入 goal_id，以便系统展示执行中状态。"
+				"description": "可选。关联的目标 ID。"
 			}
 		},
 		"required": ["role_name", "task_instruction", "allowed_tools"]

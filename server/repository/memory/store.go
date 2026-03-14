@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
 
 type UserRepository struct {
@@ -188,6 +188,9 @@ func (r *RunRepository) Create(ctx context.Context, run *domain.AnalysisRun) err
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	copy := *run
+	if copy.RunKind == "" {
+		copy.RunKind = domain.RunKindRoot
+	}
 	r.runs[run.ID] = &copy
 	return nil
 }
@@ -211,7 +214,7 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 	}
 	runs := make([]domain.AnalysisRun, 0, limit)
 	for _, run := range r.runs {
-		if run.SessionID == sessionID {
+		if run.SessionID == sessionID && (run.ParentRunID == nil || *run.ParentRunID == "") {
 			runs = append(runs, *run)
 		}
 	}
@@ -222,6 +225,23 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 	}
 	if len(runs) > limit {
 		runs = runs[:limit]
+	}
+	return runs, nil
+}
+
+func (r *RunRepository) ListByParent(ctx context.Context, parentRunID string) ([]domain.AnalysisRun, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	runs := make([]domain.AnalysisRun, 0, 8)
+	for _, run := range r.runs {
+		if run.ParentRunID != nil && *run.ParentRunID == parentRunID {
+			runs = append(runs, *run)
+		}
+	}
+	if len(runs) > 1 {
+		sort.Slice(runs, func(i, j int) bool {
+			return runs[i].CreatedAt.Before(runs[j].CreatedAt)
+		})
 	}
 	return runs, nil
 }

@@ -23,6 +23,7 @@ func init() {
 type createChartParams struct {
 	ChartID    string             `json:"chart_id"`
 	Title      string             `json:"title"`
+	Option     json.RawMessage    `json:"option"`
 	ChartType  string             `json:"chart_type"`
 	Categories []string           `json:"categories"`
 	Series     []chartSeriesInput `json:"series"`
@@ -54,27 +55,12 @@ type CreateChartTool struct {
 	ReportState *ReportState
 }
 
-func (t *CreateChartTool) Name() string { return "create_chart" }
+func (t *CreateChartTool) Name() string { return "report_create_chart" }
 
 func (t *CreateChartTool) Strict() bool { return true }
 
 func (t *CreateChartTool) Description() string {
-	return `创建一个交互式 ECharts 图表。只允许使用简化 DSL，由后端自动生成稳定的图表配置。
-
-推荐字段：
-1. 柱状图/折线图：chart_type + categories + series
-2. 饼图：chart_type=pie + values
-3. 双轴图：在 series 中给个别序列设置 y_axis="right"
-
-示例：
-1. {"chart_id":"chart_sales_trend","title":"销售趋势","chart_type":"line","categories":["1月","2月","3月"],"series":[{"name":"销售额","data":[120,135,160],"smooth":true}]}
-2. {"chart_id":"chart_region_revenue","title":"区域销售额","chart_type":"bar","categories":["华东","华北","华南"],"series":[{"name":"收入","data":[320,280,260]}]}
-3. {"chart_id":"chart_channel_mix","title":"渠道贡献","chart_type":"pie","values":[{"name":"Search","value":42},{"name":"Social","value":35},{"name":"Affiliate","value":23}]}
-
-注意：
-- 必须提供 chart_id 和 title
-- 数据必须来自之前的 query_data 结果
-- 图表只能写在 analysis 章节中，并用 {{chart:chart_id}} 引用`
+	return "创建一个 ECharts 图表。支持简化 DSL 或直接传入原生 option，并返回可在报告中引用的 chart_id。"
 }
 
 func (t *CreateChartTool) Parameters() json.RawMessage {
@@ -84,11 +70,12 @@ func (t *CreateChartTool) Parameters() json.RawMessage {
 		"properties": {
 			"chart_id": {"type": "string", "description": "图表唯一标识，如 chart_sales_trend"},
 			"title": {"type": "string", "description": "图表标题"},
+			"option": {"type": "object", "description": "可选。直接传入原生 ECharts option。传了 option 时，后端不再按 DSL 推导。"},
 			"chart_type": {"type": "string", "enum": ["bar", "line", "pie"], "description": "优先使用的图表类型"},
 			"categories": {"type": "array", "description": "柱状图/折线图的类目轴标签", "items": {"type": "string"}},
 			"series": {
 				"type": "array",
-				"description": "柱状图/折线图的序列定义；data 应来自 query_data 结果",
+				"description": "柱状图/折线图的序列定义；data 应来自 data_query_sql 结果",
 				"items": {
 					"type": "object",
 					"additionalProperties": false,
@@ -133,9 +120,15 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
-	option, err := buildOptionFromDSL(params)
-	if err != nil {
-		return chartValidationFeedback("invalid_chart_spec", params.ChartID, params.Title, "请按 DSL 传入图表定义", err.Error()), nil
+	var option json.RawMessage
+	var err error
+	if hasRawChartOption(params.Option) {
+		option = params.Option
+	} else {
+		option, err = buildOptionFromDSL(params)
+		if err != nil {
+			return chartValidationFeedback("invalid_chart_spec", params.ChartID, params.Title, "请按 DSL 传入图表定义，或直接提供 option", err.Error()), nil
+		}
 	}
 
 	chart := ChartData{
@@ -147,7 +140,7 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 
 	t.ReportState.Charts = append(t.ReportState.Charts, chart)
 
-	return toolSuccess("create_chart", map[string]interface{}{
+	return toolSuccess("report_create_chart", map[string]interface{}{
 		"chart_id":     params.ChartID,
 		"title":        params.Title,
 		"chart_ref":    "{{chart:" + params.ChartID + "}}",
@@ -174,6 +167,11 @@ func buildOptionFromDSL(params createChartParams) (json.RawMessage, error) {
 	default:
 		return nil, fmt.Errorf("必须提供 chart_type，当前仅支持 bar、line、pie")
 	}
+}
+
+func hasRawChartOption(option json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(option))
+	return trimmed != "" && trimmed != "null" && trimmed != "{}"
 }
 
 func buildAxisChartOption(params createChartParams, defaultType string) (json.RawMessage, error) {
@@ -363,6 +361,6 @@ func chartValidationFeedback(code, chartID, title, message, detail string) strin
 		"chart_type + categories + series",
 		"chart_type=pie + values",
 	}
-	payload["next_action"] = "按 DSL 重新调用 create_chart"
-	return toolFailure("create_chart", code, message, payload)
+	payload["next_action"] = "按 DSL 重新调用 report_create_chart"
+	return toolFailure("report_create_chart", code, message, payload)
 }

@@ -3,10 +3,11 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
+	"github.com/ifnodoraemon/openDataAnalysis/data"
 )
 
 type FileReference struct {
@@ -68,7 +69,7 @@ type LoadDataTool struct {
 
 func (t *LoadDataTool) Name() string { return "data_load_file" }
 func (t *LoadDataTool) Description() string {
-	return "加载用户上传的数据文件 (CSV/Excel) 到内部数据库，返回行数、列数和表名。大数据文件也可以处理。"
+	return "加载用户上传的 CSV 或 Excel 文件到内部数据库，并返回表名、行数和列数。"
 }
 func (t *LoadDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -119,7 +120,7 @@ type ListTablesTool struct {
 
 func (t *ListTablesTool) Name() string { return "data_list_tables" }
 func (t *ListTablesTool) Description() string {
-	return "列出当前数据库中所有已导入的数据表名称和基本信息。"
+	return "返回当前数据库中的已导入表。"
 }
 func (t *ListTablesTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{"type": "object", "properties": {}}`)
@@ -170,7 +171,7 @@ type DescribeDataTool struct {
 
 func (t *DescribeDataTool) Name() string { return "data_describe_table" }
 func (t *DescribeDataTool) Description() string {
-	return "获取指定数据表的 Schema 元信息和统计摘要，包括列名、数据类型、非空率、唯一值数、数值列的min/max/avg、以及采样值。对于大数据集，这比直接查看数据更高效。"
+	return "返回指定表的 schema 和统计摘要，包括列信息、行数、基础统计和采样值。"
 }
 func (t *DescribeDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -220,7 +221,7 @@ type QueryDataTool struct {
 
 func (t *QueryDataTool) Name() string { return "data_query_sql" }
 func (t *QueryDataTool) Description() string {
-	return "在数据库上执行单条只读 SQL 查询。仅允许 SELECT / WITH，强制只读、超时保护，结果最多 200 行。用于分析大数据集时通过 SQL 聚合查询获取所需信息。"
+	return "执行单条只读 SQL 查询。仅允许 SELECT 或 WITH，结果最多返回 200 行。"
 }
 func (t *QueryDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -288,7 +289,7 @@ type ManageReportBlocksTool struct {
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
 func (t *ConfigureReportTool) Description() string {
-	return "配置最终报告的页面外壳与布局。支持 merge/reset，可设置 custom_html_shell、custom_css、custom_js、body_class、hide_cover、hide_toc。custom_html_shell 中可使用占位符：{{title}} {{author}} {{date}} {{toc}} {{content}} {{chart_scripts}} {{custom_css}} {{custom_js}} {{body_class}}。"
+	return "配置报告布局和页面外壳。支持更新或重置 layout 配置。"
 }
 func (t *ConfigureReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -370,7 +371,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
 func (t *ManageReportBlocksTool) Description() string {
-	return "管理报告 block tree。支持 append/upsert/remove/move，可操作 title/markdown/html/chart 四类 block。这是唯一的报告内容写入入口。"
+	return "创建、更新、删除或重排报告 block。支持 title、markdown、html 和 chart 四类 block；markdown block 的 title 会作为章节标题渲染，chart block 的 content 会作为图下说明渲染。"
 }
 func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -379,8 +380,8 @@ func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 			"action": {"type": "string", "enum": ["append", "upsert", "remove", "move"], "description": "append（默认）、upsert、remove、move"},
 			"block_id": {"type": "string", "description": "block 稳定 ID。upsert/remove/move 必填；append 可选，不填则自动生成。"},
 			"block_kind": {"type": "string", "enum": ["title", "markdown", "html", "chart"], "description": "block 类型。"},
-			"title": {"type": "string", "description": "可选标题，用于目录和区块展示。"},
-			"content": {"type": "string", "description": "markdown/html block 内容。"},
+			"title": {"type": "string", "description": "可选标题，用于目录和区块展示。markdown block 通常不需要在 content 里重复相同标题。"},
+			"content": {"type": "string", "description": "markdown/html block 内容；chart block 时会渲染为图下说明。"},
 			"chart_id": {"type": "string", "description": "chart block 引用的图表 ID。"},
 			"before_block_id": {"type": "string", "description": "插入到某个 block 之前。"},
 			"after_block_id": {"type": "string", "description": "插入到某个 block 之后。"}
@@ -580,6 +581,118 @@ func insertReportBlockAt(blocks []ReportBlock, block ReportBlock, index int) []R
 	return blocks
 }
 
+func referencedChartsOutsideChartBlocks(blocks []ReportBlock) map[string]struct{} {
+	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
+	refs := make(map[string]struct{})
+	for _, block := range blocks {
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") {
+			continue
+		}
+		for _, match := range re.FindAllStringSubmatch(block.Content, -1) {
+			if len(match) > 1 {
+				refs[match[1]] = struct{}{}
+			}
+		}
+	}
+	return refs
+}
+
+func reportFinalizeIssues(state *ReportState) []string {
+	if state == nil {
+		return []string{"report_state_missing"}
+	}
+
+	chartSet := make(map[string]struct{}, len(state.Charts))
+	for _, chart := range state.Charts {
+		chartID := strings.TrimSpace(chart.ID)
+		if chartID != "" {
+			chartSet[chartID] = struct{}{}
+		}
+	}
+
+	refCounts := make(map[string]int)
+	for _, block := range state.Blocks {
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") && strings.TrimSpace(block.ChartID) != "" {
+			refCounts[strings.TrimSpace(block.ChartID)]++
+		}
+		for chartID := range referencedChartsOutsideChartBlocks([]ReportBlock{block}) {
+			refCounts[chartID]++
+		}
+	}
+
+	var issues []string
+	if len(state.Blocks) == 0 {
+		issues = append(issues, "report_has_no_blocks")
+	}
+	for _, block := range state.Blocks {
+		if hasDuplicateLeadingHeading(block) {
+			issues = append(issues, "duplicate_block_heading:"+block.ID)
+		}
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") && strings.TrimSpace(block.ChartID) != "" && strings.TrimSpace(block.Content) == "" {
+			issues = append(issues, "chart_block_missing_caption:"+block.ID)
+		}
+	}
+
+	var missingCharts []string
+	for chartID := range refCounts {
+		if _, ok := chartSet[chartID]; !ok {
+			missingCharts = append(missingCharts, chartID)
+		}
+	}
+	sort.Strings(missingCharts)
+	for _, chartID := range missingCharts {
+		issues = append(issues, "missing_chart:"+chartID)
+	}
+
+	var duplicateCharts []string
+	for chartID, count := range refCounts {
+		if count > 1 {
+			duplicateCharts = append(duplicateCharts, fmt.Sprintf("%s(x%d)", chartID, count))
+		}
+	}
+	sort.Strings(duplicateCharts)
+	for _, item := range duplicateCharts {
+		issues = append(issues, "duplicate_chart:"+item)
+	}
+
+	return issues
+}
+
+func hasDuplicateLeadingHeading(block ReportBlock) bool {
+	kind := strings.ToLower(strings.TrimSpace(block.Kind))
+	if kind != "markdown" && kind != "html" {
+		return false
+	}
+	if strings.TrimSpace(block.Title) == "" || strings.TrimSpace(block.Content) == "" {
+		return false
+	}
+	lines := strings.Split(block.Content, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "#") {
+			return false
+		}
+		heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		return normalizeSectionTitle(heading) == normalizeSectionTitle(block.Title)
+	}
+	return false
+}
+
+func HasDuplicateLeadingHeadingForAgent(block ReportBlock) bool {
+	return hasDuplicateLeadingHeading(block)
+}
+
+func normalizeSectionTitle(value string) string {
+	normalized := strings.TrimSpace(value)
+	normalized = regexp.MustCompile(`^(第[一二三四五六七八九十百千0-9]+[章节部分篇]\s*)`).ReplaceAllString(normalized, "")
+	normalized = regexp.MustCompile(`^([一二三四五六七八九十百千0-9]+[.、)）]\s*)`).ReplaceAllString(normalized, "")
+	normalized = regexp.MustCompile(`\s+`).ReplaceAllString(normalized, "")
+	return normalized
+}
+
 func queryResultColumns(rows []map[string]interface{}) []string {
 	if len(rows) == 0 {
 		return []string{}
@@ -601,7 +714,7 @@ type FinalizeReportTool struct {
 
 func (t *FinalizeReportTool) Name() string { return "report_finalize" }
 func (t *FinalizeReportTool) Description() string {
-	return "生成最终的完整研究报告 HTML 文件。消费 report_manage_blocks 维护的 block tree，并汇总图表与布局配置生成最终研报。"
+	return "生成最终报告。调用前要求报告状态结构有效，且不存在未闭环的根目标。"
 }
 func (t *FinalizeReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -627,11 +740,13 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	if t.Subgoals != nil {
-		t.Subgoals.AutoCompleteReportGoals(fmt.Sprintf("最终报告《%s》已整理完成，正在执行最终收尾。", params.ReportTitle))
 		canFinalize, blockers := t.Subgoals.CanFinalize()
 		if !canFinalize {
 			return "", fmt.Errorf("Action Denied: 当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。请优先完成或放弃这些分支后再收尾：%s", strings.Join(blockers, " | "))
 		}
+	}
+	if issues := reportFinalizeIssues(t.ReportState); len(issues) > 0 {
+		return "", fmt.Errorf("Action Denied: 当前报告状态未通过最终收尾校验：%s", strings.Join(issues, ", "))
 	}
 
 	t.ReportState.FinalTitle = params.ReportTitle

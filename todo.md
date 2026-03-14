@@ -49,7 +49,7 @@
 
 - 任务状态机与子目标管理
 - working memory 与 evidence graph
-- 不确定性感知、停手条件与 `ask_user`
+- 不确定性感知、停手条件与 `user_request_input`
 - 主动探索策略与最小必要查询
 - 自我校验与失败恢复
 
@@ -65,16 +65,16 @@
 
 需求：
 
-- 为 Agent 引入 `manage_subgoals` 工具：
+- 为 Agent 引入 `goal_manage` 工具：
   - 允许 Agent 动态添加、完成、废弃子任务（如：查清某字段口径、核对某两个表的 join 关系）。
   - 引擎提取这棵“子任务树”并在前端可视化，让用户随时知道 Agent 脑子里在计划什么。
 - 剥离独立的 Working Memory 层：
-  - 为 Agent 引入 `save_to_memory(key, fact)` 工具。
+  - 为 Agent 引入 `memory_save_fact(key, fact)` 工具。
   - 把“已确认的业务口径、已验证的中间结论、已排除的关联关系”从长文本 History 中提取到高优先级的 Memory Block。
   - 每次 LLM 思考前，强行在 System Prompt 顶部注入当前 Memory 摘要。
 - 制定基于任务树的停手条件（Stop Criteria）：
   - Agent 不再是通过循环次数耗尽或简单的“我觉得分析够了”来停止。
-  - 必须是：当前活跃的子任务已全部划掉，且最终目标关联的 Evidence 已经满足要求，才能走向 `finalize_report`。
+  - 必须是：当前活跃的子任务已全部划掉，且最终目标关联的 Evidence 已经满足要求，才能走向 `report_finalize`。
 
 验收标准：
 
@@ -114,6 +114,11 @@
   - 唯一值分布
   - 样本值重合度
   - 类型兼容性
+- 为“列名不同但语义可能相同”的场景补关系校验层：
+  - 先由 LLM 产出候选关系，不直接当真
+  - 再由程序校验值域重合率、唯一性、覆盖率、方向性
+  - 通过后持久化为 verified join hints / relation graph
+  - 对未通过校验但语义上可疑的关系进入待确认状态，而不是静默忽略
 - 给 agent 暴露统一的 schema context，而不是每次临时拼 prompt
 
 验收标准：
@@ -220,7 +225,7 @@
 需求：
 
 - 引入“阅后即焚”机制：
-  - 对于海量的 `query_data` 返回结果，强制要求 Agent 将“结论”或“关键数字”提取到 Memory 或 Evidence，随后截断该步骤的详细 history。
+  - 对于海量的 `data_query_sql` 返回结果，强制要求 Agent 将“结论”或“关键数字”提取到 Memory 或 Evidence，随后截断该步骤的详细 history。
 - 动态上下文组装：
   - 当前分析什么任务，只挂载必要的表 Schema。
   - 明确阶段性丢弃内容：废弃的临时 SQL、测试失败的 Python 图表配置。
@@ -252,7 +257,7 @@
 目标：
 
 - 把“分析助手”做成 analyst-in-the-loop，而不是假装全自动正确
-- 为后续 `ask_user` 中断确认能力预留标准化协议
+- 为后续 `user_request_input` 中断确认能力预留标准化协议
 
 需求：
 
@@ -262,13 +267,13 @@
   - 指标定义有多个可能口径
   - 时间粒度需要周/月/季口径选择
   - 预测类任务需要用户确认方法和区间
-- 这些场景统一通过 `ask_user` 类能力触发，而不是让模型自由生成一段普通文本追问
+- 这些场景统一通过 `user_request_input` 类能力触发，而不是让模型自由生成一段普通文本追问
 - 为后续 UI 预留：
   - 接受该假设
   - 改用另一个字段/口径
   - 跳过该分析步骤
   - 把本次确认保存为该工作区的数据语义映射
-- `ask_user` 至少要支持结构化字段：
+- `user_request_input` 至少要支持结构化字段：
   - `reason`
   - `question`
   - `options`
@@ -292,7 +297,7 @@
 - 高风险推断场景下，系统会先确认再继续
 - 用户可以看懂系统当前到底在等什么信息
 - 用户确认过一次后，后续同类分析不会反复追问同一语义问题
-- `ask_user` 触发后，系统不会因为没有用户输入而把 run 直接判定为失败
+- `user_request_input` 触发后，系统不会因为没有用户输入而把 run 直接判定为失败
 
 ### 8. 生命周期清理
 
@@ -551,7 +556,7 @@
 - Agent 任务状态机、工作记忆与停手条件
 - 数据语义层与导入元数据收口
 - 可信答案机制
-- `ask_user` 中断确认能力
+- `user_request_input` 中断确认能力
 - SQL 优先、Python 升级的执行路由
 - 主动探索策略与最小必要查询
 - 自我校验与结论复核
@@ -597,16 +602,17 @@
 
 ### A. Agent 认知结构与动态任务树
 
-1. 开发 `manage_subgoals` 工具，允许 Agent 增删改查当前子任务状态。
-2. 在前端增加交互，实时可视化渲染 Agent 规划的“待办/进行中/已完成”状态树。
-3. 建立 Memory Store，开发 `save_to_memory` / `read_memory` 工具，从 History 中剥离知识。
-4. 开发“阅后即焚”流水线：大段查询结果一旦经过 Agent 提取摘要，立即从下一轮对话上下文中截断淘汰。
-5. 重构 Stop Criteria 控制逻辑：依靠子任务列表清空与 Evidence 阈值来放行报告生成，而非随机的主观结束。
-
 ### B. 数据语义层
 
 6. 新增导入元数据表，持久化行数、列数、类型、非空率、样本值
-7. 为 `describe_data` 增加可缓存 schema summary 输出，不再每次全量临时计算
+7. 为 `data_describe_table` 增加可缓存 schema summary 输出，不再每次全量临时计算
+8. 增加 verified relation graph：把 LLM 候选关联关系转成“候选 -> 校验 -> 已验证/待确认”三态结构
+9. 增加异名列 join 校验逻辑，至少覆盖：
+   - 业务别名相近但列名不同
+   - 主外键候选方向判断
+   - 样本值重合率与覆盖率
+   - 一对多 / 多对一风险提示
+10. 把 verified join hints 显式注入 Agent 上下文，而不是只回灌原始语义 JSON
 
 ### C. 可信答案机制
 
@@ -614,12 +620,12 @@
 13. 为 SQL/Python 结果建立可回溯 evidence 对象，供报告章节引用
 14. 为报告章节补“来源引用”结构，支持关联表、SQL、图表、分析步骤
 15. 对 join 歧义、时间范围歧义、指标口径歧义增加中断确认协议
-16. 设计 `ask_user` 协议，统一承载歧义确认、口径确认、join 确认和预测参数确认
+16. 设计 `user_request_input` 协议，统一承载歧义确认、口径确认、join 确认和预测参数确认
 
 ### D. 执行路由与探索策略
 
 17. 在 agent 层增加 SQL vs Python 路由策略说明，要求显式给出选择原因
-18. 收紧 `run_python` 边界，默认只读、限制输入规模、禁止无边界全表加载
+18. 收紧 `code_run_python` 边界，默认只读、限制输入规模、禁止无边界全表加载
 19. 增加高级分析能力标签，为 forecast/anomaly/segmentation 预留执行入口
 20. 增加最小必要查询策略，避免过早跑重查询、提前画图、提前写报告
 21. 给 agent 增加探索 / 验证 / 汇总三种模式标记
@@ -653,12 +659,12 @@
 
 ### H. 稳定性与评测
 
-40. 为 run 增加 `waiting_user_input` 状态，支持 `ask_user` 后暂停和恢复
+40. 为 run 增加 `waiting_user_input` 状态，支持 `user_request_input` 后暂停和恢复
 41. 收紧 session active run 约束，避免并发 run 竞争
 42. 清理旧 run emitter 污染新 run 的问题
 43. 增加 benchmark case：单表 SQL、多表 join、歧义追问、数据库快照导入
 44. 增加 benchmark case：上传后语义确认、多候选 join 人工确认
-45. 增加 benchmark case：`ask_user` 触发后恢复同一 run
+45. 增加 benchmark case：`user_request_input` 触发后恢复同一 run
 46. 增加 benchmark case：过早写报告保护、自我校验、失败恢复
 47. 增加 smoke case，覆盖上传文件和 PostgreSQL 导入两条主路径
 
@@ -674,34 +680,3 @@
 - 第三阶段再评估 Snowflake、BigQuery、ClickHouse
 - 不支持要求开超级权限或关闭数据库安全策略的接入方案
 - 当表名/列名/关系含义不清时，默认先走“小样本 AI 预分析 + 人工确认”，不直接硬分析
-
-## Agentic 架构底层重构建议 (Codebase Architecture)
-
-经过对当前 `server/agent/engine.go` 等代码的审查，当前的本质是一个**单次 Prompt 的 ReAct 扁平大循环**（最多 25 转），缺乏真正 Agent 所需的认知架构。为了支撑上文提到的 P0/P1 能力，建议按以下方向对底层进行重构：
-
-### 1. 动态子目标与状态树管理 (Goal-driven & Dynamic Sub-tasking) 
-- **现状**：`Engine.Run` 只是一个扁平的 `for i := 0; i < MaxIterations; i++` 循环，指望 LLM 靠单次硬 Prompt（包含所有规则和流程约束）搞定全部，没有中间状态的认知。而传统的 FSM (如 LangGraph 预设的 Plan->Execute->Report 流水线) 本质上是工作流，剥夺了 Agent 的自主权。
-- **重构**：保持 Agent 的内在自主性，不写死执行流转。通过给 Agent 提供 `manage_subgoals` (增删查改当前子任务) 和 `update_state` (更新当前阶段认知) 等工具，让 Agent 自己维护一张“解决问题树（Tree of Tasks）”。遇到复杂问题，Agent 自主决定把大问题拆成子问题放入清单；拿到一个子结果，自主划掉对应的子任务。外部引擎只负责兜底超时循环、上下文长度和向前端展示这棵状态树的状态。
-
-### 2. Planner-Worker 模式划分
-- **现状**：当前的系统 prompt（`prompts.go`）既要求模型理解数据、写 SQL，又要求它绘图、写报告，职责过大，长上下文极易漂移。
-- **重构**：拆解为多 Agent 协同：
-  - **Planner Agent**：拆解用户的目标为子任务（写到 Sub-goal 列表中），调度具体 Worker。
-  - **Data Worker**：专门接手某个子任务（比如“计算 ROI”），只负责调用 `query_data` 或 `run_python` 拿到确定结果并返回。
-  - **Writer/Reporter Agent**：专门根据 Worker 产出的确凿证据（Evidence）来调用 `write_section`。
-
-### 3. 加入显式的 Working Memory (工作记忆)
-- **现状**：全靠 message history 记住过去的步骤，一旦历史记录达到模型 context 上限或多轮次干扰，前面的重要发现（比如某个复杂计算口径）就会被“遗忘”。
-- **重构**：在 `Session` 或 `RunState` 级别剥离出独立的 `WorkingMemory`。为 LLM 提供 `save_to_memory(key, fact)` 和 `remove_from_memory(key)` 工具。每次 Prompt 组装时，强行把 Memory 里的摘要放在最前面。分析阶段的中间大段 SQL 结果阅后即焚，不进 History，只留结论进 Memory。
-
-### 4. 明确的 `ask_user` 能力与中断恢复机制
-- **现状**：Run 在 WebSocket 内用 goroutine 一杆子执行到底，若需要提问，仅靠抛错或者乱猜。
-- **重构**：
-  - 在 Registry 注册真实的 `ask_user(question, options)` 工具。
-  - LLM 调用该工具时，Engine **立即挂起**，保存断点状态。
-  - 前端收到专用 Event，渲染交互界面等待用户选择。
-  - 用户回复后，通过特定接口带上 RunID 唤醒 Engine，将用户输入作为 Tool Result 继续流转。
-
-### 5. 强制的自我校验边界 (Reflection Check)
-- **现状**：LLM 感觉写完了就去调 `finalize_report`，没有质量卡口。
-- **重构**：在尝试生成报告前（或 Planner 任务完结时），执行一次强制的自我校验节点：把原始问题和收集到的 Evidence 给到一个独立的 `Reviewer Agent`（或带专用 Prompt 的调用），询问“这些证据是否足够且正确地回答了问题？能否互相印证？”。如果 Review 不通过，说明歧义未解决或证据不足，强制退回探索阶段或触发 `ask_user`。

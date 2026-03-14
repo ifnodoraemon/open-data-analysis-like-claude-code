@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
+	"github.com/ifnodoraemon/openDataAnalysis/data"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -28,7 +28,6 @@ type Registry struct {
 // SubgoalChecker 提供了一种避免循环依赖的方式，让图表等工具可以访问当前子目标状态
 type SubgoalChecker interface {
 	CanFinalize() (bool, []string)
-	AutoCompleteReportGoals(result string) int
 }
 
 // ToolContext 提供给工具初始化时的上下文依赖

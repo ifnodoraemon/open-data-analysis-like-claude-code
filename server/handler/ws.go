@@ -11,15 +11,157 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/agent"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/service"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
+	"github.com/ifnodoraemon/openDataAnalysis/agent"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
+	"github.com/ifnodoraemon/openDataAnalysis/session"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
+
+var reportPreviewTools = map[string]struct{}{
+	"report_create_chart":     {},
+	"report_configure_layout": {},
+	"report_manage_blocks":    {},
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+type delegateRunPersistence struct {
+	workspaceID string
+	sessionID   string
+	userID      string
+	emit        func(agent.WSEvent)
+}
+
+func (p delegateRunPersistence) StartChildRun(ctx context.Context, input agent.ChildRunStart) (string, error) {
+	runID := "d_" + uuid.New().String()[:8]
+	now := time.Now()
+	var parentRunID *string
+	if trimmed := strings.TrimSpace(input.ParentRunID); trimmed != "" {
+		parentRunID = &trimmed
+	}
+	var goalID *string
+	if trimmed := strings.TrimSpace(input.GoalID); trimmed != "" {
+		goalID = &trimmed
+	}
+	run := &domain.AnalysisRun{
+		ID:           runID,
+		SessionID:    p.sessionID,
+		WorkspaceID:  p.workspaceID,
+		UserID:       p.userID,
+		ParentRunID:  parentRunID,
+		RunKind:      domain.RunKindDelegate,
+		DelegateRole: strings.TrimSpace(input.RoleName),
+		GoalID:       goalID,
+		Status:       domain.RunStatusRunning,
+		InputMessage: strings.TrimSpace(input.InputMessage),
+		StartedAt:    &now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := runRepo.Create(ctx, run); err != nil {
+		return "", err
+	}
+	p.emitChildRunsUpdate(ctx, input.ParentRunID)
+	return runID, nil
+}
+
+func (p delegateRunPersistence) AppendChildEvent(ctx context.Context, childRunID string, ev agent.WSEvent) error {
+	saveEventToDB(ctx, p.workspaceID, p.sessionID, childRunID, ev)
+	return nil
+}
+
+func (p delegateRunPersistence) UpdateChildRunStatus(ctx context.Context, childRunID string, status string, errMsg *string) error {
+	if err := runRepo.UpdateStatus(ctx, childRunID, domain.RunStatus(status), errMsg); err != nil {
+		return err
+	}
+	if run, err := runRepo.GetByID(ctx, childRunID); err == nil && run.ParentRunID != nil {
+		p.emitChildRunsUpdate(ctx, *run.ParentRunID)
+	}
+	return nil
+}
+
+func (p delegateRunPersistence) UpdateChildRunSummary(ctx context.Context, childRunID, summary string) error {
+	if err := runRepo.UpdateSummary(ctx, childRunID, strings.TrimSpace(summary)); err != nil {
+		return err
+	}
+	if run, err := runRepo.GetByID(ctx, childRunID); err == nil && run.ParentRunID != nil {
+		p.emitChildRunsUpdate(ctx, *run.ParentRunID)
+	}
+	return nil
+}
+
+func (p delegateRunPersistence) emitChildRunsUpdate(ctx context.Context, parentRunID string) {
+	if p.emit == nil || strings.TrimSpace(parentRunID) == "" {
+		return
+	}
+	childRuns, err := runRepo.ListByParent(ctx, parentRunID)
+	if err != nil {
+		return
+	}
+	p.emit(agent.WSEvent{
+		Type:  agent.EventStateChildRunsUpdated,
+		RunID: parentRunID,
+		Data: agent.ChildRunsUpdatedData{
+			ParentRunID: parentRunID,
+			ChildRuns:   serializeRuns(ctx, childRuns),
+		},
+	})
+}
+
+func shouldEmitReportPreview(toolName string) bool {
+	_, ok := reportPreviewTools[toolName]
+	return ok
+}
+
+func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sessID, workspaceID, runID string, state *tools.ReportState) {
+	updateEv := agent.WSEvent{
+		Type: agent.EventReportUpdate,
+		Data: agent.ReportUpdateData{
+			HTML: tools.RenderReportHTML("", "", state),
+		},
+	}
+	sendSessionEvent(conn, writeMu, sessID, runID, updateEv)
+	saveEventToDB(ctx, workspaceID, sessID, runID, updateEv)
+}
+
+func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) {
+	finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
+	if reportFile, err := fileService.SaveReportHTML(ctx, service.SaveReportInput{
+		UserID:      identity.UserID,
+		WorkspaceID: sess.WorkspaceID,
+		SessionID:   sess.ID,
+		RunID:       runID,
+		Title:       sess.ReportState.FinalTitle,
+		Author:      sess.ReportState.FinalAuthor,
+		HTML:        finalHTML,
+		Snapshot:    buildReportSnapshot(sess.ReportState),
+	}); err == nil {
+		_ = runRepo.BindReportFile(ctx, runID, reportFile.ID)
+		log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
+	} else {
+		errEv := agent.WSEvent{
+			Type: agent.EventError,
+			Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
+		}
+		sendSessionEvent(conn, writeMu, sess.ID, runID, errEv)
+		saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, errEv)
+	}
+	if title := strings.TrimSpace(sess.ReportState.FinalTitle); title != "" {
+		_ = sessionRepo.UpdateTitle(ctx, sess.ID, title)
+	}
+	finalEv := agent.WSEvent{
+		Type: agent.EventReportFinal,
+		Data: agent.ReportUpdateData{
+			HTML:  finalHTML,
+			Title: strings.TrimSpace(sess.ReportState.FinalTitle),
+		},
+	}
+	sendSessionEvent(conn, writeMu, sess.ID, runID, finalEv)
+	saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, finalEv)
 }
 
 // WSHandler WebSocket 连接处理
@@ -43,17 +185,19 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ws connected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 	defer log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 
-
+	memory, subgoals := sess.RuntimeState()
 
 	sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 		Type: agent.EventSessionReady,
 		Data: agent.SessionReadyData{
 			SessionID: sess.ID,
 			Files:     sess.FilesForClient(),
+			Subgoals:  subgoals,
+			Memory:    memory,
 		},
 	})
 
-	if len(sess.ReportState.Sections) > 0 {
+	if len(sess.ReportState.Blocks) > 0 {
 		sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 			Type: agent.EventReportUpdate,
 			Data: agent.ReportUpdateData{
@@ -99,56 +243,17 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 					if ev.Type == agent.EventToolResult {
 						if result, ok := ev.Data.(agent.ToolResultData); ok {
-							switch result.Name {
-							case "write_section":
-								updateEv := agent.WSEvent{
-									Type: agent.EventReportUpdate,
-									Data: agent.ReportUpdateData{
-										HTML: tools.RenderReportHTML("", "", sess.ReportState),
-									},
-								}
-								sendSessionEvent(conn, &writeMu, sess.ID, runID, updateEv)
-								saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, updateEv)
-							case "finalize_report":
-								finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
-								if reportFile, err := fileService.SaveReportHTML(r.Context(), service.SaveReportInput{
-									UserID:      identity.UserID,
-									WorkspaceID: sess.WorkspaceID,
-									SessionID:   sess.ID,
-									RunID:       runID,
-									Title:       sess.ReportState.FinalTitle,
-									Author:      sess.ReportState.FinalAuthor,
-									HTML:        finalHTML,
-									Snapshot:    buildReportSnapshot(sess.ReportState),
-								}); err == nil {
-									_ = runRepo.BindReportFile(r.Context(), runID, reportFile.ID)
-									log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
-								} else {
-									errEv := agent.WSEvent{
-										Type: agent.EventError,
-										Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
-									}
-									sendSessionEvent(conn, &writeMu, sess.ID, runID, errEv)
-									saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, errEv)
-								}
-								if title := strings.TrimSpace(sess.ReportState.FinalTitle); title != "" {
-									_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, title)
-								}
-								finalEv := agent.WSEvent{
-									Type: agent.EventReportFinal,
-									Data: agent.ReportUpdateData{
-										HTML:  finalHTML,
-										Title: strings.TrimSpace(sess.ReportState.FinalTitle),
-									},
-								}
-								sendSessionEvent(conn, &writeMu, sess.ID, runID, finalEv)
-								saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, finalEv)
+							if shouldEmitReportPreview(result.Name) {
+								emitReportPreviewUpdate(r.Context(), conn, &writeMu, sess.ID, sess.WorkspaceID, runID, sess.ReportState)
+							}
+							if result.Name == "report_finalize" {
+								finalizeAndPersistReport(r.Context(), conn, &writeMu, sess, identity, runID)
 							}
 						}
 					}
 
 					switch ev.Type {
-					case agent.EventAskUser:
+					case agent.EventUserRequestInput:
 						sess.SuspendRun(runID)
 						_ = runRepo.UpdateStatus(r.Context(), runID, "waiting_user_input", nil)
 						log.Printf("run suspended waiting_user_input run_id=%s session_id=%s", runID, sess.ID)
@@ -209,6 +314,12 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					SessionID:   sess.ID,
 					RunID:       activeRunID,
 				})
+				resumeCtx = agent.WithDelegateRunPersistence(resumeCtx, delegateRunPersistence{
+					workspaceID: sess.WorkspaceID,
+					sessionID:   sess.ID,
+					userID:      identity.UserID,
+					emit:        runEmitter(activeRunID),
+				})
 				go sess.Engine.Run(resumeCtx, "", runEmitter(activeRunID))
 				continue
 			}
@@ -230,6 +341,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				SessionID:    sess.ID,
 				WorkspaceID:  sess.WorkspaceID,
 				UserID:       identity.UserID,
+				RunKind:      domain.RunKindRoot,
 				Status:       domain.RunStatusRunning,
 				InputMessage: rawInput,
 				StartedAt:    &now,
@@ -243,7 +355,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				})
 				continue
 			}
-			
+
 			// Persist UserMessage
 			saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
 				Type: "user",
@@ -271,6 +383,12 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: sess.WorkspaceID,
 				SessionID:   sess.ID,
 				RunID:       runID,
+			})
+			ctx = agent.WithDelegateRunPersistence(ctx, delegateRunPersistence{
+				workspaceID: sess.WorkspaceID,
+				sessionID:   sess.ID,
+				userID:      identity.UserID,
+				emit:        runEmitter(runID),
 			})
 
 			go sess.Engine.Run(ctx, userContent, runEmitter(runID))
@@ -355,6 +473,9 @@ func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev
 	case agent.AskUserData:
 		argsBytes, _ := json.Marshal(data)
 		msg.Content = string(argsBytes)
+	case agent.MemoryUpdatedData:
+		argsBytes, _ := json.Marshal(data)
+		msg.Content = string(argsBytes)
 	case agent.ToolCallData:
 		msg.Name = data.Name
 		argsBytes, _ := json.Marshal(data.Arguments)
@@ -409,7 +530,7 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 
 func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
 	snapshot := domain.ReportSnapshot{
-		Version:     "v1",
+		Version:     "v3",
 		GeneratedAt: time.Now(),
 	}
 	if state == nil {
@@ -418,15 +539,25 @@ func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
 
 	snapshot.Title = strings.TrimSpace(state.FinalTitle)
 	snapshot.Author = strings.TrimSpace(state.FinalAuthor)
-	if snapshot.Title == "" {
-		snapshot.Title = tools.ResolveReportTitle(state.Sections, "数据分析报告")
+	snapshot.Layout = domain.ReportSnapshotLayout{
+		CustomHTMLShell: state.Layout.CustomHTMLShell,
+		CustomCSS:       state.Layout.CustomCSS,
+		CustomJS:        state.Layout.CustomJS,
+		BodyClass:       state.Layout.BodyClass,
+		HideCover:       state.Layout.HideCover,
+		HideTOC:         state.Layout.HideTOC,
 	}
-	snapshot.Sections = make([]domain.ReportSnapshotSection, 0, len(state.Sections))
-	for _, section := range state.Sections {
-		snapshot.Sections = append(snapshot.Sections, domain.ReportSnapshotSection{
-			Type:    section.Type,
-			Title:   section.Title,
-			Content: section.Content,
+	if snapshot.Title == "" {
+		snapshot.Title = tools.ResolveReportTitleFromState(state, "数据分析报告")
+	}
+	snapshot.Blocks = make([]domain.ReportSnapshotBlock, 0, len(state.Blocks))
+	for _, block := range state.Blocks {
+		snapshot.Blocks = append(snapshot.Blocks, domain.ReportSnapshotBlock{
+			ID:      block.ID,
+			Kind:    block.Kind,
+			Title:   block.Title,
+			Content: block.Content,
+			ChartID: block.ChartID,
 		})
 	}
 	snapshot.Charts = make([]domain.ReportSnapshotChart, 0, len(state.Charts))

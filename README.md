@@ -8,7 +8,7 @@ Interactive, Claude-Code-style data analysis for tabular files. Upload CSV or Ex
 
 ## Highlights / 功能概览
 
-- Agent-driven workflow with tool calling, not a fixed DAG
+- Agent runtime with tool calling and self-directed planning, not a fixed DAG
 - Workspace-aware auth, sessions, runs, and file ownership
 - Real-time WebSocket execution stream plus resumable run/report state
 - Local object storage abstraction with clean migration path to S3-compatible backends
@@ -80,24 +80,54 @@ When started with `docker compose`, the server enables `LLM_DEBUG=true` by defau
 | Storage | Local object storage abstraction |
 | Deployment | Docker, Docker Compose |
 
-## Agent Workflow / Agent 工作流
+## Agentic Direction / Agentic 方向
 
-The agent is dynamic. It observes tool results, decides the next step, and stops when it has enough evidence to answer or finalize a report.
+The project treats the backend as an agent runtime, not a hidden workflow engine. The system should expose goals, tools, state, and thin guardrails; the model should judge what to do next.
 
-Agent 是动态决策的。它会观察工具结果，自主决定下一步要做什么，在证据充分时结束分析或生成最终报告。
+这个项目把后端视为 agent runtime，而不是隐藏的 workflow engine。系统负责暴露目标、工具、状态和薄 guardrail；下一步做什么由模型自己裁决。
+
+Reference:
+
+- `docs/agentic-principles.md`
+
+Non-goals:
+
+- hardcoded step order
+- implicit phase transitions
+- runtime-written advice that tells the model how to act
+
+非目标：
+
+- 写死的步骤顺序
+- 隐式阶段切换
+- 由 runtime 替模型写行动建议
 
 Available core tools:
 
 当前核心工具：
 
-- `load_data`
-- `list_tables`
-- `describe_data`
-- `query_data`
-- `create_chart`
-- `write_section`
-- `finalize_report`
-- `run_python`
+- `data_load_file`
+- `data_list_tables`
+- `data_describe_table`
+- `data_query_sql`
+- `report_create_chart`
+- `report_manage_blocks`
+- `report_configure_layout`
+- `report_finalize`
+- `code_run_python`
+- `memory_save_fact`
+- `state_memory_inspect`
+- `state_goal_inspect`
+- `state_report_inspect`
+- `goal_manage`
+- `task_delegate`
+- `user_request_input`
+
+Notes:
+
+- `goal_manage` is optional scratchpad state, not a required planning phase
+- state inspect tools expose facts only; the model decides how to use them
+- durable project guidance lives in `AGENTS.md`, not in the runtime prompt
 
 ## Authentication / 鉴权
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/sashabaranov/go-openai"
 	"github.com/xuri/excelize/v2"
 	_ "modernc.org/sqlite"

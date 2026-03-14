@@ -103,6 +103,10 @@ func (s *Store) migrate() error {
 			session_id TEXT NOT NULL,
 			workspace_id TEXT NOT NULL,
 			user_id TEXT NOT NULL,
+			parent_run_id TEXT,
+			run_kind TEXT NOT NULL DEFAULT 'root',
+			delegate_role TEXT NOT NULL DEFAULT '',
+			goal_id TEXT,
 			status TEXT NOT NULL,
 			input_message TEXT NOT NULL,
 			summary TEXT NOT NULL DEFAULT '',
@@ -147,6 +151,18 @@ func (s *Store) migrate() error {
 	}
 
 	if err := ensureColumn(s.DB, "analysis_runs", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.DB, "analysis_runs", "parent_run_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.DB, "analysis_runs", "run_kind", "TEXT NOT NULL DEFAULT 'root'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.DB, "analysis_runs", "delegate_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.DB, "analysis_runs", "goal_id", "TEXT"); err != nil {
 		return err
 	}
 	if err := ensureColumn(s.DB, "files", "purpose", "TEXT NOT NULL DEFAULT 'source'"); err != nil {

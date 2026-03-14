@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 )
 
 var llmDebugWriter = &debugWriter{

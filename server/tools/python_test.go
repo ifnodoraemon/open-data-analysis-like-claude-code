@@ -23,7 +23,7 @@ func TestFormatPythonResultReturnsStructuredSuccess(t *testing.T) {
 	if payload["ok"] != true {
 		t.Fatalf("expected ok=true, got %#v", payload["ok"])
 	}
-	if payload["tool"] != "run_python" {
+	if payload["tool"] != "code_run_python" {
 		t.Fatalf("unexpected tool: %#v", payload["tool"])
 	}
 }

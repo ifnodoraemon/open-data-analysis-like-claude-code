@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/data"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -20,10 +20,6 @@ type stubSubgoalChecker struct {
 
 func (s stubSubgoalChecker) CanFinalize() (bool, []string) {
 	return s.canFinalize, s.blockers
-}
-
-func (s stubSubgoalChecker) AutoCompleteReportGoals(result string) int {
-	return 0
 }
 
 func TestMain(m *testing.M) {
@@ -326,6 +322,60 @@ func TestFinalizeReportRejectsOpenActiveBranch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "East") {
 		t.Fatalf("expected blocker details in error, got %v", err)
+	}
+}
+
+func TestFinalizeReportRejectsInvalidReportState(t *testing.T) {
+	t.Parallel()
+
+	tool := &FinalizeReportTool{
+		ReportState: &ReportState{
+			Blocks: []ReportBlock{
+				{ID: "analysis", Kind: "markdown", Content: "结论\n\n{{chart:chart_sales}}\n\n{{chart:chart_missing}}"},
+				{ID: "sales_chart", Kind: "chart", ChartID: "chart_sales"},
+			},
+			Charts: []ChartData{
+				{ID: "chart_sales"},
+			},
+		},
+	}
+
+	_, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err == nil {
+		t.Fatal("expected finalize to reject invalid report state")
+	}
+	if !strings.Contains(err.Error(), "missing_chart:chart_missing") {
+		t.Fatalf("expected missing chart issue, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "duplicate_chart:chart_sales(x2)") {
+		t.Fatalf("expected duplicate chart issue, got %v", err)
+	}
+}
+
+func TestFinalizeReportRejectsDuplicateBlockHeadingAndMissingChartCaption(t *testing.T) {
+	t.Parallel()
+
+	tool := &FinalizeReportTool{
+		ReportState: &ReportState{
+			Blocks: []ReportBlock{
+				{ID: "overview", Kind: "markdown", Title: "数据概览", Content: "## 一、数据概览\n\n正文"},
+				{ID: "sales_chart", Kind: "chart", Title: "销售趋势", ChartID: "chart_sales"},
+			},
+			Charts: []ChartData{
+				{ID: "chart_sales"},
+			},
+		},
+	}
+
+	_, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err == nil {
+		t.Fatal("expected finalize to reject invalid report state")
+	}
+	if !strings.Contains(err.Error(), "duplicate_block_heading:overview") {
+		t.Fatalf("expected duplicate block heading issue, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "chart_block_missing_caption:sales_chart") {
+		t.Fatalf("expected chart block caption issue, got %v", err)
 	}
 }
 

@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
 
 type SessionRepository interface {

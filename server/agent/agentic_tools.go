@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/tools"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
 func init() {
@@ -11,7 +11,19 @@ func init() {
 		if ctx.Memory == nil {
 			return nil
 		}
-		return &SaveMemoryTool{Memory: ctx.Memory.(*WorkingMemory)}
+		return &SaveMemoryTool{
+			Memory: ctx.Memory.(*WorkingMemory),
+		}
+	})
+	tools.RegisterGlobalTool(func(ctx tools.ToolContext) tools.Tool {
+		if ctx.Memory == nil {
+			return nil
+		}
+		memory, ok := ctx.Memory.(*WorkingMemory)
+		if !ok {
+			return nil
+		}
+		return &InspectMemoryTool{Memory: memory}
 	})
 	tools.RegisterGlobalTool(func(ctx tools.ToolContext) tools.Tool {
 		return &AskUserTool{}
@@ -20,20 +32,20 @@ func init() {
 
 // SaveMemoryTool 允许 Agent 主动将关键结论写入 Working Memory，以便脱离上下文窗口长期保存
 type SaveMemoryTool struct {
+	Memory   *WorkingMemory
+	EmitFunc func(WSEvent)
+}
+
+type InspectMemoryTool struct {
 	Memory *WorkingMemory
 }
 
 func (t *SaveMemoryTool) Name() string {
-	return "save_to_memory"
+	return "memory_save_fact"
 }
 
 func (t *SaveMemoryTool) Description() string {
-	return `将一个重要的发现、确认的业务口径、或者排除了的假设记录到工作记忆 (Working Memory) 中。
-一旦写入，它将被长久保留并在每次你思考前作为前置上下文注入，直到它被明确移除或覆盖。
-使用场景：
-1. 你花了很多步骤查清了某个重要维度（比如"大客户"的定义是 order_value > 10000）。
-2. 你和用户确认了某个表关联的具体字段并取得成功。
-3. 把这些确凿的“经验”写入记忆，你就可以放心地让之前的冗长查询结果从当前对话中淘汰，而不会忘记关键结论。`
+	return "保存一个事实到工作记忆中。相同 key 会覆盖旧值。"
 }
 
 func (t *SaveMemoryTool) Parameters() json.RawMessage {
@@ -71,20 +83,59 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.Memory.SaveFact(payload.Key, payload.Fact)
+	if t.EmitFunc != nil {
+		t.EmitFunc(WSEvent{
+			Type: EventStateMemoryUpdated,
+			Data: MemoryUpdatedData{Facts: t.Memory.Snapshot()},
+		})
+	}
 	return fmt.Sprintf("已成功将工作记忆保存: [%s] = %s", payload.Key, payload.Fact), nil
+}
+
+func (t *SaveMemoryTool) SetEventEmitter(emit func(WSEvent)) {
+	t.EmitFunc = emit
+}
+
+func (t *InspectMemoryTool) Name() string {
+	return "state_memory_inspect"
+}
+
+func (t *InspectMemoryTool) Description() string {
+	return "返回工作记忆中的原始事实，包括 key/value 和数量。"
+}
+
+func (t *InspectMemoryTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{},"required":[]}`)
+}
+
+func (t *InspectMemoryTool) Execute(args json.RawMessage) (string, error) {
+	if t.Memory == nil {
+		return "", fmt.Errorf("working memory is not initialized")
+	}
+	facts := t.Memory.Snapshot()
+	payload := map[string]interface{}{
+		"ok":           true,
+		"tool":         "state_memory_inspect",
+		"fact_count":   len(facts),
+		"facts":        facts,
+		"summary_text": fmt.Sprintf("当前工作记忆共有 %d 条事实。", len(facts)),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 // AskUserTool 允许 Agent 主动中断当前执行流，向用户发起提问或索要确切指令
 type AskUserTool struct{}
 
 func (t *AskUserTool) Name() string {
-	return "ask_user"
+	return "user_request_input"
 }
 
 func (t *AskUserTool) Description() string {
-	return `当你遇到歧义边界（例如：业务口径定义有多种可能、缺乏必须的关键指引）时，调用此工具向人类最终确认。
-调用此工具后，你的分析执行将被立即冻结并推送到前端，直到用户回复。
-如果你只是想汇报结论，请不要使用此工具，只有在你遭遇 blocker 无法前进时才使用。`
+	return "向用户请求补充信息或确认。调用后当前执行会暂停。"
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {

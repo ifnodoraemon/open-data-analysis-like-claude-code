@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/config"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 )
 
 func TestDebugWriterWritesMetaAndIndexes(t *testing.T) {

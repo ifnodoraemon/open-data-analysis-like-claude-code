@@ -110,33 +110,6 @@ func TestSubgoalManagerAllowsFinalizeWhenClosedRootHasStaleChildren(t *testing.T
 	}
 }
 
-func TestAutoCompleteReportGoalsOnlyClosesReportRoots(t *testing.T) {
-	sm := NewSubgoalManager()
-	reportGoalID := sm.AddGoal("生成图表并整理成完整研究报告", "")
-	otherGoalID := sm.AddGoal("继续核对退款异常原因", "")
-
-	completed := sm.AutoCompleteReportGoals("报告已完成")
-	if completed != 1 {
-		t.Fatalf("expected 1 report goal to be auto-completed, got %d", completed)
-	}
-
-	var reportStatus, otherStatus SubgoalStatus
-	for _, goal := range sm.Goals {
-		switch goal.ID {
-		case reportGoalID:
-			reportStatus = goal.Status
-		case otherGoalID:
-			otherStatus = goal.Status
-		}
-	}
-	if reportStatus != StatusComplete {
-		t.Fatalf("expected report goal complete, got %s", reportStatus)
-	}
-	if otherStatus != StatusPending {
-		t.Fatalf("expected non-report goal to stay pending, got %s", otherStatus)
-	}
-}
-
 func TestSaveMemoryTool(t *testing.T) {
 	mem := NewWorkingMemory()
 	tool := &SaveMemoryTool{Memory: mem}

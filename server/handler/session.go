@@ -5,7 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/agent"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
 )
 
 func ListSessionsHandler(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +58,13 @@ func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"session": serializeSession(*session),
 		"files":   respFiles,
 		"runs":    serializeRuns(r.Context(), runs),
-	})
+	}
+	attachRuntimeState(r.Context(), resp, identity.WorkspaceID, identity.UserID, session.ID)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
@@ -75,9 +78,10 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"session": serializeSession(*session),
-		"files":   []map[string]interface{}{},
-		"runs":    []map[string]interface{}{},
+		"session":      serializeSession(*session),
+		"files":        []map[string]interface{}{},
+		"runs":         []map[string]interface{}{},
+		"runtimeState": serializeRuntimeState(map[string]string{}, []agent.Subgoal{}),
 	})
 }
 
