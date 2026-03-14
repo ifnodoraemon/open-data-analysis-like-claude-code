@@ -111,7 +111,7 @@ function exportHTML() {
 }
 
 async function exportWord() {
-  const snapshotHTML = await buildRenderedSnapshotHTML()
+  const snapshotHTML = await buildRenderedSnapshotHTML({ forWord: true })
   const res = await fetch('/api/report-exports/docx', {
     method: 'POST',
     headers: {
@@ -132,14 +132,15 @@ async function exportWord() {
 
 async function exportPDF() {
   const snapshotHTML = await buildRenderedSnapshotHTML()
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900')
+  const url = URL.createObjectURL(new Blob([snapshotHTML], { type: 'text/html;charset=utf-8' }))
+  const printWindow = window.open(url, '_blank', 'width=1200,height=900')
   if (!printWindow) return
-  printWindow.document.open()
-  printWindow.document.write(snapshotHTML)
-  printWindow.document.close()
   await waitForPrintWindow(printWindow)
   printWindow.focus()
   printWindow.print()
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 60 * 1000)
 }
 
 function downloadBlob(blob, filename) {
@@ -176,7 +177,8 @@ function waitForPrintWindow(targetWindow) {
   })
 }
 
-async function buildRenderedSnapshotHTML() {
+async function buildRenderedSnapshotHTML(options = {}) {
+  const { forWord = false } = options
   const frameWindow = reportFrame.value?.contentWindow
   const frameDocument = frameWindow?.document
   if (!frameDocument?.documentElement) {
@@ -192,12 +194,140 @@ async function buildRenderedSnapshotHTML() {
     const image = clonedDocument.ownerDocument.createElement('img')
     image.src = sourceCanvas.toDataURL('image/png')
     image.alt = sourceCanvas.getAttribute('aria-label') || 'chart'
+    const rect = sourceCanvas.getBoundingClientRect()
+    const width = Math.max(Math.round(rect.width || sourceCanvas.clientWidth || sourceCanvas.width || 0), 1)
+    const height = Math.max(Math.round(rect.height || sourceCanvas.clientHeight || sourceCanvas.height || 0), 1)
+    image.width = width
+    image.height = height
+    image.style.display = 'block'
+    image.style.width = `${width}px`
     image.style.maxWidth = '100%'
-    image.style.height = 'auto'
+    image.style.height = `${height}px`
+    image.style.objectFit = 'contain'
+    image.style.margin = '0 auto'
     canvasNode.replaceWith(image)
   })
+  if (forWord) {
+    optimizeSnapshotForWord(clonedDocument)
+  }
   clonedDocument.querySelectorAll('script').forEach((node) => node.remove())
   return `<!DOCTYPE html>\n${clonedDocument.outerHTML}`
+}
+
+function optimizeSnapshotForWord(documentNode) {
+  const doc = documentNode.ownerDocument
+  const head = documentNode.querySelector('head')
+  const body = documentNode.querySelector('body')
+  if (!head || !body) return
+
+  head.querySelectorAll('script, link[rel="preconnect"], link[rel="stylesheet"]').forEach((node) => node.remove())
+  body.querySelectorAll('.cover').forEach((node) => {
+    node.style.minHeight = 'auto'
+    node.style.background = '#ffffff'
+    node.style.color = '#111827'
+    node.style.padding = '0 0 18pt 0'
+    node.style.margin = '0 0 18pt 0'
+    node.style.pageBreakAfter = 'avoid'
+  })
+  body.querySelectorAll('.toc, .section, .footer').forEach((node) => {
+    node.style.maxWidth = 'none'
+    node.style.margin = '0 0 16pt 0'
+    node.style.padding = node.classList.contains('footer') ? '8pt 0 0 0' : '0'
+    node.style.background = '#ffffff'
+    node.style.boxShadow = 'none'
+    node.style.border = 'none'
+    node.style.borderRadius = '0'
+    node.style.pageBreakInside = 'avoid'
+  })
+  body.querySelectorAll('.summary-box, .conclusion-box').forEach((node) => {
+    node.style.background = '#ffffff'
+    node.style.border = '1px solid #d1d5db'
+    node.style.borderLeft = '4px solid #0f2b46'
+    node.style.borderRadius = '0'
+    node.style.boxShadow = 'none'
+    node.style.padding = '12pt'
+  })
+  body.querySelectorAll('.chart-box').forEach((node) => {
+    node.style.height = 'auto'
+    node.style.minHeight = '0'
+    node.style.padding = '8pt'
+    node.style.border = '1px solid #d1d5db'
+    node.style.boxShadow = 'none'
+    node.style.background = '#ffffff'
+    node.style.pageBreakInside = 'avoid'
+  })
+  body.querySelectorAll('img').forEach((node) => {
+    node.style.display = 'block'
+    node.style.maxWidth = '100%'
+    node.style.height = 'auto'
+    node.style.pageBreakInside = 'avoid'
+  })
+  body.querySelectorAll('table').forEach((node) => {
+    node.style.width = '100%'
+    node.style.borderCollapse = 'collapse'
+    node.style.fontSize = '10.5pt'
+  })
+  body.querySelectorAll('th, td').forEach((node) => {
+    node.style.border = '1px solid #d1d5db'
+    node.style.padding = '6pt 8pt'
+  })
+
+  const exportStyle = doc.createElement('style')
+  exportStyle.textContent = `
+    @page { size: A4; margin: 22mm 18mm; }
+    html, body {
+      background: #ffffff !important;
+    }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "SimSun", sans-serif !important;
+      color: #111827 !important;
+      font-size: 11pt !important;
+      line-height: 1.7 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    * {
+      animation: none !important;
+      transition: none !important;
+      text-shadow: none !important;
+    }
+    .cover::before,
+    .toc h2::before,
+    .section h2::after,
+    .footer::before {
+      content: none !important;
+      display: none !important;
+    }
+    .cover h1 {
+      font-size: 22pt !important;
+      margin-bottom: 8pt !important;
+    }
+    .cover .meta {
+      display: block !important;
+      font-size: 10.5pt !important;
+    }
+    .toc h2,
+    .section h2,
+    .content h3,
+    .content h4,
+    .content h5 {
+      color: #0f2b46 !important;
+      border: none !important;
+      padding: 0 !important;
+      margin-top: 0 !important;
+    }
+    .content p {
+      text-indent: 0 !important;
+      font-size: 11pt !important;
+      margin: 0 0 8pt 0 !important;
+    }
+    .toc ol,
+    .content ul {
+      padding-left: 18pt !important;
+      margin: 0 0 10pt 0 !important;
+    }
+  `
+  head.appendChild(exportStyle)
 }
 
 function waitForFrameReady(frameDocument) {
