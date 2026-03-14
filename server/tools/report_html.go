@@ -7,14 +7,11 @@ import (
 	"time"
 )
 
-// ResolveReportTitle 从章节中解析报告标题
-func ResolveReportTitle(sections []ReportSection, fallback string) string {
-	for _, sec := range sections {
-		if sec.Type == "title" && sec.Title != "" {
-			return sec.Title
-		}
+func ResolveReportTitleFromState(state *ReportState, fallback string) string {
+	if state == nil {
+		return fallback
 	}
-	return fallback
+	return resolveReportTitleFromBlocks(state.Blocks, fallback)
 }
 
 // RenderReportHTML 生成完整的研报 HTML（含 ECharts 图表支持）
@@ -22,8 +19,9 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	if state == nil {
 		state = &ReportState{}
 	}
+	blocks := state.Blocks
 	if title == "" {
-		title = ResolveReportTitle(state.Sections, "数据分析报告")
+		title = ResolveReportTitleFromState(state, "数据分析报告")
 	}
 	if author == "" {
 		author = "AI 数据分析师"
@@ -34,70 +32,63 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	var tocHTML strings.Builder
 	var bodyHTML strings.Builder
 	chapterNum := 0
+	referencedCharts := collectReferencedCharts(blocks)
 
-	for _, sec := range state.Sections {
-		switch sec.Type {
-		case "title":
+	for _, block := range blocks {
+		if isTitleBlock(block) {
 			continue
-		case "summary":
-			chapterNum++
-			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
-			bodyHTML.WriteString(fmt.Sprintf(`
-				<div class="section summary" id="section-%d">
-					<h2>%s</h2>
-					<div class="summary-box">%s</div>
-				</div>`, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
-		case "overview", "analysis", "chart":
-			chapterNum++
-			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
-			bodyHTML.WriteString(fmt.Sprintf(`
-				<div class="section" id="section-%d">
-					<h2>%d. %s</h2>
-					<div class="content">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
-		case "conclusion":
-			chapterNum++
-			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, sec.Title))
-			bodyHTML.WriteString(fmt.Sprintf(`
-				<div class="section conclusion" id="section-%d">
-					<h2>%d. %s</h2>
-					<div class="conclusion-box">%s</div>
-				</div>`, chapterNum, chapterNum, sec.Title, processContent(sec.Content, state.Charts)))
 		}
+		chapterNum++
+		tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, blockDisplayTitle(block, chapterNum)))
+		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts))
+	}
+	if appendixHTML := buildChartAppendix(state.Charts, referencedCharts, &chapterNum, &tocHTML); appendixHTML != "" {
+		bodyHTML.WriteString(appendixHTML)
 	}
 
-	// 生成图表初始化脚本
-	var chartScripts strings.Builder
-	if len(state.Charts) > 0 {
-		chartScripts.WriteString("<script>\ndocument.addEventListener('DOMContentLoaded', function() {\n")
-		for _, ch := range state.Charts {
-			optionStr := string(ch.Option)
-			if optionStr == "" || optionStr == "null" {
-				optionStr = "{}"
-			}
-			chartScripts.WriteString(fmt.Sprintf(`
-  (function() {
-    var el = document.getElementById('%s');
-    if (el) {
-      try {
-        var chart = echarts.init(el);
-        var option = %s;
-        if (option && typeof option === 'object' && Object.keys(option).length > 0) {
-          if (!option.tooltip) option.tooltip = {trigger: 'axis'};
-          if (!option.grid) option.grid = {left:'3%%',right:'4%%',bottom:'3%%',containLabel:true};
-          chart.setOption(option);
-          window.addEventListener('resize', function() { chart.resize(); });
-        } else {
-          el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#999;font-size:14px;">图表数据为空</div>';
-        }
-      } catch(e) {
-        el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#e53e3e;font-size:14px;">图表渲染失败: ' + e.message + '</div>';
-      }
-    }
-  })();
-`, ch.ID, optionStr))
-		}
-		chartScripts.WriteString("});\n</script>")
+	chartScripts := buildChartScripts(state.Charts)
+	customCSS := strings.TrimSpace(state.Layout.CustomCSS)
+	customJS := strings.TrimSpace(state.Layout.CustomJS)
+	bodyClass := strings.TrimSpace(state.Layout.BodyClass)
+	coverHTML := ""
+	if !state.Layout.HideCover {
+		coverHTML = fmt.Sprintf(`<div class="cover">
+  <h1>%s</h1>
+  <div class="divider"></div>
+  <div class="meta">
+    <span>📊 %s</span>
+    <span>📅 %s</span>
+  </div>
+</div>`, title, author, now)
+	}
+	tocBlockHTML := ""
+	if !state.Layout.HideTOC {
+		tocBlockHTML = fmt.Sprintf(`<div class="toc">
+  <h2>目录</h2>
+  <ol>%s</ol>
+</div>`, tocHTML.String())
+	}
+	if strings.TrimSpace(state.Layout.CustomHTMLShell) != "" {
+		return renderCustomShell(state.Layout.CustomHTMLShell, reportShellData{
+			Title:        title,
+			Author:       author,
+			Date:         now,
+			TOC:          tocBlockHTML,
+			Content:      bodyHTML.String(),
+			ChartScripts: chartScripts,
+			CustomCSS:    customCSS,
+			CustomJS:     customJS,
+			BodyClass:    bodyClass,
+		})
+	}
+
+	customCSSBlock := ""
+	if customCSS != "" {
+		customCSSBlock = "\n" + customCSS + "\n"
+	}
+	customJSBlock := ""
+	if customJS != "" {
+		customJSBlock = fmt.Sprintf("\n<script>\n%s\n</script>", customJS)
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -293,6 +284,18 @@ body {
   padding-left: 0.75rem;
   border-left: 3px solid var(--accent);
 }
+.content h3 {
+  color: var(--primary);
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 1.6rem 0 0.9rem;
+}
+.content h5 {
+  color: var(--primary-light);
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.65rem;
+}
 .content ul {
   margin: 0.75rem 0;
   padding-left: 1.5rem;
@@ -403,29 +406,252 @@ strong { color: var(--primary); font-weight: 600; }
   .section, .toc, .footer { margin-left: 1rem; margin-right: 1rem; }
   .cover h1 { font-size: 2rem; }
 }
+%s
 </style>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
-<body>
-<div class="cover">
-  <h1>%s</h1>
-  <div class="divider"></div>
-  <div class="meta">
-    <span>📊 %s</span>
-    <span>📅 %s</span>
-  </div>
-</div>
-<div class="toc">
-  <h2>目录</h2>
-  <ol>%s</ol>
-</div>
+<body class="%s">
+%s
+%s
 %s
 <div class="footer">
   <p>本报告由 AI 数据分析智能体自动生成 | %s</p>
 </div>
 %s
+%s
 </body>
-</html>`, title, title, author, now, tocHTML.String(), bodyHTML.String(), now, chartScripts.String())
+</html>`, title, customCSSBlock, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), now, chartScripts, customJSBlock)
+}
+
+type reportShellData struct {
+	Title        string
+	Author       string
+	Date         string
+	TOC          string
+	Content      string
+	ChartScripts string
+	CustomCSS    string
+	CustomJS     string
+	BodyClass    string
+}
+
+type sectionRenderPreset struct {
+	classes   []string
+	bodyClass string
+	rawTitle  bool
+}
+
+var sectionRenderPresets = map[string]sectionRenderPreset{
+	"summary":           {classes: []string{"section", "summary"}, bodyClass: "summary-box", rawTitle: true},
+	"executive_summary": {classes: []string{"section", "summary"}, bodyClass: "summary-box", rawTitle: true},
+	"conclusion":        {classes: []string{"section", "conclusion"}, bodyClass: "conclusion-box"},
+	"appendix":          {classes: []string{"section", "appendix"}, bodyClass: "content"},
+	"risks":             {classes: []string{"section", "risks"}, bodyClass: "content"},
+	"methodology":       {classes: []string{"section", "methodology"}, bodyClass: "content"},
+}
+
+func buildChartScripts(charts []ChartData) string {
+	var chartScripts strings.Builder
+	if len(charts) == 0 {
+		return ""
+	}
+	chartScripts.WriteString("<script>\ndocument.addEventListener('DOMContentLoaded', function() {\n")
+	for _, ch := range charts {
+		optionStr := string(ch.Option)
+		if optionStr == "" || optionStr == "null" {
+			optionStr = "{}"
+		}
+		chartScripts.WriteString(fmt.Sprintf(`
+  (function() {
+    var nodes = document.querySelectorAll('[data-chart-id="%s"]');
+    if (nodes.length > 0) {
+      var option = %s;
+      nodes.forEach(function(el) {
+        try {
+          var chart = echarts.init(el);
+          if (option && typeof option === 'object' && Object.keys(option).length > 0) {
+            if (!option.tooltip) option.tooltip = {trigger: 'axis'};
+            if (!option.grid) option.grid = {left:'3%%',right:'4%%',bottom:'3%%',containLabel:true};
+            chart.setOption(option);
+            window.addEventListener('resize', function() { chart.resize(); });
+          } else {
+            el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#999;font-size:14px;">图表数据为空</div>';
+          }
+        } catch(e) {
+          el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#e53e3e;font-size:14px;">图表渲染失败: ' + e.message + '</div>';
+        }
+      });
+    }
+  })();
+`, ch.ID, optionStr))
+	}
+	chartScripts.WriteString("});\n</script>")
+	return chartScripts.String()
+}
+
+func renderCustomShell(shell string, data reportShellData) string {
+	replacements := strings.NewReplacer(
+		"{{title}}", data.Title,
+		"{{author}}", data.Author,
+		"{{date}}", data.Date,
+		"{{toc}}", data.TOC,
+		"{{content}}", data.Content,
+		"{{chart_scripts}}", data.ChartScripts,
+		"{{custom_css}}", data.CustomCSS,
+		"{{custom_js}}", data.CustomJS,
+		"{{body_class}}", data.BodyClass,
+	)
+	rendered := replacements.Replace(shell)
+	if !strings.Contains(rendered, "{{content}}") && !strings.Contains(shell, "{{content}}") && !strings.Contains(rendered, data.Content) {
+		rendered += data.Content
+	}
+	return rendered
+}
+
+func resolveReportTitleFromBlocks(blocks []ReportBlock, fallback string) string {
+	for _, block := range blocks {
+		if isTitleBlock(block) && strings.TrimSpace(block.Title) != "" {
+			return block.Title
+		}
+	}
+	return fallback
+}
+
+func collectReferencedCharts(blocks []ReportBlock) map[string]struct{} {
+	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
+	refs := make(map[string]struct{})
+	for _, block := range blocks {
+		for _, match := range re.FindAllStringSubmatch(block.Content, -1) {
+			if len(match) > 1 {
+				refs[match[1]] = struct{}{}
+			}
+		}
+		if strings.TrimSpace(block.Kind) == "chart" && strings.TrimSpace(block.ChartID) != "" {
+			refs[strings.TrimSpace(block.ChartID)] = struct{}{}
+		}
+	}
+	return refs
+}
+
+func isTitleBlock(block ReportBlock) bool {
+	return strings.EqualFold(strings.TrimSpace(block.Kind), "title")
+}
+
+func blockDisplayTitle(block ReportBlock, chapterNum int) string {
+	title := strings.TrimSpace(block.Title)
+	if title != "" {
+		return title
+	}
+	switch strings.ToLower(strings.TrimSpace(block.Kind)) {
+	case "chart":
+		if block.ChartID != "" {
+			return fmt.Sprintf("图表 %s", block.ChartID)
+		}
+	case "html":
+		return fmt.Sprintf("HTML Block %d", chapterNum)
+	}
+	return fmt.Sprintf("Block %d", chapterNum)
+}
+
+type reportBlockRenderer func(ReportBlock, int, []ChartData) string
+
+var reportBlockRenderers = map[string]reportBlockRenderer{
+	"markdown": renderMarkdownBlockHTML,
+	"html":     renderHTMLBlock,
+	"chart":    renderChartBlockHTML,
+}
+
+func renderReportBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
+	kind := strings.ToLower(strings.TrimSpace(block.Kind))
+	renderer, ok := reportBlockRenderers[kind]
+	if !ok {
+		renderer = renderMarkdownBlockHTML
+	}
+	return renderer(block, chapterNum, charts)
+}
+
+func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
+	preset := inferMarkdownBlockPreset(block)
+	title := blockDisplayTitle(block, chapterNum)
+	heading := fmt.Sprintf("%d. %s", chapterNum, title)
+	if preset.rawTitle {
+		heading = title
+	}
+	return fmt.Sprintf(`
+		<div class="%s" id="section-%d" data-block-id="%s">
+			<h2>%s</h2>
+			<div class="%s">%s</div>
+		</div>`, strings.Join(preset.classes, " "), chapterNum, block.ID, heading, preset.bodyClass, processContent(block.Content, charts))
+}
+
+func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
+	defaultPreset := sectionRenderPreset{classes: []string{"section"}, bodyClass: "content"}
+	hint := strings.ToLower(strings.TrimSpace(block.ID + " " + block.Title))
+	switch {
+	case strings.Contains(hint, "summary"), strings.Contains(hint, "摘要"):
+		if preset, ok := sectionRenderPresets["summary"]; ok {
+			return preset
+		}
+	case strings.Contains(hint, "conclusion"), strings.Contains(hint, "结论"):
+		if preset, ok := sectionRenderPresets["conclusion"]; ok {
+			return preset
+		}
+	case strings.Contains(hint, "risk"), strings.Contains(hint, "风险"):
+		if preset, ok := sectionRenderPresets["risks"]; ok {
+			return preset
+		}
+	case strings.Contains(hint, "method"), strings.Contains(hint, "方法"):
+		if preset, ok := sectionRenderPresets["methodology"]; ok {
+			return preset
+		}
+	}
+	return defaultPreset
+}
+
+func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData) string {
+	title := blockDisplayTitle(block, chapterNum)
+	return fmt.Sprintf(`
+		<div class="section html-block" id="section-%d" data-block-id="%s">
+			<h2>%d. %s</h2>
+			<div class="content">%s</div>
+		</div>`, chapterNum, block.ID, chapterNum, title, block.Content)
+}
+
+func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
+	title := blockDisplayTitle(block, chapterNum)
+	content := fmt.Sprintf("{{chart:%s}}", block.ChartID)
+	if strings.TrimSpace(block.Content) != "" {
+		content += "\n\n" + block.Content
+	}
+	return fmt.Sprintf(`
+		<div class="section chart-block" id="section-%d" data-block-id="%s">
+			<h2>%d. %s</h2>
+			<div class="content">%s</div>
+		</div>`, chapterNum, block.ID, chapterNum, title, processContent(content, charts))
+}
+
+func buildChartAppendix(charts []ChartData, referenced map[string]struct{}, chapterNum *int, tocHTML *strings.Builder) string {
+	var missing []string
+	for _, ch := range charts {
+		if _, ok := referenced[ch.ID]; ok {
+			continue
+		}
+		missing = append(missing, fmt.Sprintf("{{chart:%s}}", ch.ID))
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+
+	*chapterNum = *chapterNum + 1
+	tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, *chapterNum, "图表附录"))
+	return fmt.Sprintf(`
+		<div class="section" id="section-%d">
+			<h2>%d. %s</h2>
+			<div class="content">
+				<p>以下图表已经生成，但正文尚未引用，系统已自动补入附录以避免遗漏。</p>
+				%s
+			</div>
+		</div>`, *chapterNum, *chapterNum, "图表附录", processContent(strings.Join(missing, "\n\n"), charts))
 }
 
 // processContent 处理内容：Markdown 转 HTML + 替换图表占位符
@@ -434,6 +660,7 @@ func processContent(content string, charts []ChartData) string {
 
 	// 替换 {{chart:chart_id}} 占位符为 ECharts 容器
 	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
+	chartRefCounts := make(map[string]int)
 	html = re.ReplaceAllStringFunc(html, func(match string) string {
 		chartID := re.FindStringSubmatch(match)[1]
 		// 查找对应图表
@@ -443,7 +670,9 @@ func processContent(content string, charts []ChartData) string {
 				if height == "" {
 					height = "400px"
 				}
-				return fmt.Sprintf(`<div id="%s" class="chart-box" style="height:%s;"></div>`, ch.ID, height)
+				chartRefCounts[chartID]++
+				containerID := fmt.Sprintf("%s-ref-%d", chartID, chartRefCounts[chartID])
+				return fmt.Sprintf(`<div id="%s" data-chart-id="%s" class="chart-box" style="height:%s;"></div>`, containerID, ch.ID, height)
 			}
 		}
 		return fmt.Sprintf(`<div class="chart-box" style="display:flex;align-items:center;justify-content:center;color:#999;">图表 %s 未找到</div>`, chartID)
@@ -508,8 +737,20 @@ func markdownToHTML(md string) string {
 		}
 
 		// 标题
+		if strings.HasPrefix(trimmed, "#### ") {
+			html.WriteString(fmt.Sprintf("<h5>%s</h5>\n", formatInline(trimmed[5:])))
+			continue
+		}
 		if strings.HasPrefix(trimmed, "### ") {
-			html.WriteString(fmt.Sprintf("<h4>%s</h4>\n", trimmed[4:]))
+			html.WriteString(fmt.Sprintf("<h4>%s</h4>\n", formatInline(trimmed[4:])))
+			continue
+		}
+		if strings.HasPrefix(trimmed, "## ") {
+			html.WriteString(fmt.Sprintf("<h3>%s</h3>\n", formatInline(trimmed[3:])))
+			continue
+		}
+		if strings.HasPrefix(trimmed, "# ") {
+			html.WriteString(fmt.Sprintf("<h2>%s</h2>\n", formatInline(trimmed[2:])))
 			continue
 		}
 

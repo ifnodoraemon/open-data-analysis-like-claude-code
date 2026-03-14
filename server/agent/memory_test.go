@@ -29,22 +29,28 @@ func TestWorkingMemory(t *testing.T) {
 	if strings.Contains(summary, "key1") {
 		t.Errorf("expected summary to not contain key1, got %s", summary)
 	}
+
+	mem.Reset()
+	if len(mem.Snapshot()) != 0 {
+		t.Errorf("expected snapshot to be empty after reset")
+	}
 }
 
 func TestSubgoalManager(t *testing.T) {
 	sm := NewSubgoalManager()
 
-	// Test IsAllCompleted empty
-	if !sm.IsAllCompleted() {
-		t.Errorf("expected empty subgoals to be true")
+	canFinalize, blockers := sm.CanFinalize()
+	if !canFinalize || len(blockers) != 0 {
+		t.Errorf("expected empty subgoals to allow finalize")
 	}
 
 	// Test AddGoal
-	id1 := sm.AddGoal("goal 1")
-	id2 := sm.AddGoal("goal 2")
+	id1 := sm.AddGoal("goal 1", "")
+	id2 := sm.AddGoal("goal 2", id1)
 
-	if sm.IsAllCompleted() {
-		t.Errorf("expected IsAllCompleted to be false when pending goals exist")
+	canFinalize, blockers = sm.CanFinalize()
+	if canFinalize || len(blockers) != 1 {
+		t.Errorf("expected pending root goal to block finalize, blockers=%v", blockers)
 	}
 
 	// Test UpdateGoalStatus
@@ -53,8 +59,9 @@ func TestSubgoalManager(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	if sm.IsAllCompleted() {
-		t.Errorf("expected IsAllCompleted to be false, goal 2 is still pending")
+	canFinalize, blockers = sm.CanFinalize()
+	if !canFinalize || len(blockers) != 0 {
+		t.Errorf("expected completed root to allow finalize, blockers=%v", blockers)
 	}
 
 	err = sm.UpdateGoalStatus(id2, StatusRejected, "rejected")
@@ -62,13 +69,71 @@ func TestSubgoalManager(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	if !sm.IsAllCompleted() {
-		t.Errorf("expected IsAllCompleted to be true as all goals are complete/rejected")
+	canFinalize, blockers = sm.CanFinalize()
+	if !canFinalize || len(blockers) != 0 {
+		t.Errorf("expected finalize to be allowed as root/branch are terminal, blockers=%v", blockers)
 	}
 
 	summary := sm.GetSummary()
 	if !strings.Contains(summary, "goal 1") || !strings.Contains(summary, "goal 2") || !strings.Contains(summary, "rejected") {
 		t.Errorf("expected summary to contain goals and results, got %s", summary)
+	}
+	if sm.Goals[1].ParentGoalID != id1 {
+		t.Errorf("expected nested goal parent id to be preserved")
+	}
+}
+
+func TestSubgoalManagerAllowsFinalizeWhenClosedRootHasStaleChildren(t *testing.T) {
+	sm := NewSubgoalManager()
+	rootID := sm.AddGoal("root goal", "")
+	childID := sm.AddGoal("stale child", rootID)
+
+	if err := sm.UpdateGoalStatus(rootID, StatusComplete, "done"); err != nil {
+		t.Fatalf("update root status: %v", err)
+	}
+
+	canFinalize, blockers := sm.CanFinalize()
+	if !canFinalize {
+		t.Fatalf("expected completed root to allow finalize even with stale child, blockers=%v", blockers)
+	}
+
+	summary := sm.GetSummary()
+	if !strings.Contains(summary, "stale child") {
+		t.Fatalf("expected summary to still show stale child")
+	}
+	if strings.Contains(summary, "stale child[pending]") {
+		t.Fatalf("expected stale child not to appear as active branch blocker")
+	}
+
+	if err := sm.UpdateGoalStatus(childID, StatusRejected, "obsolete"); err != nil {
+		t.Fatalf("update child status: %v", err)
+	}
+}
+
+func TestAutoCompleteReportGoalsOnlyClosesReportRoots(t *testing.T) {
+	sm := NewSubgoalManager()
+	reportGoalID := sm.AddGoal("生成图表并整理成完整研究报告", "")
+	otherGoalID := sm.AddGoal("继续核对退款异常原因", "")
+
+	completed := sm.AutoCompleteReportGoals("报告已完成")
+	if completed != 1 {
+		t.Fatalf("expected 1 report goal to be auto-completed, got %d", completed)
+	}
+
+	var reportStatus, otherStatus SubgoalStatus
+	for _, goal := range sm.Goals {
+		switch goal.ID {
+		case reportGoalID:
+			reportStatus = goal.Status
+		case otherGoalID:
+			otherStatus = goal.Status
+		}
+	}
+	if reportStatus != StatusComplete {
+		t.Fatalf("expected report goal complete, got %s", reportStatus)
+	}
+	if otherStatus != StatusPending {
+		t.Fatalf("expected non-report goal to stay pending, got %s", otherStatus)
 	}
 }
 
@@ -89,6 +154,34 @@ func TestSaveMemoryTool(t *testing.T) {
 	}
 }
 
+func TestSaveMemoryToolEmitsUpdate(t *testing.T) {
+	mem := NewWorkingMemory()
+	var emitted bool
+	tool := &SaveMemoryTool{
+		Memory: mem,
+		EmitFunc: func(event WSEvent) {
+			if event.Type != EventStateMemoryUpdated {
+				t.Fatalf("unexpected event type: %s", event.Type)
+			}
+			payload, ok := event.Data.(MemoryUpdatedData)
+			if !ok {
+				t.Fatalf("unexpected payload type: %T", event.Data)
+			}
+			if payload.Facts["alpha"] != "beta" {
+				t.Fatalf("expected emitted facts to contain saved value")
+			}
+			emitted = true
+		},
+	}
+
+	if _, err := tool.Execute([]byte(`{"key":"alpha","fact":"beta"}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !emitted {
+		t.Fatalf("expected memory update event to be emitted")
+	}
+}
+
 func TestManageSubgoalsTool(t *testing.T) {
 	sm := NewSubgoalManager()
 	tool := &ManageSubgoalsTool{Subgoals: sm}
@@ -104,6 +197,14 @@ func TestManageSubgoalsTool(t *testing.T) {
 	}
 
 	id := sm.Goals[0].ID
+
+	argsChild := []byte(`{"action": "add", "description": "child goal", "parent_goal_id": "` + id + `"}`)
+	if _, err := tool.Execute(argsChild); err != nil {
+		t.Errorf("unexpected error adding child goal: %v", err)
+	}
+	if len(sm.Goals) != 2 || sm.Goals[1].ParentGoalID != id {
+		t.Errorf("expected child goal to be nested under parent")
+	}
 
 	// Complete
 	argsComplete := []byte(`{"action": "complete", "goal_id": "` + id + `", "result": "done"}`)

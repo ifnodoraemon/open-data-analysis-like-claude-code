@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	openai "github.com/sashabaranov/go-openai"
 	"github.com/ifnodoraemon/open-data-analysis-like-claude-code/data"
+	openai "github.com/sashabaranov/go-openai"
 )
 
 // Tool 工具接口
@@ -25,13 +25,21 @@ type Registry struct {
 	tools map[string]Tool
 }
 
+// SubgoalChecker 提供了一种避免循环依赖的方式，让图表等工具可以访问当前子目标状态
+type SubgoalChecker interface {
+	CanFinalize() (bool, []string)
+	AutoCompleteReportGoals(result string) int
+}
+
 // ToolContext 提供给工具初始化时的上下文依赖
 type ToolContext struct {
 	Ingester         *data.Ingester
 	ReportState      *ReportState
 	FileMaterializer FileMaterializer
-	Memory           any // Type: *agent.WorkingMemory
-	Subgoals         any // Type: *agent.SubgoalManager
+	Memory           any            // Type: *agent.WorkingMemory
+	Subgoals         SubgoalChecker // Instead of any, we use an interface to avoid circular imports
+	DelegateRegistry *Registry
+	EmitFunc         func(any) // Type: func(agent.WSEvent)
 }
 
 // ToolBuilder 是负责动态创建有状态工具的函数
@@ -89,6 +97,15 @@ func (r *Registry) Get(name string) (Tool, error) {
 func (r *Registry) HasTool(name string) bool {
 	_, ok := r.tools[name]
 	return ok
+}
+
+// ListTools 返回当前注册表中的工具快照。
+func (r *Registry) ListTools() []Tool {
+	items := make([]Tool, 0, len(r.tools))
+	for _, tool := range r.tools {
+		items = append(items, tool)
+	}
+	return items
 }
 
 // GetOpenAITools 转换为 OpenAI Tools 格式

@@ -35,6 +35,25 @@ func (m *WorkingMemory) RemoveFact(key string) {
 	delete(m.Facts, key)
 }
 
+// Snapshot 返回当前工作记忆的副本。
+func (m *WorkingMemory) Snapshot() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	res := make(map[string]string, len(m.Facts))
+	for k, v := range m.Facts {
+		res[k] = v
+	}
+	return res
+}
+
+// Reset 清空所有工作记忆。
+func (m *WorkingMemory) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Facts = make(map[string]string)
+}
+
 // GetSummary 输出格式化的大模型提示词上下文
 func (m *WorkingMemory) GetSummary() string {
 	m.mu.RLock()
@@ -64,18 +83,24 @@ const (
 )
 
 type Subgoal struct {
-	ID          string        `json:"id"`
-	Description string        `json:"description"`
-	Status      SubgoalStatus `json:"status"`
-	Result      string        `json:"result,omitempty"`
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
+	ID           string        `json:"id"`
+	ParentGoalID string        `json:"parentGoalId,omitempty"`
+	Description  string        `json:"description"`
+	Status       SubgoalStatus `json:"status"`
+	Result       string        `json:"result,omitempty"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
 // SubgoalManager 维护 Agent 当前计划的待解决问题树
 type SubgoalManager struct {
 	Goals []Subgoal `json:"goals"`
 	mu    sync.RWMutex
+}
+
+type finalizeSnapshot struct {
+	roots    []Subgoal
+	children map[string][]Subgoal
 }
 
 func NewSubgoalManager() *SubgoalManager {
@@ -85,17 +110,18 @@ func NewSubgoalManager() *SubgoalManager {
 }
 
 // AddGoal 增加一个新的子任务
-func (s *SubgoalManager) AddGoal(description string) string {
+func (s *SubgoalManager) AddGoal(description, parentGoalID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	id := "goal_" + uuid.New().String()[:8]
 	s.Goals = append(s.Goals, Subgoal{
-		ID:          id,
-		Description: description,
-		Status:      StatusPending,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:           id,
+		ParentGoalID: strings.TrimSpace(parentGoalID),
+		Description:  description,
+		Status:       StatusPending,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	})
 	return id
 }
@@ -118,21 +144,129 @@ func (s *SubgoalManager) UpdateGoalStatus(id string, status SubgoalStatus, resul
 	return fmt.Errorf("subgoal with ID %s not found", id)
 }
 
-// IsAllCompleted 检查所有的目标是否都已经终态
-func (s *SubgoalManager) IsAllCompleted() bool {
+func isTerminalSubgoalStatus(status SubgoalStatus) bool {
+	return status == StatusComplete || status == StatusRejected
+}
+
+func (s *SubgoalManager) snapshotLocked() finalizeSnapshot {
+	byID := make(map[string]Subgoal, len(s.Goals))
+	for _, g := range s.Goals {
+		byID[g.ID] = g
+	}
+
+	children := make(map[string][]Subgoal, len(s.Goals))
+	roots := make([]Subgoal, 0)
+	for _, g := range s.Goals {
+		parentID := strings.TrimSpace(g.ParentGoalID)
+		if parentID == "" {
+			roots = append(roots, g)
+			continue
+		}
+		if _, ok := byID[parentID]; !ok {
+			roots = append(roots, g)
+			continue
+		}
+		children[parentID] = append(children[parentID], g)
+	}
+
+	return finalizeSnapshot{
+		roots:    roots,
+		children: children,
+	}
+}
+
+func (s *SubgoalManager) collectActiveBranchLines(snapshot finalizeSnapshot) []string {
+	if len(snapshot.roots) == 0 {
+		return nil
+	}
+
+	branches := make([]string, 0)
+	var dfs func(goal Subgoal, path []string)
+	dfs = func(goal Subgoal, path []string) {
+		if isTerminalSubgoalStatus(goal.Status) {
+			return
+		}
+
+		step := fmt.Sprintf("%s[%s]", goal.Description, goal.Status)
+		path = append(path, step)
+
+		hasNonTerminalChild := false
+		for _, child := range snapshot.children[goal.ID] {
+			if isTerminalSubgoalStatus(child.Status) {
+				continue
+			}
+			hasNonTerminalChild = true
+			dfs(child, path)
+		}
+		if !hasNonTerminalChild {
+			branches = append(branches, strings.Join(path, " -> "))
+		}
+	}
+
+	for _, root := range snapshot.roots {
+		if isTerminalSubgoalStatus(root.Status) {
+			continue
+		}
+		dfs(root, nil)
+	}
+	return branches
+}
+
+// CanFinalize 检查当前是否允许结束。
+// 判定只基于根目标是否闭环；已闭环根目标下面遗留的旧子步骤不会继续阻塞结束。
+func (s *SubgoalManager) CanFinalize() (bool, []string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if len(s.Goals) == 0 {
-		return true // 如果没有任何目标，也可以视为完成，或者按需调整
+		return true, nil
 	}
 
-	for _, g := range s.Goals {
-		if g.Status == StatusPending || g.Status == StatusRunning {
-			return false
+	snapshot := s.snapshotLocked()
+	blockers := s.collectActiveBranchLines(snapshot)
+	return len(blockers) == 0, blockers
+}
+
+// AutoCompleteReportGoals 在进入最终收尾前自动闭合明显属于“产出图表/报告”的根目标。
+func (s *SubgoalManager) AutoCompleteReportGoals(result string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	completed := 0
+	now := time.Now()
+	for i := range s.Goals {
+		goal := &s.Goals[i]
+		if strings.TrimSpace(goal.ParentGoalID) != "" {
+			continue
+		}
+		if isTerminalSubgoalStatus(goal.Status) {
+			continue
+		}
+		if !looksLikeReportGoal(goal.Description) {
+			continue
+		}
+		goal.Status = StatusComplete
+		if strings.TrimSpace(result) != "" {
+			goal.Result = result
+		}
+		goal.UpdatedAt = now
+		completed++
+	}
+	return completed
+}
+
+func looksLikeReportGoal(description string) bool {
+	hint := strings.ToLower(strings.TrimSpace(description))
+	if hint == "" {
+		return false
+	}
+	keywords := []string{"报告", "研报", "图表", "report", "chart", "dashboard", "finalize"}
+	for _, keyword := range keywords {
+		if strings.Contains(hint, keyword) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // GetSummary 格式化输出供 LLM 使用的当前子任务树状态
@@ -141,29 +275,58 @@ func (s *SubgoalManager) GetSummary() string {
 	defer s.mu.RUnlock()
 
 	if len(s.Goals) == 0 {
-		return "Subgoals Tree: <empty>"
+		return "当前没有进行中的子任务。"
 	}
 
 	var builder strings.Builder
-	builder.WriteString("=== 动态子目标树 (Subgoals / Tree of Tasks) ===\n")
-	builder.WriteString("这是你当前正在推进的任务清单。你必须依靠这些状态来决定下一步做什么，或者什么时候可以生成报告：\n")
-
-	for _, g := range s.Goals {
-		statusIcon := "[ ]"
-		switch g.Status {
-		case StatusRunning:
-			statusIcon = "[~]"
-		case StatusComplete:
-			statusIcon = "[x]"
-		case StatusRejected:
-			statusIcon = "[-]"
-		}
-
-		builder.WriteString(fmt.Sprintf("%s ID: %s | 目标: %s\n", statusIcon, g.ID, g.Description))
-		if g.Result != "" {
-			builder.WriteString(fmt.Sprintf("    -> 结论: %s\n", g.Result))
+	builder.WriteString("【当前待解决的目标清单】\n")
+	snapshot := s.snapshotLocked()
+	for _, root := range snapshot.roots {
+		s.renderSummary(&builder, snapshot.children, root, 0)
+	}
+	if blockers := s.collectActiveBranchLines(snapshot); len(blockers) > 0 {
+		builder.WriteString("\n【当前阻塞收尾的 Active Branch】\n")
+		for _, branch := range blockers {
+			builder.WriteString("- ")
+			builder.WriteString(branch)
+			builder.WriteString("\n")
 		}
 	}
-	builder.WriteString("==================================================\n")
 	return builder.String()
+}
+
+func (s *SubgoalManager) renderSummary(builder *strings.Builder, children map[string][]Subgoal, goal Subgoal, depth int) {
+	mark := "[ ]"
+	switch goal.Status {
+	case StatusRunning:
+		mark = "[~]"
+	case StatusComplete:
+		mark = "[x]"
+	case StatusRejected:
+		mark = "[-]"
+	}
+	indent := strings.Repeat("  ", depth)
+	builder.WriteString(fmt.Sprintf("%s%s ID:%s | %s\n", indent, mark, goal.ID, goal.Description))
+	if goal.Result != "" {
+		builder.WriteString(fmt.Sprintf("%s    -> 结论/原因: %s\n", indent, goal.Result))
+	}
+	for _, child := range children[goal.ID] {
+		s.renderSummary(builder, children, child, depth+1)
+	}
+}
+
+// ListAll 导出当前所有的目标（返回副本，避免外部由于并发修改切片导致 panic）
+func (s *SubgoalManager) ListAll() []Subgoal {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	res := make([]Subgoal, len(s.Goals))
+	copy(res, s.Goals)
+	return res
+}
+
+// Reset 清空全部子目标。
+func (s *SubgoalManager) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Goals = make([]Subgoal, 0)
 }

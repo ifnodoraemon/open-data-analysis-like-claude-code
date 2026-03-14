@@ -13,13 +13,10 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-const MaxIterations = 25
-
 // Engine Agent 主循环引擎
 type Engine struct {
 	llm          *LLMClient
 	registry     *tools.Registry
-	workerReg    *tools.Registry
 	messages     []openai.ChatCompletionMessage
 	systemPrompt string
 	memory       *WorkingMemory
@@ -27,15 +24,24 @@ type Engine struct {
 	mu           sync.Mutex
 }
 
+type eventEmitterAware interface {
+	SetEventEmitter(func(WSEvent))
+}
+
+type executionContextAware interface {
+	SetExecutionContext(context.Context)
+}
+
+type specialToolHandler func(context.Context, openai.ToolCall, func(WSEvent)) (string, error, bool)
+
 // NewEngine 创建 Agent 引擎（支持多轮对话）
-func NewEngine(registry, workerReg *tools.Registry, systemPrompt string, memory *WorkingMemory, subgoals *SubgoalManager) *Engine {
+func NewEngine(registry *tools.Registry, systemPrompt string, memory *WorkingMemory, subgoals *SubgoalManager) *Engine {
 	if systemPrompt == "" {
-		systemPrompt = BuildPlannerPrompt()
+		systemPrompt = BuildPlannerPrompt(registry)
 	}
 	return &Engine{
 		llm:          NewLLMClient(),
 		registry:     registry,
-		workerReg:    workerReg,
 		systemPrompt: systemPrompt,
 		memory:       memory,
 		subgoals:     subgoals,
@@ -59,11 +65,45 @@ func (e *Engine) ResetMessages() {
 	}
 }
 
+func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
+	if e.registry == nil {
+		return
+	}
+	for _, tool := range e.registry.ListTools() {
+		if next, ok := tool.(eventEmitterAware); ok {
+			next.SetEventEmitter(emit)
+		}
+		if next, ok := tool.(executionContextAware); ok {
+			next.SetExecutionContext(ctx)
+		}
+	}
+}
+
+func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
+	return map[string]specialToolHandler{
+		"user_request_input": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
+			var payload AskUserData
+			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &payload); err != nil {
+				return "", fmt.Errorf("user_request_input 参数解析失败: %w", err), true
+			}
+			emit(WSEvent{Type: EventUserRequestInput, Data: payload})
+			return "", nil, true
+		},
+		"report_finalize": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
+			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "开始生成最终报告..."}})
+			result, err := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+			return result, err, false
+		},
+	}
+}
+
 // Run 执行 Agent 主循环
 func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) {
 	if emit == nil {
 		emit = func(WSEvent) {}
 	}
+	e.prepareRuntimeTools(ctx, emit)
+	specialHandlers := e.specialToolHandlers()
 
 	e.mu.Lock()
 	// 添加用户消息
@@ -75,7 +115,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 	oaiTools := e.registry.GetOpenAITools()
 	e.mu.Unlock()
 
-	for i := 0; i < MaxIterations; i++ {
+	for i := 1; ; i++ {
 		select {
 		case <-ctx.Done():
 			emit(WSEvent{Type: EventRunCancelled, Data: ErrorData{Message: "任务被取消"}})
@@ -84,12 +124,28 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		}
 
 		// 通知前端: 正在思考
-		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i+1)}})
+		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i)}})
 
 		// 调用 LLM
 		e.mu.Lock()
 		messages := append([]openai.ChatCompletionMessage(nil), e.messages...)
 		e.mu.Unlock()
+
+		// 动态注入 Memory & Subgoal 上下文作为最新的 System Prompt
+		var stateContext string
+		if e.memory != nil {
+			stateContext += e.memory.GetSummary() + "\n\n"
+		}
+		if e.subgoals != nil {
+			stateContext += e.subgoals.GetSummary()
+		}
+		if stateContext != "" {
+			messages = append(messages, openai.ChatCompletionMessage{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: strings.TrimSpace(stateContext),
+			})
+		}
+
 		resp, err := e.llm.ChatWithTools(ctx, messages, oaiTools)
 		if err != nil {
 			emit(WSEvent{Type: EventError, Data: ErrorData{Message: err.Error()}})
@@ -163,43 +219,20 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 
 				// 执行工具
 				start := time.Now()
-				
+
 				var result string
 				var execErr error
-				
-				if toolCall.Function.Name == "manage_subgoals" {
-					var payload struct {
-						Action      string `json:"action"`
-						Description string `json:"description"`
+
+				if handler, ok := specialHandlers[toolCall.Function.Name]; ok {
+					var stop bool
+					result, execErr, stop = handler(ctx, toolCall, emit)
+					if execErr != nil && toolCall.Function.Name == "user_request_input" {
+						emit(WSEvent{Type: EventError, Data: ErrorData{Message: execErr.Error()}})
+						return
 					}
-					_ = json.Unmarshal([]byte(toolCall.Function.Arguments), &payload)
-					
-					// Planner 下发了新任务
-					if payload.Action == "add" && payload.Description != "" {
-						emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "Planner 正在下发查数任务给 DataWorker..."}})
-						
-						goalID := e.subgoals.AddGoal(payload.Description)
-						
-						worker := NewDataWorkerAgent(e.workerReg)
-						workerRes, workerErr := worker.RunWorker(ctx, payload.Description, emit)
-						
-						if workerErr != nil {
-							execErr = fmt.Errorf("Data Worker Failed: %v", workerErr)
-							_ = e.subgoals.UpdateGoalStatus(goalID, StatusRejected, execErr.Error())
-							result = fmt.Sprintf("子目标执行失败被退回: %v", workerErr)
-						} else {
-							_ = e.subgoals.UpdateGoalStatus(goalID, StatusComplete, workerRes)
-							result = fmt.Sprintf("Data Worker 已成功完成目标[%s]，返回结论: %s", goalID, workerRes)
-							emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "DataWorker 成功提交结论返回给 Planner！"}})
-						}
-					} else {
-						// 正常执行完成/放弃状态流转
-						result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+					if stop {
+						return
 					}
-				} else if toolCall.Function.Name == "finalize_report" {
-					// 省略原版的 Review 环节以简化流程，直接结案
-					emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "开始生成最终报告..."}})
-					result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 				} else {
 					result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 				}
@@ -260,7 +293,6 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		return
 	}
 
-	emit(WSEvent{Type: EventError, Data: ErrorData{Message: "达到最大迭代次数"}})
 }
 
 func errorString(err error) string {
@@ -291,27 +323,33 @@ func compactToolArguments(toolName, raw string) string {
 	}
 
 	switch toolName {
-	case "create_chart":
-		// create_chart 的参数结构会直接影响后续轮次的工具调用，
+	case "report_create_chart":
+		// report_create_chart 的参数结构会直接影响后续轮次的工具调用，
 		// 这里保留原始参数，避免把摘要字段误导回模型。
 		return raw
-	case "write_section":
+	case "report_manage_blocks":
 		var payload struct {
-			SectionType string `json:"section_type"`
-			Title       string `json:"title"`
-			Content     string `json:"content"`
+			Action    string `json:"action"`
+			BlockID   string `json:"block_id"`
+			BlockKind string `json:"block_kind"`
+			Title     string `json:"title"`
+			Content   string `json:"content"`
+			ChartID   string `json:"chart_id"`
 		}
 		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
 			summary, _ := json.Marshal(map[string]interface{}{
-				"section_type":  payload.SectionType,
+				"action":        payload.Action,
+				"block_id":      payload.BlockID,
+				"block_kind":    payload.BlockKind,
 				"title":         payload.Title,
+				"chart_id":      payload.ChartID,
 				"content_note":  "compacted_for_history",
 				"content_chars": len([]rune(payload.Content)),
 				"content_head":  clipHistoryText(payload.Content, 120),
 			})
 			return string(summary)
 		}
-	case "finalize_report":
+	case "report_finalize":
 		var payload struct {
 			ReportTitle string `json:"report_title"`
 			Author      string `json:"author"`
@@ -347,34 +385,58 @@ func compactToolResult(toolName, result string) string {
 	}
 
 	switch toolName {
-	case "query_data":
+	case "data_query_sql":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 			minified, _ := json.Marshal(payload)
 			return string(minified)
 		}
-	case "describe_data":
+	case "data_describe_table":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 			minified, _ := json.Marshal(payload)
 			return string(minified)
 		}
-	case "run_python":
+	case "code_run_python":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 			minified, _ := json.Marshal(payload)
 			return string(minified)
 		}
-	case "list_tables":
+	case "data_list_tables":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 			minified, _ := json.Marshal(payload)
 			return string(minified)
 		}
 		return strings.Join(strings.Fields(trimmed), " ")
+	case "task_delegate":
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			minified, _ := json.Marshal(map[string]interface{}{
+				"ok":               payload["ok"],
+				"tool":             payload["tool"],
+				"child_run_id":     payload["child_run_id"],
+				"delegate_role":    payload["delegate_role"],
+				"goal_id":          payload["goal_id"],
+				"allowed_tools":    payload["allowed_tools"],
+				"delegate_summary": payload["delegate_summary"],
+				"summary_text":     payload["summary_text"],
+				"trace_count":      traceCount(payload["trace"]),
+			})
+			return string(minified)
+		}
 	}
 
 	return result
+}
+
+func traceCount(value interface{}) int {
+	items, ok := value.([]interface{})
+	if !ok {
+		return 0
+	}
+	return len(items)
 }
 
 func toolCallSucceeded(result string, execErr error) bool {
@@ -392,7 +454,7 @@ func toolCallSucceeded(result string, execErr error) bool {
 	return true
 }
 
-// ProvideAskUserResult 将用户的直接回复作为 ask_user 工具的执行结果注入 LLM 对话上下文
+// ProvideAskUserResult 将用户的直接回复作为 user_request_input 工具的执行结果注入 LLM 对话上下文
 func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -402,7 +464,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 		msg := e.messages[i]
 		if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
-				if tc.Function.Name == "ask_user" {
+				if tc.Function.Name == "user_request_input" {
 					toolCallID = tc.ID
 					break
 				}
@@ -414,14 +476,14 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	}
 
 	if toolCallID == "" {
-		return fmt.Errorf("没有找到正在等待的用户确认 (ask_user) 工具调用")
+		return fmt.Errorf("没有找到正在等待的用户确认 (user_request_input) 工具调用")
 	}
 
 	e.messages = append(e.messages, openai.ChatCompletionMessage{
 		Role:       openai.ChatMessageRoleTool,
 		Content:    userResponse,
 		ToolCallID: toolCallID,
-		Name:       "ask_user",
+		Name:       "user_request_input",
 	})
 
 	return nil
