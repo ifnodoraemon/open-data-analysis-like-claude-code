@@ -28,7 +28,7 @@ func TestRenderReportHTMLConvertsMarkdownHeadings(t *testing.T) {
 	}
 }
 
-func TestRenderReportHTMLAppendsUnreferencedCharts(t *testing.T) {
+func TestRenderReportHTMLDoesNotAppendUnreferencedCharts(t *testing.T) {
 	t.Parallel()
 
 	option, err := json.Marshal(map[string]any{
@@ -56,11 +56,8 @@ func TestRenderReportHTMLAppendsUnreferencedCharts(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, "图表附录") {
-		t.Fatalf("expected appendix for unreferenced charts")
-	}
-	if !strings.Contains(html, `data-chart-id="chart_sales"`) {
-		t.Fatalf("expected chart container to be rendered in appendix")
+	if strings.Contains(html, "图表附录") {
+		t.Fatalf("did not expect appendix for unreferenced charts")
 	}
 }
 

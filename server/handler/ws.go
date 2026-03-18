@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -162,6 +163,34 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 	}
 	sendSessionEvent(conn, writeMu, sess.ID, runID, finalEv)
 	saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, finalEv)
+}
+
+type handlerReportSnapshotLoader struct{}
+
+func (handlerReportSnapshotLoader) LoadReportSnapshot(ctx context.Context, sessionID, workspaceID, userID, runID string) (*domain.ReportSnapshot, error) {
+	if strings.TrimSpace(runID) == "" {
+		return nil, nil
+	}
+	run, err := runRepo.GetByID(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("读取目标任务失败: %w", err)
+	}
+	if run.SessionID != sessionID || run.WorkspaceID != workspaceID || run.UserID != userID {
+		return nil, fmt.Errorf("目标任务不属于当前会话")
+	}
+	report, err := reportRepo.GetByRunID(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("目标任务尚未生成可编辑报告")
+	}
+	var snapshot domain.ReportSnapshot
+	if err := json.Unmarshal([]byte(report.SnapshotJSON), &snapshot); err != nil {
+		return nil, fmt.Errorf("解析报告快照失败: %w", err)
+	}
+	return &snapshot, nil
+}
+
+func buildRunUserContent(sess *session.Session, userMsg agent.UserMessage) (string, error) {
+	return strings.TrimSpace(userMsg.Content), nil
 }
 
 // WSHandler WebSocket 连接处理
@@ -324,6 +353,14 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			if err := sess.PrepareUserRun(r.Context(), userMsg, handlerReportSnapshotLoader{}); err != nil {
+				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: err.Error()},
+				})
+				continue
+			}
+
 			runID, ctx, err := sess.StartRun(r.Context())
 			if err != nil {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
@@ -374,9 +411,15 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				Data: agent.RunStartedData{RunID: runID},
 			})
 
-			userContent := strings.TrimSpace(userMsg.Content)
-			if fileContext := sess.BuildFileContext(); fileContext != "" {
-				userContent = fileContext + "\n用户指令: " + userContent
+			userContent, err := buildRunUserContent(sess, userMsg)
+			if err != nil {
+				sess.CancelRun(runID)
+				_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, nil)
+				sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+					Type: agent.EventError,
+					Data: agent.ErrorData{Message: err.Error()},
+				})
+				continue
 			}
 
 			ctx = agent.WithTraceMetadata(ctx, agent.TraceMetadata{

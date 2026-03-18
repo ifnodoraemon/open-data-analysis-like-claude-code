@@ -65,7 +65,7 @@ func (m *WorkingMemory) GetSummary() string {
 
 	var builder strings.Builder
 	builder.WriteString("=== 已确认的工作记忆 (Working Memory) ===\n")
-	builder.WriteString("这里存放了你之前确定的关键口径、字段含义和中间结论。请在后续分析中优先使用这些信息，避免重复查证：\n")
+	builder.WriteString("这里存放了已确认的关键口径、字段含义和中间结论：\n")
 	for k, v := range m.Facts {
 		builder.WriteString(fmt.Sprintf("- [%s]: %s\n", k, v))
 	}

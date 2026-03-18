@@ -216,6 +216,9 @@ func summarizeRunMessage(msg domain.RunMessage) string {
 	case "tool_result":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(content), &payload); err == nil {
+			if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
+				return clipPreviewText(summary, 120)
+			}
 			if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
 				return clipPreviewText(summary, 120)
 			}

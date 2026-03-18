@@ -593,7 +593,7 @@ export function useWebSocket() {
     return wsInstance
   }
 
-  async function sendMessage(content) {
+  async function sendMessage(content, options = {}) {
     const value = String(content || '').trim()
     if (!value) return
 
@@ -607,7 +607,6 @@ export function useWebSocket() {
     }
 
     store.setRunning(true)
-    store.addMessage({ type: 'user', content: value })
     if (store.sessionId) {
       store.upsertSession({
         id: store.sessionId,
@@ -615,7 +614,16 @@ export function useWebSocket() {
         lastSeenAt: new Date().toISOString(),
       })
     }
-    send('user_message', { content: value })
+    const payload = { content: value }
+    if (options.editContext) {
+      payload.editContext = options.editContext
+    }
+    store.addMessage({
+      type: 'user',
+      content: value,
+      editContext: options.editContext || null,
+    })
+    send('user_message', payload)
   }
 
   function stop() {

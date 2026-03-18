@@ -466,7 +466,7 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 		"task_instruction": taskInstruction,
 		"allowed_tools":    allowedTools,
 		"delegate_summary": summary,
-		"summary_text":     fmt.Sprintf("子 Agent %s 已完成: %s", roleName, summary),
+		"ui_summary":       fmt.Sprintf("子 Agent %s 已完成: %s", roleName, summary),
 		"trace":            trace,
 	}
 	if strings.TrimSpace(goalID) != "" {
@@ -482,6 +482,9 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 func clipDelegateToolResult(raw string, max int) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err == nil {
+		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
+			return clipDelegateText(summary, max)
+		}
 		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
 			return clipDelegateText(summary, max)
 		}

@@ -20,6 +20,28 @@
         </div>
       </div>
     </div>
+    <div v-if="mode === 'preview' && reportHTML" class="edit-strip">
+      <template v-if="selectedBlockId">
+        <div class="edit-meta">
+          <span class="edit-label">当前选中</span>
+          <span class="edit-value">{{ selectedBlockLabel }}</span>
+        </div>
+        <textarea
+          v-model="regenerateInstruction"
+          class="edit-input"
+          rows="2"
+          placeholder="说明这段需要如何重写，例如：强调华东区增长放缓的原因，并保留图表引用。"
+          :disabled="isRunning"
+        ></textarea>
+        <div class="edit-actions">
+          <button class="toolbar-btn primary" :disabled="isRunning || !canRegenerate" @click="submitRegenerate">
+            重生成本段
+          </button>
+          <button class="toolbar-btn" :disabled="isRunning" @click="clearSelection">取消选择</button>
+        </div>
+      </template>
+      <p v-else class="edit-hint">点击报告中的任一章节块，即可对该段发起局部重生成。</p>
+    </div>
     <div class="preview-area">
       <div v-if="!reportHTML" class="empty-state">
         <div class="empty-icon">📊</div>
@@ -31,6 +53,7 @@
         :src="reportURL"
         class="report-iframe"
         sandbox="allow-scripts allow-same-origin"
+        @load="handleFrameLoad"
       ></iframe>
       <pre v-else class="source-code">{{ reportHTML }}</pre>
     </div>
@@ -40,15 +63,22 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useAgentStore } from '../../stores/agent.js'
+import { useWebSocket } from '../../composables/useWebSocket.js'
 
 const store = useAgentStore()
+const { sendMessage } = useWebSocket()
 const reportHTML = computed(() => store.reportHTML)
 const selectedRun = computed(() => store.runs.find(run => run.id === store.selectedRunId) || null)
 const activeRun = computed(() => store.runs.find(run => run.id === store.activeRunId) || null)
 const selectedReport = computed(() => selectedRun.value?.report || null)
+const isRunning = computed(() => store.isRunning)
 const reportURL = ref('')
 const reportFrame = ref(null)
 const showExportMenu = ref(false)
+const selectedBlockId = ref('')
+const selectedBlockLabel = ref('')
+const selectedBlockText = ref('')
+const regenerateInstruction = ref('')
 const runMetaLabel = computed(() => {
   if (selectedReport.value?.title) {
     const suffix = selectedReport.value.author ? ` · ${selectedReport.value.author}` : ''
@@ -73,9 +103,16 @@ watch(reportHTML, (html) => {
     reportURL.value = ''
   }
   showExportMenu.value = false
+  clearSelection()
   if (!html) return
   reportURL.value = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
 }, { immediate: true })
+
+watch(mode, (nextMode) => {
+  if (nextMode !== 'preview') {
+    clearSelection()
+  }
+})
 
 onBeforeUnmount(() => {
   if (reportURL.value) {
@@ -85,6 +122,98 @@ onBeforeUnmount(() => {
 
 function toggleExportMenu() {
   showExportMenu.value = !showExportMenu.value
+}
+
+const canRegenerate = computed(() => selectedBlockId.value && regenerateInstruction.value.trim())
+
+function clearSelection() {
+  selectedBlockId.value = ''
+  selectedBlockLabel.value = ''
+  selectedBlockText.value = ''
+  regenerateInstruction.value = ''
+  applySelectionHighlight('')
+}
+
+function handleFrameLoad() {
+  decorateFrameBlocks()
+  if (selectedBlockId.value) {
+    applySelectionHighlight(selectedBlockId.value)
+  }
+}
+
+function decorateFrameBlocks() {
+  const doc = reportFrame.value?.contentWindow?.document
+  if (!doc) return
+
+  ensureFrameStyles(doc)
+  doc.querySelectorAll('[data-block-id]').forEach((node) => {
+    if (node.dataset.codexBound === '1') return
+    node.dataset.codexBound = '1'
+    node.classList.add('report-block-selectable')
+    node.addEventListener('click', handleBlockClick)
+  })
+}
+
+function ensureFrameStyles(doc) {
+  if (doc.getElementById('report-block-selection-style')) return
+  const style = doc.createElement('style')
+  style.id = 'report-block-selection-style'
+  style.textContent = `
+    .report-block-selectable {
+      cursor: pointer;
+      transition: outline-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .report-block-selectable:hover {
+      outline: 2px solid rgba(37, 99, 235, 0.45);
+      outline-offset: 4px;
+    }
+    .report-block-selectable.report-block-selected {
+      outline: 3px solid #2563eb;
+      outline-offset: 4px;
+      box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.12);
+    }
+  `
+  doc.head.appendChild(style)
+}
+
+function handleBlockClick(event) {
+  event.preventDefault()
+  event.stopPropagation()
+  const block = event.currentTarget
+  const blockId = block?.dataset?.blockId || ''
+  if (!blockId) return
+  selectedBlockId.value = blockId
+  selectedBlockLabel.value = extractBlockLabel(block)
+  selectedBlockText.value = block.textContent?.trim() || ''
+  applySelectionHighlight(blockId)
+}
+
+function extractBlockLabel(block) {
+  const heading = block.querySelector('h1, h2, h3, h4, h5, h6')
+  const headingText = heading?.textContent?.trim()
+  return headingText || block.dataset.blockId || '未命名段落'
+}
+
+function applySelectionHighlight(blockId) {
+  const doc = reportFrame.value?.contentWindow?.document
+  if (!doc) return
+  doc.querySelectorAll('[data-block-id]').forEach((node) => {
+    node.classList.toggle('report-block-selected', node.dataset.blockId === blockId)
+  })
+}
+
+async function submitRegenerate() {
+  if (!canRegenerate.value) return
+  await sendMessage(regenerateInstruction.value.trim(), {
+    editContext: {
+      mode: 'regenerate_block',
+      targetRunId: selectedRun.value?.id || activeRun.value?.id || '',
+      blockId: selectedBlockId.value,
+      selectionText: selectedBlockText.value,
+      preserveOtherBlocks: true,
+    },
+  })
+  regenerateInstruction.value = ''
 }
 
 async function exportReport(format) {
@@ -436,6 +565,72 @@ function waitForFrameReady(frameDocument) {
   overflow: hidden;
   position: relative;
   background: var(--bg-secondary);
+}
+
+.edit-strip {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px 0;
+  flex-wrap: wrap;
+}
+
+.edit-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.edit-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.edit-value {
+  font-size: 0.84rem;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-input {
+  flex: 1;
+  min-width: 280px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  resize: vertical;
+  font: inherit;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar-btn.primary {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.toolbar-btn.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.edit-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
 }
 
 .empty-state {

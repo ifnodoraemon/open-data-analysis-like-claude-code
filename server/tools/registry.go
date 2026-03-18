@@ -32,13 +32,15 @@ type SubgoalChecker interface {
 
 // ToolContext 提供给工具初始化时的上下文依赖
 type ToolContext struct {
-	Ingester         *data.Ingester
-	ReportState      *ReportState
-	FileMaterializer FileMaterializer
-	Memory           any            // Type: *agent.WorkingMemory
-	Subgoals         SubgoalChecker // Instead of any, we use an interface to avoid circular imports
-	DelegateRegistry *Registry
-	EmitFunc         func(any) // Type: func(agent.WSEvent)
+	Ingester          *data.Ingester
+	ReportState       *ReportState
+	EditState         *ReportEditState
+	FileFactsProvider FileFactsProvider
+	FileMaterializer  FileMaterializer
+	Memory            any            // Type: *agent.WorkingMemory
+	Subgoals          SubgoalChecker // Instead of any, we use an interface to avoid circular imports
+	DelegateRegistry  *Registry
+	EmitFunc          func(any) // Type: func(agent.WSEvent)
 }
 
 // ToolBuilder 是负责动态创建有状态工具的函数

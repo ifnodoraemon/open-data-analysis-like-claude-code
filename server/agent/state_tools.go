@@ -27,6 +27,15 @@ func init() {
 		}
 		return &InspectReportStateTool{ReportState: ctx.ReportState}
 	})
+	tools.RegisterGlobalTool(func(ctx tools.ToolContext) tools.Tool {
+		if ctx.EditState == nil {
+			return nil
+		}
+		return &InspectReportEditStateTool{
+			EditState:   ctx.EditState,
+			ReportState: ctx.ReportState,
+		}
+	})
 }
 
 type InspectGoalsTool struct {
@@ -38,7 +47,7 @@ func (t *InspectGoalsTool) Name() string {
 }
 
 func (t *InspectGoalsTool) Description() string {
-	return "返回目标树的原始状态，包括目标数量、状态分布、活跃分支和目标清单。"
+	return "读取目标树的事实状态。返回目标数量、状态分布、活跃分支和目标清单；不修改任何状态。"
 }
 
 func (t *InspectGoalsTool) Parameters() json.RawMessage {
@@ -83,7 +92,7 @@ func (t *InspectGoalsTool) Execute(args json.RawMessage) (string, error) {
 	payload["can_finalize"] = canFinalize
 	payload["active_branches"] = blockers
 	payload["active_branch_count"] = len(blockers)
-	payload["summary_text"] = fmt.Sprintf("当前共有 %d 个目标，%d 条活跃分支。", len(goals), len(blockers))
+	payload["ui_summary"] = fmt.Sprintf("当前共有 %d 个目标，%d 条活跃分支。", len(goals), len(blockers))
 
 	return marshalToolPayload(payload)
 }
@@ -92,12 +101,17 @@ type InspectReportStateTool struct {
 	ReportState *tools.ReportState
 }
 
+type InspectReportEditStateTool struct {
+	EditState   *tools.ReportEditState
+	ReportState *tools.ReportState
+}
+
 func (t *InspectReportStateTool) Name() string {
 	return "state_report_inspect"
 }
 
 func (t *InspectReportStateTool) Description() string {
-	return "返回报告状态的原始事实，包括 block、chart、引用关系和完整性计数。"
+	return "读取当前报告状态的事实视图。返回 block、chart、引用关系和完整性计数；不修改任何状态。"
 }
 
 func (t *InspectReportStateTool) Parameters() json.RawMessage {
@@ -219,9 +233,60 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		"chart_blocks_missing_caption":  chartBlocksMissingCaption,
 		"text_block_count":              textBlockCount,
 		"text_blocks_without_chart":     textBlocksWithoutCharts,
-		"summary_text":                  fmt.Sprintf("当前报告共有 %d 个 block、%d 张图表。", len(t.ReportState.Blocks), len(chartIDs)),
+		"ui_summary":                    fmt.Sprintf("当前报告共有 %d 个 block、%d 张图表。", len(t.ReportState.Blocks), len(chartIDs)),
 	}
 	return marshalToolPayload(payload)
+}
+
+func (t *InspectReportEditStateTool) Name() string {
+	return "state_report_edit_inspect"
+}
+
+func (t *InspectReportEditStateTool) Description() string {
+	return "读取当前报告局部编辑范围的事实状态。返回目标 block、允许修改范围和关联图表；当用户请求修改已有报告的某一段时可调用。"
+}
+
+func (t *InspectReportEditStateTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{},"required":[]}`)
+}
+
+func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, error) {
+	if t.EditState == nil {
+		return "", fmt.Errorf("report edit state is not initialized")
+	}
+	payload := t.EditState.Snapshot()
+	if t.ReportState != nil && t.EditState.Active() {
+		if block, ok := findEditTargetBlock(t.ReportState, t.EditState.TargetBlockID); ok {
+			payload["target_block"] = map[string]interface{}{
+				"id":       block.ID,
+				"kind":     block.Kind,
+				"title":    block.Title,
+				"chart_id": block.ChartID,
+				"content":  block.Content,
+			}
+		}
+	}
+	payload["ok"] = true
+	payload["tool"] = "state_report_edit_inspect"
+	if active, _ := payload["active"].(bool); active {
+		payload["ui_summary"] = fmt.Sprintf("当前存在局部编辑范围，目标 block 为 %s。", t.EditState.TargetBlockID)
+	} else {
+		payload["ui_summary"] = "当前没有局部编辑范围。"
+	}
+	return marshalToolPayload(payload)
+}
+
+func findEditTargetBlock(state *tools.ReportState, blockID string) (tools.ReportBlock, bool) {
+	if state == nil {
+		return tools.ReportBlock{}, false
+	}
+	target := strings.TrimSpace(blockID)
+	for _, block := range state.Blocks {
+		if strings.TrimSpace(block.ID) == target {
+			return block, true
+		}
+	}
+	return tools.ReportBlock{}, false
 }
 
 func chartRefsInContent(content string) []string {

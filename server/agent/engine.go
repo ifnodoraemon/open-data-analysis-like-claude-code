@@ -119,17 +119,78 @@ func extractToolSummary(content string) string {
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
+		if summary := buildStructuredToolSummary(payload); summary != "" {
 			return summary
 		}
 		if result, ok := payload["result"].(string); ok && strings.TrimSpace(result) != "" {
 			return result
 		}
+		if message, ok := payload["message"].(string); ok && strings.TrimSpace(message) != "" {
+			return message
+		}
+		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
+			return summary
+		}
+		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
+			return summary
+		}
 		if tool, ok := payload["tool"].(string); ok {
-			return fmt.Sprintf("%s completed", tool)
+			return fmt.Sprintf("tool=%s", tool)
 		}
 	}
 	return trimmed
+}
+
+func buildStructuredToolSummary(payload map[string]interface{}) string {
+	parts := make([]string, 0, 8)
+	if tool, ok := payload["tool"].(string); ok && strings.TrimSpace(tool) != "" {
+		parts = append(parts, "tool="+strings.TrimSpace(tool))
+	}
+	if ok, exists := payload["ok"].(bool); exists {
+		parts = append(parts, fmt.Sprintf("ok=%t", ok))
+	}
+	for _, key := range []string{
+		"error_code",
+		"table_name",
+		"row_count",
+		"table_count",
+		"file_count",
+		"goal_count",
+		"active_branch_count",
+		"block_count",
+		"chart_count",
+		"target_block_id",
+		"child_run_id",
+		"delegate_role",
+		"report_title",
+	} {
+		if value, exists := payload[key]; exists {
+			if part := formatSummaryField(key, value); part != "" {
+				parts = append(parts, part)
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatSummaryField(key string, value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		typed = strings.TrimSpace(typed)
+		if typed == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s=%s", key, typed)
+	case bool:
+		return fmt.Sprintf("%s=%t", key, typed)
+	case float64:
+		if typed == float64(int64(typed)) {
+			return fmt.Sprintf("%s=%d", key, int64(typed))
+		}
+		return fmt.Sprintf("%s=%g", key, typed)
+	default:
+		return ""
+	}
 }
 
 func buildHistoryDigest(existing string, messages []openai.ChatCompletionMessage) string {
@@ -146,7 +207,7 @@ func buildHistoryDigest(existing string, messages []openai.ChatCompletionMessage
 		return ""
 	}
 	if len(lines) > maxDigestBulletCount {
-		lines = append(lines[:maxDigestBulletCount-1], "- 更早的执行细节已被压缩，请优先依赖工作记忆、目标状态和最近几轮工具结果继续推进。")
+		lines = append(lines[:maxDigestBulletCount-1], "- 更早的执行细节已被压缩。")
 	}
 	return historyDigestPrefix + "\n" + strings.Join(lines, "\n")
 }
@@ -498,25 +559,25 @@ func compactToolResult(toolName, result string) string {
 	case "data_query_sql":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-			minified, _ := json.Marshal(payload)
+			minified, _ := json.Marshal(stripHistorySummaryFields(payload))
 			return string(minified)
 		}
 	case "data_describe_table":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-			minified, _ := json.Marshal(payload)
+			minified, _ := json.Marshal(stripHistorySummaryFields(payload))
 			return string(minified)
 		}
 	case "code_run_python":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-			minified, _ := json.Marshal(payload)
+			minified, _ := json.Marshal(stripHistorySummaryFields(payload))
 			return string(minified)
 		}
 	case "data_list_tables":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-			minified, _ := json.Marshal(payload)
+			minified, _ := json.Marshal(stripHistorySummaryFields(payload))
 			return string(minified)
 		}
 		return strings.Join(strings.Fields(trimmed), " ")
@@ -531,7 +592,6 @@ func compactToolResult(toolName, result string) string {
 				"goal_id":          payload["goal_id"],
 				"allowed_tools":    payload["allowed_tools"],
 				"delegate_summary": payload["delegate_summary"],
-				"summary_text":     payload["summary_text"],
 				"trace_count":      traceCount(payload["trace"]),
 			})
 			return string(minified)
@@ -539,6 +599,20 @@ func compactToolResult(toolName, result string) string {
 	}
 
 	return result
+}
+
+func stripHistorySummaryFields(payload map[string]interface{}) map[string]interface{} {
+	if payload == nil {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(payload))
+	for key, value := range payload {
+		if key == "summary_text" || key == "ui_summary" {
+			continue
+		}
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func traceCount(value interface{}) int {

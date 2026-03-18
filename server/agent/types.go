@@ -32,7 +32,16 @@ const (
 
 // UserMessage 用户输入
 type UserMessage struct {
-	Content string `json:"content"`
+	Content     string             `json:"content"`
+	EditContext *ReportEditContext `json:"editContext,omitempty"`
+}
+
+type ReportEditContext struct {
+	Mode                string `json:"mode,omitempty"`
+	TargetRunID         string `json:"targetRunId,omitempty"`
+	BlockID             string `json:"blockId,omitempty"`
+	SelectionText       string `json:"selectionText,omitempty"`
+	PreserveOtherBlocks bool   `json:"preserveOtherBlocks,omitempty"`
 }
 
 type StopRunRequest struct {

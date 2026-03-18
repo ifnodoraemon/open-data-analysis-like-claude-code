@@ -179,6 +179,7 @@ function truncate(str, max) {
 function toolResultSummary(msg) {
   const payload = msg?.parsedResult
   if (!payload || typeof payload !== 'object') return ''
+  if (typeof payload.ui_summary === 'string' && payload.ui_summary.trim()) return payload.ui_summary
   if (typeof payload.summary_text === 'string' && payload.summary_text.trim()) return payload.summary_text
   if (typeof payload.delegate_summary === 'string' && payload.delegate_summary.trim()) return payload.delegate_summary
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message

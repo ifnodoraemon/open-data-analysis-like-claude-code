@@ -86,12 +86,34 @@ func TestCompactToolResult(t *testing.T) {
 	runPythonResult := `{
   "ok": false,
   "tool": "code_run_python",
+  "summary_text": "Python 执行失败 (12ms)",
   "error_code": "execution_failed",
   "detail": "NameError"
 }`
 	compactedPython := compactToolResult("code_run_python", runPythonResult)
 	if strings.Contains(compactedPython, "\n") {
 		t.Fatalf("expected minified code_run_python result, got %q", compactedPython)
+	}
+	if strings.Contains(compactedPython, "summary_text") {
+		t.Fatalf("expected compacted code_run_python result to drop summary_text, got %q", compactedPython)
+	}
+}
+
+func TestExtractToolSummaryPrefersStructuredFacts(t *testing.T) {
+	t.Parallel()
+
+	raw := `{
+  "ok": false,
+  "tool": "code_run_python",
+  "summary_text": "Python 执行失败 (12ms)",
+  "error_code": "execution_failed"
+}`
+	summary := extractToolSummary(raw)
+	if strings.Contains(summary, "Python 执行失败") {
+		t.Fatalf("expected structured summary instead of summary_text, got %q", summary)
+	}
+	if !strings.Contains(summary, "tool=code_run_python") || !strings.Contains(summary, "error_code=execution_failed") {
+		t.Fatalf("expected structured fields in summary, got %q", summary)
 	}
 }
 

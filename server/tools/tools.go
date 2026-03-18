@@ -16,6 +16,16 @@ type FileReference struct {
 	StoredPath  string `json:"storedPath"`
 }
 
+type SessionFileFact struct {
+	FileID          string      `json:"file_id"`
+	DisplayName     string      `json:"display_name"`
+	TableName       string      `json:"table_name,omitempty"`
+	SchemaSummary   interface{} `json:"schema_summary,omitempty"`
+	SchemaAvailable bool        `json:"schema_available"`
+}
+
+type FileFactsProvider func() ([]SessionFileFact, error)
+
 func init() {
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &LoadDataTool{
@@ -32,9 +42,19 @@ func init() {
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &QueryDataTool{Ingester: ctx.Ingester}
 	})
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		if ctx.FileFactsProvider == nil {
+			return nil
+		}
+		return &InspectSessionFilesTool{Provider: ctx.FileFactsProvider}
+	})
 }
 
 type FileMaterializer func(fileID string) (*FileReference, error)
+
+type InspectSessionFilesTool struct {
+	Provider FileFactsProvider
+}
 
 type ReportState struct {
 	Blocks      []ReportBlock `json:"blocks"`
@@ -61,6 +81,99 @@ type ReportLayout struct {
 	HideTOC         bool   `json:"hideToc,omitempty"`
 }
 
+type ReportEditState struct {
+	Mode                string              `json:"mode,omitempty"`
+	TargetRunID         string              `json:"targetRunId,omitempty"`
+	TargetBlockID       string              `json:"targetBlockId,omitempty"`
+	SelectionText       string              `json:"selectionText,omitempty"`
+	PreserveOtherBlocks bool                `json:"preserveOtherBlocks,omitempty"`
+	AllowedChartIDs     map[string]struct{} `json:"-"`
+}
+
+func (s *ReportEditState) Reset() {
+	if s == nil {
+		return
+	}
+	s.Mode = ""
+	s.TargetRunID = ""
+	s.TargetBlockID = ""
+	s.SelectionText = ""
+	s.PreserveOtherBlocks = false
+	s.AllowedChartIDs = nil
+}
+
+func (s *ReportEditState) Active() bool {
+	return s != nil && strings.TrimSpace(s.Mode) != ""
+}
+
+func (s *ReportEditState) RefreshFromReportState(state *ReportState) {
+	if s == nil {
+		return
+	}
+	s.AllowedChartIDs = collectEditableChartIDs(state, s.TargetBlockID)
+}
+
+func (s *ReportEditState) BlockMutationAllowed(action, blockID string) bool {
+	if !s.Active() || !s.PreserveOtherBlocks {
+		return true
+	}
+	target := strings.TrimSpace(s.TargetBlockID)
+	id := strings.TrimSpace(blockID)
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "upsert":
+		return target != "" && id == target
+	default:
+		return false
+	}
+}
+
+func (s *ReportEditState) ChartMutationAllowed(chartID string) bool {
+	if !s.Active() || !s.PreserveOtherBlocks {
+		return true
+	}
+	_, ok := s.AllowedChartIDs[strings.TrimSpace(chartID)]
+	return ok
+}
+
+func (s *ReportEditState) Snapshot() map[string]interface{} {
+	if s == nil {
+		return map[string]interface{}{}
+	}
+	charts := make([]string, 0, len(s.AllowedChartIDs))
+	for chartID := range s.AllowedChartIDs {
+		charts = append(charts, chartID)
+	}
+	sort.Strings(charts)
+	return map[string]interface{}{
+		"mode":                  s.Mode,
+		"target_run_id":         s.TargetRunID,
+		"target_block_id":       s.TargetBlockID,
+		"selection_text":        s.SelectionText,
+		"preserve_other_blocks": s.PreserveOtherBlocks,
+		"allowed_chart_ids":     charts,
+		"active":                s.Active(),
+	}
+}
+
+func collectEditableChartIDs(state *ReportState, blockID string) map[string]struct{} {
+	refs := make(map[string]struct{})
+	if state == nil || strings.TrimSpace(blockID) == "" {
+		return refs
+	}
+	index := findReportBlockIndex(state.Blocks, strings.TrimSpace(blockID))
+	if index < 0 {
+		return refs
+	}
+	block := state.Blocks[index]
+	if strings.TrimSpace(block.ChartID) != "" {
+		refs[strings.TrimSpace(block.ChartID)] = struct{}{}
+	}
+	for _, ref := range chartRefsOutsideChartBlock(block.Content) {
+		refs[ref] = struct{}{}
+	}
+	return refs
+}
+
 // LoadDataTool 加载数据文件到 SQLite
 type LoadDataTool struct {
 	Ingester         *data.Ingester
@@ -70,6 +183,30 @@ type LoadDataTool struct {
 func (t *LoadDataTool) Name() string { return "data_load_file" }
 func (t *LoadDataTool) Description() string {
 	return "加载用户上传的 CSV 或 Excel 文件到内部数据库，并返回表名、行数和列数。"
+}
+
+func (t *InspectSessionFilesTool) Name() string { return "state_session_files_inspect" }
+func (t *InspectSessionFilesTool) Description() string {
+	return "读取当前会话上传文件的事实状态。返回文件标识、文件名、推断表名和可用的 schema 摘要；不修改任何状态。当任务依赖已上传文件或需要确认可分析的数据对象时可调用。"
+}
+func (t *InspectSessionFilesTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{},"required":[]}`)
+}
+
+func (t *InspectSessionFilesTool) Execute(args json.RawMessage) (string, error) {
+	if t.Provider == nil {
+		return "", fmt.Errorf("file facts provider is not initialized")
+	}
+	files, err := t.Provider()
+	if err != nil {
+		return "", err
+	}
+	payload := map[string]interface{}{
+		"file_count": len(files),
+		"files":      files,
+		"ui_summary": fmt.Sprintf("当前会话共有 %d 个上传文件。", len(files)),
+	}
+	return toolSuccess("state_session_files_inspect", payload), nil
 }
 func (t *LoadDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -108,8 +245,7 @@ func (t *LoadDataTool) Execute(args json.RawMessage) (string, error) {
 		"table_name":   tableName,
 		"row_count":    rowCount,
 		"column_count": colCount,
-		"summary_text": fmt.Sprintf("数据已成功导入到表 %s（%d 行，%d 列）", tableName, rowCount, colCount),
-		"next_action":  fmt.Sprintf("先调用 data_describe_table 查看 %s 的结构，再按需使用 data_query_sql", tableName),
+		"ui_summary":   fmt.Sprintf("数据已成功导入到表 %s（%d 行，%d 列）", tableName, rowCount, colCount),
 	}), nil
 }
 
@@ -148,19 +284,18 @@ func (t *ListTablesTool) Execute(args json.RawMessage) (string, error) {
 
 	if len(tables) == 0 {
 		return toolSuccess("data_list_tables", map[string]interface{}{
-			"table_count":  0,
-			"tables":       []string{},
-			"empty":        true,
-			"next_action":  "先调用 data_load_file 导入文件，再继续 data_describe_table 或 data_query_sql",
-			"summary_text": "当前没有已导入的数据表",
+			"table_count": 0,
+			"tables":      []string{},
+			"empty":       true,
+			"ui_summary":  "当前没有已导入的数据表",
 		}), nil
 	}
 
 	return toolSuccess("data_list_tables", map[string]interface{}{
-		"table_count":  len(tables),
-		"tables":       tables,
-		"empty":        false,
-		"summary_text": fmt.Sprintf("已导入 %d 张表", len(tables)),
+		"table_count": len(tables),
+		"tables":      tables,
+		"empty":       false,
+		"ui_summary":  fmt.Sprintf("已导入 %d 张表", len(tables)),
 	}), nil
 }
 
@@ -199,9 +334,8 @@ func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
 	schema, err := data.ExtractSchema(db, params.TableName)
 	if err != nil {
 		return toolFailure("data_describe_table", "schema_lookup_failed", "读取表结构失败", map[string]interface{}{
-			"table_name":  params.TableName,
-			"detail":      err.Error(),
-			"next_action": "检查 table_name 是否正确，必要时先调用 data_list_tables",
+			"table_name": params.TableName,
+			"detail":     err.Error(),
 		}), nil
 	}
 
@@ -210,7 +344,7 @@ func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
 		"row_count":    schema.RowCount,
 		"column_count": len(schema.Columns),
 		"schema":       schema,
-		"summary_text": fmt.Sprintf("表 %s 已完成 schema 分析，共 %d 列、%d 行", schema.TableName, len(schema.Columns), schema.RowCount),
+		"ui_summary":   fmt.Sprintf("表 %s 已完成 schema 分析，共 %d 列、%d 行", schema.TableName, len(schema.Columns), schema.RowCount),
 	}), nil
 }
 
@@ -249,24 +383,23 @@ func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
 	rows, err := data.ExecuteQuery(db, params.SQL)
 	if err != nil {
 		return toolFailure("data_query_sql", "query_failed", "SQL 执行失败", map[string]interface{}{
-			"sql":         params.SQL,
-			"detail":      err.Error(),
-			"next_action": "根据错误信息修正 SQL，继续使用单条只读 SELECT/WITH",
+			"sql":    params.SQL,
+			"detail": err.Error(),
 		}), nil
 	}
 
 	return toolSuccess("data_query_sql", map[string]interface{}{
-		"sql":          params.SQL,
-		"row_count":    len(rows),
-		"columns":      queryResultColumns(rows),
-		"rows":         rows,
-		"summary_text": fmt.Sprintf("SQL 查询成功，返回 %d 行", len(rows)),
+		"sql":        params.SQL,
+		"row_count":  len(rows),
+		"columns":    queryResultColumns(rows),
+		"rows":       rows,
+		"ui_summary": fmt.Sprintf("SQL 查询成功，返回 %d 行", len(rows)),
 	}), nil
 }
 
 func init() {
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
-		return &ManageReportBlocksTool{ReportState: ctx.ReportState}
+		return &ManageReportBlocksTool{ReportState: ctx.ReportState, EditState: ctx.EditState}
 	})
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &ConfigureReportTool{ReportState: ctx.ReportState}
@@ -285,17 +418,18 @@ type ConfigureReportTool struct {
 
 type ManageReportBlocksTool struct {
 	ReportState *ReportState
+	EditState   *ReportEditState
 }
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
 func (t *ConfigureReportTool) Description() string {
-	return "配置报告布局和页面外壳。支持更新或重置 layout 配置。"
+	return "读取并修改报告布局配置。可用于更新或重置 HTML 壳、CSS、JS 和封面/目录显示选项；会修改 report layout 状态，但不会直接修改 block 或 chart。"
 }
 func (t *ConfigureReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"action": {"type": "string", "enum": ["merge", "reset"], "description": "merge（默认，更新布局配置）或 reset（恢复默认模板）"},
+			"action": {"type": "string", "enum": ["merge", "reset"], "description": "merge（默认）或 reset。"},
 			"custom_html_shell": {"type": "string", "description": "可选。完整 HTML 壳子模板，支持 {{title}} {{author}} {{date}} {{toc}} {{content}} {{chart_scripts}} {{custom_css}} {{custom_js}} {{body_class}} 占位符。"},
 			"custom_css": {"type": "string", "description": "追加到页面中的自定义 CSS。"},
 			"custom_js": {"type": "string", "description": "追加到页面底部的自定义 JS。"},
@@ -332,8 +466,8 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 	case "reset":
 		t.ReportState.Layout = ReportLayout{}
 		return toolSuccess("report_configure_layout", map[string]interface{}{
-			"action":       action,
-			"summary_text": "已恢复默认报告模板",
+			"action":     action,
+			"ui_summary": "已恢复默认报告模板",
 		}), nil
 	case "merge":
 		if params.CustomHTMLShell != "" {
@@ -362,7 +496,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 			"body_class":       t.ReportState.Layout.BodyClass,
 			"hide_cover":       t.ReportState.Layout.HideCover,
 			"hide_toc":         t.ReportState.Layout.HideTOC,
-			"summary_text":     "已更新报告布局配置",
+			"ui_summary":       "已更新报告布局配置",
 		}), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
@@ -371,7 +505,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
 func (t *ManageReportBlocksTool) Description() string {
-	return "创建、更新、删除或重排报告 block。支持 title、markdown、html 和 chart 四类 block；markdown block 的 title 会作为章节标题渲染，chart block 的 content 会作为图下说明渲染。"
+	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 title、markdown、html、chart 四类 block；会直接修改报告内容结构。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
 }
 func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -380,8 +514,8 @@ func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 			"action": {"type": "string", "enum": ["append", "upsert", "remove", "move"], "description": "append（默认）、upsert、remove、move"},
 			"block_id": {"type": "string", "description": "block 稳定 ID。upsert/remove/move 必填；append 可选，不填则自动生成。"},
 			"block_kind": {"type": "string", "enum": ["title", "markdown", "html", "chart"], "description": "block 类型。"},
-			"title": {"type": "string", "description": "可选标题，用于目录和区块展示。markdown block 通常不需要在 content 里重复相同标题。"},
-			"content": {"type": "string", "description": "markdown/html block 内容；chart block 时会渲染为图下说明。"},
+			"title": {"type": "string", "description": "标题。"},
+			"content": {"type": "string", "description": "block 内容。chart block 时作为图下说明。"},
 			"chart_id": {"type": "string", "description": "chart block 引用的图表 ID。"},
 			"before_block_id": {"type": "string", "description": "插入到某个 block 之前。"},
 			"after_block_id": {"type": "string", "description": "插入到某个 block 之后。"}
@@ -426,6 +560,13 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if t.EditState != nil && !t.EditState.BlockMutationAllowed(action, block.ID) {
+			return toolFailure("report_manage_blocks", "edit_scope_violation", "当前编辑范围不允许修改该 block", map[string]interface{}{
+				"action":     action,
+				"block_id":   block.ID,
+				"ui_summary": fmt.Sprintf("block %s 不在当前局部编辑范围内", block.ID),
+			}), nil
+		}
 		existingIndex := findReportBlockIndex(t.ReportState.Blocks, block.ID)
 		insertHintIndex := -1
 		summaryText := fmt.Sprintf("已添加 block [%s] %s", block.Kind, block.ID)
@@ -445,13 +586,20 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		}
 		t.ReportState.Blocks = insertReportBlockAt(t.ReportState.Blocks, block, insertAt)
 		return toolSuccess("report_manage_blocks", map[string]interface{}{
-			"action":       action,
-			"block_id":     block.ID,
-			"block_kind":   block.Kind,
-			"block_count":  len(t.ReportState.Blocks),
-			"summary_text": summaryText,
+			"action":      action,
+			"block_id":    block.ID,
+			"block_kind":  block.Kind,
+			"block_count": len(t.ReportState.Blocks),
+			"ui_summary":  summaryText,
 		}), nil
 	case "remove":
+		if t.EditState != nil && !t.EditState.BlockMutationAllowed(action, blockID) {
+			return toolFailure("report_manage_blocks", "edit_scope_violation", "当前编辑范围不允许删除该 block", map[string]interface{}{
+				"action":     action,
+				"block_id":   blockID,
+				"ui_summary": fmt.Sprintf("block %s 不在当前局部编辑范围内", blockID),
+			}), nil
+		}
 		index := findReportBlockIndex(t.ReportState.Blocks, blockID)
 		if index < 0 {
 			return "", fmt.Errorf("block_id %s not found", blockID)
@@ -459,12 +607,19 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		removed := t.ReportState.Blocks[index]
 		t.ReportState.Blocks = append(t.ReportState.Blocks[:index], t.ReportState.Blocks[index+1:]...)
 		return toolSuccess("report_manage_blocks", map[string]interface{}{
-			"action":       action,
-			"block_id":     blockID,
-			"block_count":  len(t.ReportState.Blocks),
-			"summary_text": fmt.Sprintf("已删除 block [%s] %s", removed.Kind, removed.ID),
+			"action":      action,
+			"block_id":    blockID,
+			"block_count": len(t.ReportState.Blocks),
+			"ui_summary":  fmt.Sprintf("已删除 block [%s] %s", removed.Kind, removed.ID),
 		}), nil
 	case "move":
+		if t.EditState != nil && !t.EditState.BlockMutationAllowed(action, blockID) {
+			return toolFailure("report_manage_blocks", "edit_scope_violation", "当前编辑范围不允许重排该 block", map[string]interface{}{
+				"action":     action,
+				"block_id":   blockID,
+				"ui_summary": fmt.Sprintf("block %s 不在当前局部编辑范围内", blockID),
+			}), nil
+		}
 		index := findReportBlockIndex(t.ReportState.Blocks, blockID)
 		if index < 0 {
 			return "", fmt.Errorf("block_id %s not found", blockID)
@@ -478,10 +633,10 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		}
 		t.ReportState.Blocks = insertReportBlockAt(blocks, block, insertAt)
 		return toolSuccess("report_manage_blocks", map[string]interface{}{
-			"action":       action,
-			"block_id":     blockID,
-			"block_count":  len(t.ReportState.Blocks),
-			"summary_text": fmt.Sprintf("已重排 block [%s] %s", block.Kind, block.ID),
+			"action":      action,
+			"block_id":    blockID,
+			"block_count": len(t.ReportState.Blocks),
+			"ui_summary":  fmt.Sprintf("已重排 block [%s] %s", block.Kind, block.ID),
 		}), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
@@ -582,16 +737,28 @@ func insertReportBlockAt(blocks []ReportBlock, block ReportBlock, index int) []R
 }
 
 func referencedChartsOutsideChartBlocks(blocks []ReportBlock) map[string]struct{} {
-	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
 	refs := make(map[string]struct{})
 	for _, block := range blocks {
 		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") {
 			continue
 		}
-		for _, match := range re.FindAllStringSubmatch(block.Content, -1) {
-			if len(match) > 1 {
-				refs[match[1]] = struct{}{}
-			}
+		for _, ref := range chartRefsOutsideChartBlock(block.Content) {
+			refs[ref] = struct{}{}
+		}
+	}
+	return refs
+}
+
+func chartRefsOutsideChartBlock(content string) []string {
+	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
+	matches := re.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	refs := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) > 1 && strings.TrimSpace(match[1]) != "" {
+			refs = append(refs, strings.TrimSpace(match[1]))
 		}
 	}
 	return refs
@@ -714,7 +881,7 @@ type FinalizeReportTool struct {
 
 func (t *FinalizeReportTool) Name() string { return "report_finalize" }
 func (t *FinalizeReportTool) Description() string {
-	return "生成最终报告。调用前要求报告状态结构有效，且不存在未闭环的根目标。"
+	return "将当前 report state 标记为最终报告并写入最终标题/作者。调用时会校验报告结构和未闭环目标；如果状态不合法会拒绝执行。该工具不负责补全缺失内容，只负责在当前状态可落地时完成收尾。"
 }
 func (t *FinalizeReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -742,7 +909,7 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	if t.Subgoals != nil {
 		canFinalize, blockers := t.Subgoals.CanFinalize()
 		if !canFinalize {
-			return "", fmt.Errorf("Action Denied: 当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。请优先完成或放弃这些分支后再收尾：%s", strings.Join(blockers, " | "))
+			return "", fmt.Errorf("Action Denied: 当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。active branches: %s", strings.Join(blockers, " | "))
 		}
 	}
 	if issues := reportFinalizeIssues(t.ReportState); len(issues) > 0 {
@@ -759,6 +926,6 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		"author":       params.Author,
 		"block_count":  blockCount,
 		"chart_count":  chartCount,
-		"summary_text": fmt.Sprintf("研究报告已生成完成（%d 个内容块，%d 个交互式图表）", blockCount, chartCount),
+		"ui_summary":   fmt.Sprintf("研究报告已生成完成（%d 个内容块，%d 个交互式图表）", blockCount, chartCount),
 	}), nil
 }

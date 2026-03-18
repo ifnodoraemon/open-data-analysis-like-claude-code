@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
 	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/data"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 	"github.com/ifnodoraemon/openDataAnalysis/service"
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
@@ -23,6 +25,10 @@ type RunState struct {
 	Status    string
 	Cancel    context.CancelFunc
 	StartedAt time.Time
+}
+
+type ReportSnapshotLoader interface {
+	LoadReportSnapshot(ctx context.Context, sessionID, workspaceID, userID, runID string) (*domain.ReportSnapshot, error)
 }
 
 type Session struct {
@@ -35,6 +41,7 @@ type Session struct {
 	Registry     *tools.Registry
 	Engine       *agent.Engine
 	ReportState  *tools.ReportState
+	EditState    *tools.ReportEditState
 	FinalizeTool *tools.FinalizeReportTool
 	Memory       *agent.WorkingMemory
 	Subgoals     *agent.SubgoalManager
@@ -61,6 +68,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		FileService: fileService,
 		Ingester:    ingester,
 		ReportState: &tools.ReportState{},
+		EditState:   &tools.ReportEditState{},
 		Memory:      memory,
 		Subgoals:    subgoals,
 		CreatedAt:   time.Now(),
@@ -68,10 +76,12 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	}
 
 	ctx := tools.ToolContext{
-		Ingester:    s.Ingester,
-		ReportState: s.ReportState,
-		Memory:      memory,
-		Subgoals:    subgoals,
+		Ingester:          s.Ingester,
+		ReportState:       s.ReportState,
+		EditState:         s.EditState,
+		FileFactsProvider: s.BuildFileFacts,
+		Memory:            memory,
+		Subgoals:          subgoals,
 		FileMaterializer: func(fileID string) (*tools.FileReference, error) {
 			tempPath, file, err := s.FileService.MaterializeToTemp(context.Background(), fileID)
 			if err != nil {
@@ -91,6 +101,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	// 主控和子 Agent 使用同一套工具语义；子 Agent 只是按本次任务裁剪过工具边界的递归实例。
 	plannerAllowed := []string{
 		"data_load_file",
+		"state_session_files_inspect",
 		"data_list_tables",
 		"data_describe_table",
 		"data_query_sql",
@@ -102,6 +113,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		"state_memory_inspect",
 		"state_goal_inspect",
 		"state_report_inspect",
+		"state_report_edit_inspect",
 		"goal_manage",
 		"user_request_input",
 		"task_delegate",
@@ -160,32 +172,37 @@ func (s *Session) FilesForClient() []agent.UploadedFile {
 	return clientFiles
 }
 
-func (s *Session) BuildFileContext() string {
+func (s *Session) BuildFileFacts() ([]tools.SessionFileFact, error) {
 	files, err := s.FileService.GetSessionFiles(context.Background(), s.ID)
-	if err != nil || len(files) == 0 {
-		return ""
+	if err != nil {
+		return nil, err
 	}
-
-	lines := "当前会话已上传文件与数据语义概况:\n"
+	facts := make([]tools.SessionFileFact, 0, len(files))
 	for _, file := range files {
-		lines += fmt.Sprintf("=== 文件: %s (ID: %s) ===\n", file.DisplayName, file.ID)
-
-		// 尝试从 Ingester 获取该文件（表名）的预分析语义摘要
+		fact := tools.SessionFileFact{
+			FileID:      file.ID,
+			DisplayName: file.DisplayName,
+		}
 		tableName := strings.TrimSuffix(file.DisplayName, filepath.Ext(file.DisplayName))
 		tableName = sanitizeTableName(tableName)
-
-		if s.Ingester != nil {
+		if tableName != "" {
+			fact.TableName = tableName
+		}
+		if s.Ingester != nil && tableName != "" {
 			schemaJSON, metaErr := s.Ingester.GetTableMetadata(tableName)
-			if metaErr == nil {
-				lines += fmt.Sprintf("AI 语义分析结果:\n%s\n", schemaJSON)
-			} else {
-				lines += "语义分析结果: 尚未生成或读取失败\n"
+			if metaErr == nil && strings.TrimSpace(schemaJSON) != "" {
+				fact.SchemaAvailable = true
+				var schemaPayload interface{}
+				if err := json.Unmarshal([]byte(schemaJSON), &schemaPayload); err == nil {
+					fact.SchemaSummary = schemaPayload
+				} else {
+					fact.SchemaSummary = schemaJSON
+				}
 			}
 		}
-		lines += "\n"
+		facts = append(facts, fact)
 	}
-
-	return lines
+	return facts, nil
 }
 
 // sanitizeTableName 保持与 Ingester 中相同的逻辑以便匹配表名
@@ -223,6 +240,9 @@ func (s *Session) FinishRun(runID, status string) {
 		s.ActiveRun.Status = status
 		s.ActiveRun.Cancel = nil
 		s.ActiveRun = nil
+	}
+	if s.EditState != nil {
+		s.EditState.Reset()
 	}
 	s.LastSeenAt = time.Now()
 }
@@ -272,6 +292,87 @@ func (s *Session) CancelRun(runID string) bool {
 	return true
 }
 
+func (s *Session) ConfigureEditState(edit *agent.ReportEditContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.EditState == nil {
+		s.EditState = &tools.ReportEditState{}
+	}
+	if edit == nil {
+		s.EditState.Reset()
+		return
+	}
+	s.EditState.Mode = strings.TrimSpace(edit.Mode)
+	s.EditState.TargetRunID = strings.TrimSpace(edit.TargetRunID)
+	s.EditState.TargetBlockID = strings.TrimSpace(edit.BlockID)
+	s.EditState.SelectionText = strings.TrimSpace(edit.SelectionText)
+	s.EditState.PreserveOtherBlocks = edit.PreserveOtherBlocks
+	s.EditState.RefreshFromReportState(s.ReportState)
+}
+
+func (s *Session) ClearEditState() {
+	s.ConfigureEditState(nil)
+}
+
+func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if snapshot == nil {
+		return
+	}
+	s.ReportState.FinalTitle = strings.TrimSpace(snapshot.Title)
+	s.ReportState.FinalAuthor = strings.TrimSpace(snapshot.Author)
+	s.ReportState.Layout = tools.ReportLayout{
+		CustomHTMLShell: snapshot.Layout.CustomHTMLShell,
+		CustomCSS:       snapshot.Layout.CustomCSS,
+		CustomJS:        snapshot.Layout.CustomJS,
+		BodyClass:       snapshot.Layout.BodyClass,
+		HideCover:       snapshot.Layout.HideCover,
+		HideTOC:         snapshot.Layout.HideTOC,
+	}
+	s.ReportState.Blocks = make([]tools.ReportBlock, 0, len(snapshot.Blocks))
+	for _, block := range snapshot.Blocks {
+		s.ReportState.Blocks = append(s.ReportState.Blocks, tools.ReportBlock{
+			ID:      block.ID,
+			Kind:    block.Kind,
+			Title:   block.Title,
+			Content: block.Content,
+			ChartID: block.ChartID,
+		})
+	}
+	s.ReportState.Charts = make([]tools.ChartData, 0, len(snapshot.Charts))
+	for _, chart := range snapshot.Charts {
+		s.ReportState.Charts = append(s.ReportState.Charts, tools.ChartData{
+			ID:     chart.ID,
+			Option: chart.Option,
+			Width:  chart.Width,
+			Height: chart.Height,
+		})
+	}
+	if s.EditState != nil {
+		s.EditState.RefreshFromReportState(s.ReportState)
+	}
+}
+
+func (s *Session) PrepareUserRun(ctx context.Context, userMsg agent.UserMessage, loader ReportSnapshotLoader) error {
+	var snapshot *domain.ReportSnapshot
+	if userMsg.EditContext != nil && strings.TrimSpace(userMsg.EditContext.TargetRunID) != "" {
+		if loader == nil {
+			return fmt.Errorf("缺少报告快照加载器")
+		}
+		loaded, err := loader.LoadReportSnapshot(ctx, s.ID, s.WorkspaceID, s.UserID, strings.TrimSpace(userMsg.EditContext.TargetRunID))
+		if err != nil {
+			return err
+		}
+		snapshot = loaded
+	}
+	if snapshot != nil {
+		s.LoadReportSnapshot(snapshot)
+	}
+	s.ConfigureEditState(userMsg.EditContext)
+	return nil
+}
+
 func (s *Session) Reset(keepFiles bool) error {
 	s.CancelRun("")
 	s.Engine.ResetMessages()
@@ -288,6 +389,9 @@ func (s *Session) Reset(keepFiles bool) error {
 	s.ReportState.FinalTitle = ""
 	s.ReportState.FinalAuthor = ""
 	s.ReportState.Layout = tools.ReportLayout{}
+	if s.EditState != nil {
+		s.EditState.Reset()
+	}
 	s.LastSeenAt = time.Now()
 	s.mu.Unlock()
 

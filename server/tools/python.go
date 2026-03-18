@@ -32,7 +32,7 @@ func (t *RunPythonTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"code": {"type": "string", "description": "要执行的 Python 代码"},
+			"code": {"type": "string", "description": "Python 代码。"},
 			"timeout": {"type": "integer", "description": "超时时间（秒），默认 30", "default": 30}
 		},
 		"required": ["code"]
@@ -123,7 +123,7 @@ func formatPythonResult(result pyExecResponse) string {
 		"files":       result.Files,
 	}
 	if result.Success {
-		payload["summary_text"] = fmt.Sprintf("Python 执行成功 (%dms)", result.DurationMs)
+		payload["ui_summary"] = fmt.Sprintf("Python 执行成功 (%dms)", result.DurationMs)
 		return toolSuccess("code_run_python", payload)
 	}
 
@@ -135,7 +135,6 @@ func formatPythonResult(result pyExecResponse) string {
 		errorText = strings.TrimSpace(result.Stderr)
 	}
 	payload["detail"] = errorText
-	payload["summary_text"] = fmt.Sprintf("Python 执行失败 (%dms)", result.DurationMs)
-	payload["next_action"] = "根据错误信息修正代码后再次调用 code_run_python"
+	payload["ui_summary"] = fmt.Sprintf("Python 执行失败 (%dms)", result.DurationMs)
 	return toolFailure("code_run_python", "execution_failed", "Python 执行失败", payload)
 }

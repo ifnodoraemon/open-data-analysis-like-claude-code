@@ -45,7 +45,7 @@ func (t *SaveMemoryTool) Name() string {
 }
 
 func (t *SaveMemoryTool) Description() string {
-	return "保存一个事实到工作记忆中。相同 key 会覆盖旧值。"
+	return "写入一条工作记忆事实。相同 key 会覆盖旧值；此工具会修改 working memory 状态，但不会直接修改报告、目标树或数据。"
 }
 
 func (t *SaveMemoryTool) Parameters() json.RawMessage {
@@ -54,11 +54,11 @@ func (t *SaveMemoryTool) Parameters() json.RawMessage {
 		"properties": {
 			"key": {
 				"type": "string",
-				"description": "记忆的简短标识键，例如 'roi_definition', 'user_table_pk'。如果使用相同的 key 再次写入，将会覆盖原来的值。"
+				"description": "记忆的标识键，例如 'roi_definition', 'user_table_pk'。重复写入同一 key 会覆盖旧值。"
 			},
 			"fact": {
 				"type": "string",
-				"description": "你需要记住的具体事实或结论。请尽可能详细、准确且结论性地描述。"
+				"description": "要写入的事实或结论。"
 			}
 		},
 		"required": ["key", "fact"]
@@ -89,7 +89,7 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 			Data: MemoryUpdatedData{Facts: t.Memory.Snapshot()},
 		})
 	}
-	return fmt.Sprintf("已成功将工作记忆保存: [%s] = %s", payload.Key, payload.Fact), nil
+	return fmt.Sprintf("工作记忆已更新: [%s]", payload.Key), nil
 }
 
 func (t *SaveMemoryTool) SetEventEmitter(emit func(WSEvent)) {
@@ -101,7 +101,7 @@ func (t *InspectMemoryTool) Name() string {
 }
 
 func (t *InspectMemoryTool) Description() string {
-	return "返回工作记忆中的原始事实，包括 key/value 和数量。"
+	return "读取工作记忆中的事实状态。返回 key/value 和数量；不修改任何状态。"
 }
 
 func (t *InspectMemoryTool) Parameters() json.RawMessage {
@@ -114,11 +114,11 @@ func (t *InspectMemoryTool) Execute(args json.RawMessage) (string, error) {
 	}
 	facts := t.Memory.Snapshot()
 	payload := map[string]interface{}{
-		"ok":           true,
-		"tool":         "state_memory_inspect",
-		"fact_count":   len(facts),
-		"facts":        facts,
-		"summary_text": fmt.Sprintf("当前工作记忆共有 %d 条事实。", len(facts)),
+		"ok":         true,
+		"tool":       "state_memory_inspect",
+		"fact_count": len(facts),
+		"facts":      facts,
+		"ui_summary": fmt.Sprintf("当前工作记忆共有 %d 条事实。", len(facts)),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -135,7 +135,7 @@ func (t *AskUserTool) Name() string {
 }
 
 func (t *AskUserTool) Description() string {
-	return "向用户请求补充信息或确认。调用后当前执行会暂停。"
+	return "向用户请求补充信息或确认。调用后当前执行会暂停，直到收到用户回复；该工具不返回问题答案本身。"
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {
@@ -144,12 +144,12 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 		"properties": {
 			"question": {
 				"type": "string",
-				"description": "具体的问题。例如：'请问本次分析的统计范围是否包含已退款订单？'"
+				"description": "问题文本。"
 			},
 			"options": {
 				"type": "array",
 				"items": {"type": "string"},
-				"description": "可选方案。如果问题是单选性质，可提供候选菜单供用户快速点击，例如 ['包含已退款', '只计算成功交易']。"
+				"description": "可选项列表。"
 			}
 		},
 		"required": ["question"]

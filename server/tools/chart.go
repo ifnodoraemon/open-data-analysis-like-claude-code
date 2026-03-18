@@ -16,7 +16,7 @@ type ChartData struct {
 
 func init() {
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
-		return &CreateChartTool{ReportState: ctx.ReportState}
+		return &CreateChartTool{ReportState: ctx.ReportState, EditState: ctx.EditState}
 	})
 }
 
@@ -53,6 +53,7 @@ type chartValueInput struct {
 // CreateChartTool 创建 ECharts 图表
 type CreateChartTool struct {
 	ReportState *ReportState
+	EditState   *ReportEditState
 }
 
 func (t *CreateChartTool) Name() string { return "report_create_chart" }
@@ -60,7 +61,7 @@ func (t *CreateChartTool) Name() string { return "report_create_chart" }
 func (t *CreateChartTool) Strict() bool { return true }
 
 func (t *CreateChartTool) Description() string {
-	return "创建一个 ECharts 图表。支持简化 DSL 或直接传入原生 option，并返回可在报告中引用的 chart_id。"
+	return "创建或更新一个 ECharts 图表。支持简化 DSL 或原生 option，返回 chart_id 与引用标记；会修改 report chart 状态，但不会自动创建或更新正文 block。在局部编辑范围存在时，只允许修改被授权的 chart_id。"
 }
 
 func (t *CreateChartTool) Parameters() json.RawMessage {
@@ -70,8 +71,8 @@ func (t *CreateChartTool) Parameters() json.RawMessage {
 		"properties": {
 			"chart_id": {"type": "string", "description": "图表唯一标识，如 chart_sales_trend"},
 			"title": {"type": "string", "description": "图表标题"},
-			"option": {"type": "object", "description": "可选。直接传入原生 ECharts option。传了 option 时，后端不再按 DSL 推导。"},
-			"chart_type": {"type": "string", "enum": ["bar", "line", "pie"], "description": "优先使用的图表类型"},
+			"option": {"type": "object", "description": "可选。原生 ECharts option；存在时不再按 DSL 推导。"},
+			"chart_type": {"type": "string", "enum": ["bar", "line", "pie"], "description": "图表类型。"},
 			"categories": {"type": "array", "description": "柱状图/折线图的类目轴标签", "items": {"type": "string"}},
 			"series": {
 				"type": "array",
@@ -127,7 +128,7 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 	} else {
 		option, err = buildOptionFromDSL(params)
 		if err != nil {
-			return chartValidationFeedback("invalid_chart_spec", params.ChartID, params.Title, "请按 DSL 传入图表定义，或直接提供 option", err.Error()), nil
+			return chartValidationFeedback("invalid_chart_spec", params.ChartID, params.Title, "图表定义无效", err.Error()), nil
 		}
 	}
 
@@ -138,13 +139,30 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		Height: "400px",
 	}
 
-	t.ReportState.Charts = append(t.ReportState.Charts, chart)
+	if t.EditState != nil && !t.EditState.ChartMutationAllowed(params.ChartID) {
+		return toolFailure("report_create_chart", "edit_scope_violation", "当前编辑范围不允许修改该图表", map[string]interface{}{
+			"chart_id":   params.ChartID,
+			"ui_summary": fmt.Sprintf("图表 %s 超出当前局部编辑范围", params.ChartID),
+		}), nil
+	}
+
+	replaced := false
+	for i := range t.ReportState.Charts {
+		if strings.TrimSpace(t.ReportState.Charts[i].ID) == params.ChartID {
+			t.ReportState.Charts[i] = chart
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		t.ReportState.Charts = append(t.ReportState.Charts, chart)
+	}
 
 	return toolSuccess("report_create_chart", map[string]interface{}{
-		"chart_id":     params.ChartID,
-		"title":        params.Title,
-		"chart_ref":    "{{chart:" + params.ChartID + "}}",
-		"summary_text": fmt.Sprintf("图表 %s 已创建成功", params.ChartID),
+		"chart_id":   params.ChartID,
+		"title":      params.Title,
+		"chart_ref":  "{{chart:" + params.ChartID + "}}",
+		"ui_summary": fmt.Sprintf("图表 %s 已%s成功", params.ChartID, map[bool]string{true: "更新", false: "创建"}[replaced]),
 	}), nil
 }
 
@@ -361,6 +379,5 @@ func chartValidationFeedback(code, chartID, title, message, detail string) strin
 		"chart_type + categories + series",
 		"chart_type=pie + values",
 	}
-	payload["next_action"] = "按 DSL 重新调用 report_create_chart"
 	return toolFailure("report_create_chart", code, message, payload)
 }

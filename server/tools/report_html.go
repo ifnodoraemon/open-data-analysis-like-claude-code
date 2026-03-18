@@ -32,7 +32,6 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	var tocHTML strings.Builder
 	var bodyHTML strings.Builder
 	chapterNum := 0
-	referencedCharts := collectReferencedCharts(blocks)
 
 	for _, block := range blocks {
 		if isTitleBlock(block) {
@@ -41,9 +40,6 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		chapterNum++
 		tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, blockDisplayTitle(block, chapterNum)))
 		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts))
-	}
-	if appendixHTML := buildChartAppendix(state.Charts, referencedCharts, &chapterNum, &tocHTML); appendixHTML != "" {
-		bodyHTML.WriteString(appendixHTML)
 	}
 
 	chartScripts := buildChartScripts(state.Charts)
@@ -577,10 +573,10 @@ func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartDa
 		heading = title
 	}
 	return fmt.Sprintf(`
-		<div class="%s" id="section-%d" data-block-id="%s">
+		<div class="%s" id="section-%d" data-block-id="%s" data-block-kind="%s">
 			<h2>%s</h2>
 			<div class="%s">%s</div>
-		</div>`, strings.Join(preset.classes, " "), chapterNum, block.ID, heading, preset.bodyClass, processContent(block.Content, charts))
+		</div>`, strings.Join(preset.classes, " "), chapterNum, block.ID, strings.ToLower(strings.TrimSpace(block.Kind)), heading, preset.bodyClass, processContent(block.Content, charts))
 }
 
 func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
@@ -610,7 +606,7 @@ func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
 func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData) string {
 	title := blockDisplayTitle(block, chapterNum)
 	return fmt.Sprintf(`
-		<div class="section html-block" id="section-%d" data-block-id="%s">
+		<div class="section html-block" id="section-%d" data-block-id="%s" data-block-kind="html">
 			<h2>%d. %s</h2>
 			<div class="content">%s</div>
 		</div>`, chapterNum, block.ID, chapterNum, title, block.Content)
@@ -623,34 +619,10 @@ func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData)
 		content += "\n\n" + block.Content
 	}
 	return fmt.Sprintf(`
-		<div class="section chart-block" id="section-%d" data-block-id="%s">
+		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart" data-chart-id="%s">
 			<h2>%d. %s</h2>
 			<div class="content">%s</div>
-		</div>`, chapterNum, block.ID, chapterNum, title, processContent(content, charts))
-}
-
-func buildChartAppendix(charts []ChartData, referenced map[string]struct{}, chapterNum *int, tocHTML *strings.Builder) string {
-	var missing []string
-	for _, ch := range charts {
-		if _, ok := referenced[ch.ID]; ok {
-			continue
-		}
-		missing = append(missing, fmt.Sprintf("{{chart:%s}}", ch.ID))
-	}
-	if len(missing) == 0 {
-		return ""
-	}
-
-	*chapterNum = *chapterNum + 1
-	tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, *chapterNum, "图表附录"))
-	return fmt.Sprintf(`
-		<div class="section" id="section-%d">
-			<h2>%d. %s</h2>
-			<div class="content">
-				<p>以下图表已经生成，但正文尚未引用，系统已自动补入附录以避免遗漏。</p>
-				%s
-			</div>
-		</div>`, *chapterNum, *chapterNum, "图表附录", processContent(strings.Join(missing, "\n\n"), charts))
+		</div>`, chapterNum, block.ID, block.ChartID, chapterNum, title, processContent(content, charts))
 }
 
 // processContent 处理内容：Markdown 转 HTML + 替换图表占位符
