@@ -642,3 +642,44 @@
 - [ ] 是否生成了合适的图表
 - [ ] 是否存在明显幻觉 / 错误归因 / 乱连表
 - [ ] 是否需要补充新的测试场景
+
+---
+
+# delegate_partial_recovery
+
+- 目录: `samples/coverage_scenarios/18_delegate_partial_recovery`
+- 行业: `marketing`
+- 任务跨度: `medium`
+- 提问: 请先自行加载并识别这两张表，然后做一次“子代理局部视角恢复”验证：调用 `task_delegate`，`role_name` 用 `single_table_probe`，`allowed_tools` 严格设为 `["data_list_tables","data_describe_table"]`，`task_instruction` 写成“只检查投放表是否足够单独完成 ROI 分析；不要访问收入表；如果不足，请明确说明缺少收入表，因此单表不能算 ROI，然后结束，不要继续扩展”。子代理结束后，请先用一两句话说明这个局部探针的结论；无论它返回的是不足/低置信结论，都不要中断，也不要让我补充数据；请改为你自己继续结合两张表完成各渠道 ROI、收入贡献和趋势变化分析，生成图表，并输出最终报告。
+- 上传文件:
+  - `samples/coverage_scenarios/18_delegate_partial_recovery/marketing_spend_by_channel_month.csv`
+  - `samples/coverage_scenarios/18_delegate_partial_recovery/attributed_revenue_by_channel_month.csv`
+
+## 预期
+- coverage: `sufficient`
+- 应先 inspect schema: `True`
+- 应自动映射字段: `True`
+- 应主动询问用户: `False`
+- 应落地最终报告: `True`
+- 必须出现的点:
+  - cannot compute roi without revenue
+  - month + channel join
+- 不应出现的说法:
+  - tables cannot be combined
+- 必须调用的工具:
+  - task_delegate
+
+## 人工验收 Checklist
+- [ ] 是否先查看了表结构 / schema / 字段信息？
+- [ ] 该自动匹配字段名时，是否匹配成功？
+- [ ] 遇到真正歧义时，是否主动询问用户而不是硬猜？
+- [ ] 明确要求生成图表/报告时，是否真正落地了最终报告？
+- [ ] 是否避免了在证据不足时给出强结论？
+- [ ] 多表时是否正确处理了 join / grain / unit？
+- [ ] 是否明确写出了限制、缺口或假设？
+
+## 记录
+- [ ] 最终报告是否回答了用户问题
+- [ ] 是否生成了合适的图表
+- [ ] 是否存在明显幻觉 / 错误归因 / 乱连表
+- [ ] 是否需要补充新的测试场景

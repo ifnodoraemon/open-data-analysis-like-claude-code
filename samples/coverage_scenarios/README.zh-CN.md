@@ -179,6 +179,10 @@
 - 目录：`17_delegate_child_tool_failure_recovery`
 - 重点：`task_delegate` 本身成功创建子代理，但子代理内部的 `data_query_sql` 故意失败；观察主 agent 是否能在看到失败事实后继续本地完成主任务。
 
+### 场景 18：delegate partial recovery
+- 目录：`18_delegate_partial_recovery`
+- 重点：子代理只看局部证据并返回“单表不足以算 ROI”的有限结论；观察主 agent 是否能把这个 partial 结论当作局部事实，而不是把它误当成全局终局。
+
 ## 建议的判定维度
 
 每个场景都建议记录这些问题：
@@ -191,3 +195,4 @@
 - `did_state_limits`：有没有明确写出限制和假设
 - `did_recover_from_delegate_failure`：子代理失败后，主 agent 是否利用结构化错误继续完成主任务
 - `did_recover_from_child_tool_failure`：子代理已创建成功，但内部 tool 失败后，主 agent 是否继续完成主任务
+- `did_recover_from_delegate_partial`：子代理只返回局部不足 / 低置信结论时，主 agent 是否继续完成全局主任务

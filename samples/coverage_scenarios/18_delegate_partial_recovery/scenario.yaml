@@ -1,0 +1,20 @@
+id: delegate_partial_recovery
+industry: marketing
+task_length: medium
+prompt: 请先自行加载并识别这两张表，然后做一次“子代理局部视角恢复”验证：调用 `task_delegate`，`role_name` 用 `single_table_probe`，`allowed_tools` 严格设为 `["data_list_tables","data_describe_table"]`，`task_instruction` 写成“只检查投放表是否足够单独完成 ROI 分析；不要访问收入表；如果不足，请明确说明缺少收入表，因此单表不能算 ROI，然后结束，不要继续扩展”。子代理结束后，请先用一两句话说明这个局部探针的结论；无论它返回的是不足/低置信结论，都不要中断，也不要让我补充数据；请改为你自己继续结合两张表完成各渠道 ROI、收入贡献和趋势变化分析，生成图表，并输出最终报告。
+files:
+  - marketing_spend_by_channel_month.csv
+  - attributed_revenue_by_channel_month.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  should_finalize_report: true
+  expected_coverage: sufficient
+  required_tool_calls:
+    - task_delegate
+  required_mentions:
+    - cannot compute roi without revenue
+    - month + channel join
+  forbidden_claims:
+    - tables cannot be combined
