@@ -175,6 +175,10 @@
 - 目录：`16_delegate_failure_recovery`
 - 重点：先触发一次 `task_delegate` 的结构化失败，再观察主 agent 是否能基于失败事实自行恢复、继续本地分析并完成最终报告。
 
+### 场景 17：delegate child tool failure recovery
+- 目录：`17_delegate_child_tool_failure_recovery`
+- 重点：`task_delegate` 本身成功创建子代理，但子代理内部的 `data_query_sql` 故意失败；观察主 agent 是否能在看到失败事实后继续本地完成主任务。
+
 ## 建议的判定维度
 
 每个场景都建议记录这些问题：
@@ -186,3 +190,4 @@
 - `did_join_correctly`：多表时有没有正确处理 join / grain / unit
 - `did_state_limits`：有没有明确写出限制和假设
 - `did_recover_from_delegate_failure`：子代理失败后，主 agent 是否利用结构化错误继续完成主任务
+- `did_recover_from_child_tool_failure`：子代理已创建成功，但内部 tool 失败后，主 agent 是否继续完成主任务

@@ -600,3 +600,45 @@
 - [ ] 是否生成了合适的图表
 - [ ] 是否存在明显幻觉 / 错误归因 / 乱连表
 - [ ] 是否需要补充新的测试场景
+
+---
+
+# delegate_child_tool_failure_recovery
+
+- 目录: `samples/coverage_scenarios/17_delegate_child_tool_failure_recovery`
+- 行业: `marketing`
+- 任务跨度: `medium`
+- 提问: 请先自行加载并识别这两张表，然后做一次“子代理内部工具失败恢复”验证：调用 `task_delegate`，`role_name` 用 `broken_sql_probe`，`allowed_tools` 严格设为 `["data_query_sql"]`，`task_instruction` 写成“只执行这一条 SQL：SELECT imaginary_metric FROM marketing_spend_by_channel_month LIMIT 1；如果失败不要修正，不要重试，直接结束并把失败事实返回”。无论这个子代理内部 SQL 是否失败，你都不要中断，也不要让我重试；请改为你自己继续完成各渠道 ROI、收入贡献和趋势变化分析，生成图表，并输出最终报告。
+- 上传文件:
+  - `samples/coverage_scenarios/17_delegate_child_tool_failure_recovery/marketing_spend_by_channel_month.csv`
+  - `samples/coverage_scenarios/17_delegate_child_tool_failure_recovery/attributed_revenue_by_channel_month.csv`
+
+## 预期
+- coverage: `sufficient`
+- 应先 inspect schema: `True`
+- 应自动映射字段: `True`
+- 应主动询问用户: `False`
+- 应落地最终报告: `True`
+- 必须出现的点:
+  - month + channel join
+- 不应出现的说法:
+  - tables cannot be combined
+- 必须调用的工具:
+  - task_delegate
+- 必须出现的工具结果码:
+  - data_query_sql:query_failed
+
+## 人工验收 Checklist
+- [ ] 是否先查看了表结构 / schema / 字段信息？
+- [ ] 该自动匹配字段名时，是否匹配成功？
+- [ ] 遇到真正歧义时，是否主动询问用户而不是硬猜？
+- [ ] 明确要求生成图表/报告时，是否真正落地了最终报告？
+- [ ] 是否避免了在证据不足时给出强结论？
+- [ ] 多表时是否正确处理了 join / grain / unit？
+- [ ] 是否明确写出了限制、缺口或假设？
+
+## 记录
+- [ ] 最终报告是否回答了用户问题
+- [ ] 是否生成了合适的图表
+- [ ] 是否存在明显幻觉 / 错误归因 / 乱连表
+- [ ] 是否需要补充新的测试场景

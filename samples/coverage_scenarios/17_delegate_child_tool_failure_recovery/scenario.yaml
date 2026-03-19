@@ -1,0 +1,21 @@
+id: delegate_child_tool_failure_recovery
+industry: marketing
+task_length: medium
+prompt: 请先自行加载并识别这两张表，然后做一次“子代理内部工具失败恢复”验证：调用 `task_delegate`，`role_name` 用 `broken_sql_probe`，`allowed_tools` 严格设为 `["data_query_sql"]`，`task_instruction` 写成“只执行这一条 SQL：SELECT imaginary_metric FROM marketing_spend_by_channel_month LIMIT 1；如果失败不要修正，不要重试，直接结束并把失败事实返回”。无论这个子代理内部 SQL 是否失败，你都不要中断，也不要让我重试；请改为你自己继续完成各渠道 ROI、收入贡献和趋势变化分析，生成图表，并输出最终报告。
+files:
+  - marketing_spend_by_channel_month.csv
+  - attributed_revenue_by_channel_month.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  should_finalize_report: true
+  expected_coverage: sufficient
+  required_tool_calls:
+    - task_delegate
+  required_tool_result_codes:
+    - data_query_sql:query_failed
+  required_mentions:
+    - month + channel join
+  forbidden_claims:
+    - tables cannot be combined
