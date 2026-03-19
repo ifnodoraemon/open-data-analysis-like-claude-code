@@ -38,6 +38,18 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
+func (r *UserRepository) UpdatePasswordHash(ctx context.Context, userID, passwordHash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	user, ok := r.users[userID]
+	if !ok {
+		return fmt.Errorf("用户不存在: %s", userID)
+	}
+	user.PasswordHash = passwordHash
+	user.UpdatedAt = time.Now()
+	return nil
+}
+
 type WorkspaceRepository struct {
 	mu         sync.Mutex
 	workspaces map[string]*domain.Workspace

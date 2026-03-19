@@ -1,0 +1,270 @@
+package handler
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/metadata"
+	sqliterepo "github.com/ifnodoraemon/openDataAnalysis/repository/sqlite"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
+	"github.com/ifnodoraemon/openDataAnalysis/session"
+	"github.com/ifnodoraemon/openDataAnalysis/storage"
+	localstorage "github.com/ifnodoraemon/openDataAnalysis/storage/local"
+)
+
+func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config.Cfg = &config.Config{}
+	store, err := metadata.Open(root + "/metadata.db")
+	if err != nil {
+		t.Fatalf("open metadata: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.DB.Close()
+	})
+
+	metadataStore = store
+	userRepo = sqliterepo.NewUserRepository(store.DB)
+	workspaceRepo = sqliterepo.NewWorkspaceRepository(store.DB)
+	fileRepo := sqliterepo.NewFileRepository(store.DB)
+	reportRepo = sqliterepo.NewReportRepository(store.DB)
+	sessionRepo = sqliterepo.NewSessionRepository(store.DB)
+	runRepo = sqliterepo.NewRunRepository(store.DB)
+	messageRepo = sqliterepo.NewMessageRepository(store.DB)
+
+	fileService = &service.FileService{
+		Storage:       localstorage.New(root+"/objects", ""),
+		FileRepo:      fileRepo,
+		ReportRepo:    reportRepo,
+		WorkspaceRepo: workspaceRepo,
+		TempDir:       root + "/tmp",
+	}
+	sessionManager = session.NewManager(root+"/cache", fileService)
+	sessionManager.SetSessionRepository(sessionRepo)
+
+	now := time.Now()
+	if err := userRepo.Create(ctx, &domain.User{
+		ID:           "u_1",
+		Email:        "admin@example.com",
+		PasswordHash: mustHashPassword(t, "admin@123"),
+		Name:         "Admin",
+		Status:       domain.UserStatusActive,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := workspaceRepo.CreateWorkspace(ctx, &domain.Workspace{
+		ID:          "w_1",
+		Name:        "Workspace",
+		Slug:        "workspace",
+		OwnerUserID: "u_1",
+		Status:      domain.WorkspaceStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := workspaceRepo.AddMember(ctx, &domain.WorkspaceMember{
+		WorkspaceID: "w_1",
+		UserID:      "u_1",
+		Role:        domain.WorkspaceRoleOwner,
+		CreatedAt:   now,
+	}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if err := sessionRepo.Create(ctx, &domain.Session{
+		ID:          "s_1",
+		WorkspaceID: "w_1",
+		UserID:      "u_1",
+		Title:       "Test Session",
+		Status:      domain.SessionStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		LastSeenAt:  now,
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	liveSession, _, err := sessionManager.GetOrCreate("s_1", "w_1", "u_1")
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	liveSession.ActiveRun = &session.RunState{
+		RunID:  "r_1",
+		Status: "running",
+		Cancel: func() {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				liveSession.FinishRun("r_1", "cancelled")
+			}()
+		},
+		StartedAt: now,
+	}
+
+	sourceObj := putObject(t, ctx, fileService.Storage, "workspaces/w_1/files/f_source/source/data.csv", "col\n1\n")
+	reportObj := putObject(t, ctx, fileService.Storage, "workspaces/w_1/runs/r_1/report/report.html", "<html></html>")
+
+	sourceFile := &domain.File{
+		ID:              "f_source",
+		WorkspaceID:     "w_1",
+		UploadedBy:      "u_1",
+		DisplayName:     "data.csv",
+		Purpose:         domain.FilePurposeSource,
+		ContentType:     "text/csv",
+		SizeBytes:       sourceObj.Size,
+		StorageProvider: sourceObj.Provider,
+		StorageKey:      sourceObj.Key,
+		Status:          domain.FileStatusUploaded,
+		Visibility:      domain.FileVisibilityPrivate,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	reportFile := &domain.File{
+		ID:              "rep_r_1",
+		WorkspaceID:     "w_1",
+		UploadedBy:      "u_1",
+		DisplayName:     "report.html",
+		Purpose:         domain.FilePurposeReport,
+		ContentType:     "text/html",
+		SizeBytes:       reportObj.Size,
+		StorageProvider: reportObj.Provider,
+		StorageKey:      reportObj.Key,
+		Status:          domain.FileStatusReady,
+		Visibility:      domain.FileVisibilityPrivate,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := fileRepo.Create(ctx, sourceFile); err != nil {
+		t.Fatalf("create source file: %v", err)
+	}
+	if err := fileRepo.Create(ctx, reportFile); err != nil {
+		t.Fatalf("create report file: %v", err)
+	}
+	if err := fileRepo.AttachFilesToSession(ctx, "s_1", []string{"f_source"}); err != nil {
+		t.Fatalf("attach source file: %v", err)
+	}
+
+	startedAt := now
+	if err := runRepo.Create(ctx, &domain.AnalysisRun{
+		ID:           "r_1",
+		SessionID:    "s_1",
+		WorkspaceID:  "w_1",
+		UserID:       "u_1",
+		RunKind:      domain.RunKindRoot,
+		Status:       domain.RunStatusCompleted,
+		InputMessage: "analyze",
+		ReportFileID: ptr("rep_r_1"),
+		StartedAt:    &startedAt,
+		FinishedAt:   &startedAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := reportRepo.Create(ctx, &domain.Report{
+		ID:                  "report_r_1",
+		RunID:               "r_1",
+		WorkspaceID:         "w_1",
+		Title:               "Report",
+		Author:              "AI",
+		HTMLStorageProvider: reportObj.Provider,
+		HTMLStorageKey:      reportObj.Key,
+		SnapshotJSON:        `{"version":"v3","title":"Report","author":"AI","blocks":[],"charts":[]}`,
+		CreatedAt:           now,
+	}); err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+	if err := messageRepo.Create(ctx, &domain.RunMessage{
+		ID:          "m_1",
+		RunID:       "r_1",
+		SessionID:   "s_1",
+		WorkspaceID: "w_1",
+		Type:        "thinking",
+		Content:     "working",
+		CreatedAt:   now,
+	}); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+
+	record, err := sessionRepo.GetByID(ctx, "s_1")
+	if err != nil {
+		t.Fatalf("get session before delete: %v", err)
+	}
+	if err := deleteSessionResources(ctx, *record); err != nil {
+		t.Fatalf("delete session resources: %v", err)
+	}
+
+	if _, err := sessionRepo.GetByID(ctx, "s_1"); err == nil {
+		t.Fatal("expected session to be deleted")
+	}
+	if _, err := runRepo.GetByID(ctx, "r_1"); err == nil {
+		t.Fatal("expected run to be deleted")
+	}
+	if _, err := fileRepo.GetByID(ctx, "f_source"); err == nil {
+		t.Fatal("expected source file to be deleted")
+	}
+	if _, err := fileRepo.GetByID(ctx, "rep_r_1"); err == nil {
+		t.Fatal("expected report file to be deleted")
+	}
+	messages, err := messageRepo.ListByRun(ctx, "r_1")
+	if err != nil {
+		t.Fatalf("list messages after delete: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("expected run messages to be deleted, got %d", len(messages))
+	}
+	if exists, err := fileService.Storage.Exists(ctx, sourceObj.Key); err != nil || exists {
+		t.Fatalf("expected source object deleted, exists=%t err=%v", exists, err)
+	}
+	if exists, err := fileService.Storage.Exists(ctx, reportObj.Key); err != nil || exists {
+		t.Fatalf("expected report object deleted, exists=%t err=%v", exists, err)
+	}
+	if _, ok, err := sessionManager.Peek("s_1", "w_1", "u_1"); err != nil || ok {
+		t.Fatalf("expected session manager to drop session, ok=%t err=%v", ok, err)
+	}
+}
+
+func putObject(t *testing.T, ctx context.Context, store storage.ObjectStorage, key, body string) *storage.StoredObject {
+	t.Helper()
+	obj, err := store.Put(ctx, storage.PutObjectRequest{
+		Key:         key,
+		Body:        bytes.NewBufferString(body),
+		Size:        int64(len(body)),
+		ContentType: "text/plain",
+	})
+	if err != nil {
+		t.Fatalf("put object %s: %v", key, err)
+	}
+	return obj
+}
+
+func mustHashPassword(t *testing.T, password string) string {
+	t.Helper()
+	encoded, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	return encoded
+}
+
+func ptr[T any](value T) *T {
+	return &value
+}
+
+func assertNotFound(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected not found error")
+	}
+	if err == sql.ErrNoRows {
+		return
+	}
+}

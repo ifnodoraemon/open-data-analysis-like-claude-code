@@ -55,7 +55,7 @@
         sandbox="allow-scripts allow-same-origin"
         @load="handleFrameLoad"
       ></iframe>
-      <pre v-else class="source-code">{{ reportHTML }}</pre>
+      <pre v-else class="source-code">{{ sanitizedReportHTML }}</pre>
     </div>
   </div>
 </template>
@@ -64,12 +64,14 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useAgentStore } from '../../stores/agent.js'
 import { useWebSocket } from '../../composables/useWebSocket.js'
+import { sanitizeReportHTML } from '../../utils/sanitize.js'
 
 const store = useAgentStore()
 const { sendMessage } = useWebSocket()
 const reportHTML = computed(() => store.reportHTML)
-const selectedRun = computed(() => store.runs.find(run => run.id === store.selectedRunId) || null)
-const activeRun = computed(() => store.runs.find(run => run.id === store.activeRunId) || null)
+const sanitizedReportHTML = computed(() => sanitizeReportHTML(reportHTML.value))
+const selectedRun = computed(() => store.getRun(store.selectedRunId) || null)
+const activeRun = computed(() => store.getRun(store.activeRunId) || null)
 const selectedReport = computed(() => selectedRun.value?.report || null)
 const isRunning = computed(() => store.isRunning)
 const reportURL = ref('')
@@ -97,7 +99,7 @@ const runMetaLabel = computed(() => {
 })
 const mode = ref('preview')
 
-watch(reportHTML, (html) => {
+watch(sanitizedReportHTML, (html) => {
   if (reportURL.value) {
     URL.revokeObjectURL(reportURL.value)
     reportURL.value = ''
@@ -236,7 +238,7 @@ async function exportReport(format) {
 }
 
 function exportHTML() {
-  downloadBlob(new Blob([reportHTML.value], { type: 'text/html;charset=utf-8' }), `${buildFilename()}.html`)
+  downloadBlob(new Blob([sanitizedReportHTML.value], { type: 'text/html;charset=utf-8' }), `${buildFilename()}.html`)
 }
 
 async function exportWord() {
@@ -311,7 +313,7 @@ async function buildRenderedSnapshotHTML(options = {}) {
   const frameWindow = reportFrame.value?.contentWindow
   const frameDocument = frameWindow?.document
   if (!frameDocument?.documentElement) {
-    return reportHTML.value
+    return sanitizedReportHTML.value
   }
 
   await waitForFrameReady(frameDocument)

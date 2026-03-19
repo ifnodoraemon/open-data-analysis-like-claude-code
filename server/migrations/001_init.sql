@@ -61,8 +61,8 @@ create table files (
 );
 
 create table session_files (
-  session_id varchar(64) not null references sessions(id),
-  file_id varchar(64) not null references files(id),
+  session_id varchar(64) not null references sessions(id) on delete cascade,
+  file_id varchar(64) not null references files(id) on delete cascade,
   created_at timestamptz not null default now(),
   primary key (session_id, file_id)
 );
@@ -84,7 +84,9 @@ create table analysis_runs (
   started_at timestamptz,
   finished_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  foreign key (session_id) references sessions(id) on delete cascade,
+  foreign key (parent_run_id) references analysis_runs(id) on delete cascade
 );
 
 create table reports (
@@ -97,5 +99,21 @@ create table reports (
   html_bucket varchar(255),
   html_storage_key text not null,
   snapshot_json jsonb not null,
+  created_at timestamptz not null default now(),
+  foreign key (run_id) references analysis_runs(id) on delete cascade
+);
+
+create table run_messages (
+  id varchar(64) primary key,
+  run_id varchar(64) not null references analysis_runs(id) on delete cascade,
+  session_id varchar(64) not null references sessions(id) on delete cascade,
+  workspace_id varchar(64) not null references workspaces(id),
+  type varchar(64) not null,
+  name varchar(255),
+  content text not null,
+  success boolean,
+  duration bigint,
   created_at timestamptz not null default now()
 );
+
+create index idx_run_messages_run on run_messages(run_id);

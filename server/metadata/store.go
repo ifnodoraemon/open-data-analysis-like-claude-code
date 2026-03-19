@@ -118,6 +118,8 @@ func (s *Store) migrate() error {
 			session_id TEXT NOT NULL,
 			file_id TEXT NOT NULL,
 			created_at DATETIME NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
 			PRIMARY KEY (session_id, file_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS analysis_runs (
@@ -137,7 +139,9 @@ func (s *Store) migrate() error {
 			started_at DATETIME,
 			finished_at DATETIME,
 			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (parent_run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS reports (
 			id TEXT PRIMARY KEY,
@@ -149,7 +153,8 @@ func (s *Store) migrate() error {
 			html_bucket TEXT NOT NULL DEFAULT '',
 			html_storage_key TEXT NOT NULL,
 			snapshot_json TEXT NOT NULL,
-			created_at DATETIME NOT NULL
+			created_at DATETIME NOT NULL,
+			FOREIGN KEY (run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS run_messages (
 			id TEXT PRIMARY KEY,
@@ -161,7 +166,9 @@ func (s *Store) migrate() error {
 			content TEXT NOT NULL,
 			success BOOLEAN,
 			duration INTEGER,
-			created_at DATETIME NOT NULL
+			created_at DATETIME NOT NULL,
+			FOREIGN KEY (run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_messages_run ON run_messages(run_id)`,
 	}

@@ -55,10 +55,14 @@ func Initialize() {
 	messageRepo = sqliterepo.NewMessageRepository(store.DB)
 
 	now := time.Now()
+	defaultPasswordHash, err := auth.HashPassword(config.Cfg.DefaultUserPassword)
+	if err != nil {
+		panic(err)
+	}
 	_ = userRepo.Create(context.Background(), &domain.User{
 		ID:           defaultIdentity.UserID,
 		Email:        defaultIdentity.UserEmail,
-		PasswordHash: auth.HashPassword(config.Cfg.DefaultUserPassword),
+		PasswordHash: defaultPasswordHash,
 		Name:         defaultIdentity.UserName,
 		Status:       domain.UserStatusActive,
 		CreatedAt:    now,

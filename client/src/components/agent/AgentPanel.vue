@@ -130,9 +130,18 @@
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue'
 import { marked } from 'marked'
-import hljs from 'highlight.js'
+import hljs from 'highlight.js/lib/core'
+import bash from 'highlight.js/lib/languages/bash'
+import go from 'highlight.js/lib/languages/go'
+import javascript from 'highlight.js/lib/languages/javascript'
+import json from 'highlight.js/lib/languages/json'
+import plaintext from 'highlight.js/lib/languages/plaintext'
+import python from 'highlight.js/lib/languages/python'
+import sql from 'highlight.js/lib/languages/sql'
+import xml from 'highlight.js/lib/languages/xml'
 import { useWebSocket } from '../../composables/useWebSocket.js'
 import { useAgentStore } from '../../stores/agent.js'
+import { sanitizeMarkdownHTML } from '../../utils/sanitize.js'
 import RunTree from './RunTree.vue'
 import SubgoalTree from './SubgoalTree.vue'
 import WorkingMemoryPanel from './WorkingMemoryPanel.vue'
@@ -146,6 +155,20 @@ const activeRunId = computed(() => store.activeRunId)
 const selectedRun = computed(() => store.getRun(selectedRunId.value))
 const activeRun = computed(() => store.getRun(activeRunId.value))
 const messagesEl = ref(null)
+
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('sh', bash)
+hljs.registerLanguage('go', go)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('js', javascript)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('plaintext', plaintext)
+hljs.registerLanguage('text', plaintext)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('py', python)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('html', xml)
 
 marked.setOptions({
   gfm: true,
@@ -187,7 +210,7 @@ function toolResultSummary(msg) {
 }
 
 function renderMarkdown(content) {
-  return marked.parse(String(content || ''))
+  return sanitizeMarkdownHTML(marked.parse(String(content || '')))
 }
 
 async function handleRunClick(runId) {

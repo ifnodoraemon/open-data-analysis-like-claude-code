@@ -292,6 +292,22 @@ func (s *Session) CancelRun(runID string) bool {
 	return true
 }
 
+func (s *Session) WaitUntilIdle(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		s.mu.Lock()
+		idle := s.ActiveRun == nil
+		s.mu.Unlock()
+		if idle {
+			return true
+		}
+		if timeout <= 0 || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
 func (s *Session) ConfigureEditState(edit *agent.ReportEditContext) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -404,6 +420,17 @@ func (s *Session) Reset(keepFiles bool) error {
 	// 文件元数据已经通过 FileRepository 与 session 关联，当前阶段 keepFiles=false 仅重置分析状态。
 	_ = keepFiles
 	return os.MkdirAll(s.FileService.TempDir, 0o755)
+}
+
+func (s *Session) Destroy() error {
+	if s == nil {
+		return nil
+	}
+	s.CancelRun("")
+	if s.Ingester != nil {
+		return s.Ingester.Destroy()
+	}
+	return nil
 }
 
 func (s *Session) RuntimeState() (map[string]string, []agent.Subgoal) {

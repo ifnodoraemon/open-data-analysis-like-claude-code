@@ -119,12 +119,15 @@ func TestRenderReportHTMLSupportsLayoutOverrides(t *testing.T) {
 	if !strings.Contains(html, `body class="magazine"`) {
 		t.Fatalf("expected body class override")
 	}
-	if !strings.Contains(html, ".hero{color:red;}") || !strings.Contains(html, "console.log('layout')") {
-		t.Fatalf("expected custom css/js to be injected")
+	if !strings.Contains(html, ".hero{color:red;}") {
+		t.Fatalf("expected custom css to be injected")
+	}
+	if strings.Contains(html, "console.log('layout')") {
+		t.Fatalf("expected custom js to be ignored")
 	}
 }
 
-func TestRenderReportHTMLSupportsCustomShell(t *testing.T) {
+func TestRenderReportHTMLIgnoresCustomShell(t *testing.T) {
 	t.Parallel()
 
 	html := RenderReportHTML("测试报告", "AI", &ReportState{
@@ -144,14 +147,14 @@ func TestRenderReportHTMLSupportsCustomShell(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, "<main>") || !strings.Contains(html, "Hello shell") {
-		t.Fatalf("expected custom shell main content")
+	if !strings.Contains(html, "Hello shell") {
+		t.Fatalf("expected report content to render")
 	}
-	if !strings.Contains(html, `class="page"`) || !strings.Contains(html, "window.__customShell = true;") {
-		t.Fatalf("expected custom shell placeholders to be replaced")
+	if !strings.Contains(html, `body class="page"`) {
+		t.Fatalf("expected body class to remain effective")
 	}
-	if !strings.Contains(html, ".page{padding:24px;}") {
-		t.Fatalf("expected custom shell css placeholder to be replaced")
+	if strings.Contains(html, "<main>") || strings.Contains(html, "window.__customShell = true;") {
+		t.Fatalf("expected custom shell/js to be ignored")
 	}
 }
 
@@ -174,6 +177,30 @@ func TestRenderReportHTMLUsesBlocksAsPrimaryModel(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-chart-id="chart_sales"`) || !strings.Contains(html, "图表解读") {
 		t.Fatalf("expected chart block to render chart and commentary")
+	}
+}
+
+func TestRenderReportHTMLSanitizesUnsafeHTML(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML(`<img src=x onerror=alert(1)>`, "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "raw", Kind: "html", Title: "原始块", Content: `<div class="custom" onclick="alert(1)"><script>alert(1)</script><a href="javascript:alert(1)">bad</a><a href="https://example.com">good</a></div>`},
+			{ID: "md", Kind: "markdown", Title: "正文", Content: `<script>alert(1)</script> **ok**`},
+		},
+	})
+
+	if strings.Contains(html, "<script>alert(1)</script>") || strings.Contains(html, "onclick=") || strings.Contains(html, `href="javascript:alert(1)"`) {
+		t.Fatalf("expected unsafe html/js to be removed, got: %s", html)
+	}
+	if !strings.Contains(html, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("expected markdown html to be escaped, got: %s", html)
+	}
+	if !strings.Contains(html, `<a href="https://example.com" rel="noopener noreferrer" target="_blank">good</a>`) {
+		t.Fatalf("expected safe link to remain, got: %s", html)
+	}
+	if !strings.Contains(html, "&lt;img src=x onerror=alert(1)&gt;") {
+		t.Fatalf("expected title to be escaped, got: %s", html)
 	}
 }
 

@@ -85,6 +85,42 @@ func (ing *Ingester) ResetDB(sessionID string) error {
 	return ing.InitDB(sessionID)
 }
 
+func (ing *Ingester) Destroy() error {
+	if ing.db != nil {
+		_ = ing.db.Close()
+		ing.db = nil
+	}
+	if ing.dbPath == "" {
+		return nil
+	}
+	if err := removeSQLiteSidecars(ing.dbPath); err != nil {
+		return err
+	}
+	ing.dbPath = ""
+	return nil
+}
+
+func DestroySessionDB(cacheRoot, sessionID string) error {
+	if strings.TrimSpace(cacheRoot) == "" || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	return removeSQLiteSidecars(filepath.Join(cacheRoot, sessionID+".db"))
+}
+
+func removeSQLiteSidecars(dbPath string) error {
+	paths := []string{
+		dbPath,
+		dbPath + "-wal",
+		dbPath + "-shm",
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("删除 SQLite 缓存文件失败: %w", err)
+		}
+	}
+	return nil
+}
+
 // ImportFile 导入文件到 SQLite
 func (ing *Ingester) ImportFile(filePath string) (tableName string, rowCount int, colCount int, err error) {
 	ext := strings.ToLower(filepath.Ext(filePath))

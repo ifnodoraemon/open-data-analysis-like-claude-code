@@ -132,7 +132,7 @@ func DeleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := sessionRepo.Delete(r.Context(), sessionID); err != nil {
+	if err := deleteSessionResources(r.Context(), *session); err != nil {
 		http.Error(w, "删除会话失败", http.StatusInternalServerError)
 		return
 	}

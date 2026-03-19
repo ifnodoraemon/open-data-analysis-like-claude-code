@@ -1,17 +1,19 @@
 package auth
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
+	"golang.org/x/crypto/bcrypt"
 )
 
-func HashPassword(password string) string {
-	sum := sha256.Sum256([]byte(password))
-	return hex.EncodeToString(sum[:])
+const passwordHashCost = bcrypt.DefaultCost
+
+func HashPassword(password string) (string, error) {
+	encoded, err := bcrypt.GenerateFromPassword([]byte(password), passwordHashCost)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func VerifyPassword(password, encoded string) bool {
-	hashed := HashPassword(password)
-	return subtle.ConstantTimeCompare([]byte(hashed), []byte(encoded)) == 1
+	return bcrypt.CompareHashAndPassword([]byte(encoded), []byte(password)) == nil
 }

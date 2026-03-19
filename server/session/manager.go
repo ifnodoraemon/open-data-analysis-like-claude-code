@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ifnodoraemon/openDataAnalysis/data"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
 	"github.com/ifnodoraemon/openDataAnalysis/repository"
 	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
+
+const sessionStopTimeout = 10 * time.Second
 
 type Manager struct {
 	cacheRoot   string
@@ -139,4 +142,39 @@ func (m *Manager) Peek(sessionID, workspaceID, userID string) (*Session, bool, e
 		return nil, false, fmt.Errorf("无权访问该会话")
 	}
 	return sess, true, nil
+}
+
+func (m *Manager) Delete(sessionID, workspaceID, userID string) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	if ok {
+		if sess.WorkspaceID != workspaceID || sess.UserID != userID {
+			m.mu.Unlock()
+			return fmt.Errorf("无权访问该会话")
+		}
+		delete(m.sessions, sessionID)
+	}
+	m.mu.Unlock()
+
+	if ok {
+		return sess.Destroy()
+	}
+	return data.DestroySessionDB(m.cacheRoot, sessionID)
+}
+
+func (m *Manager) Stop(sessionID, workspaceID, userID string) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	if sess.WorkspaceID != workspaceID || sess.UserID != userID {
+		return fmt.Errorf("无权访问该会话")
+	}
+	sess.CancelRun("")
+	if !sess.WaitUntilIdle(sessionStopTimeout) {
+		return fmt.Errorf("会话仍有任务在运行，无法删除")
+	}
+	return nil
 }

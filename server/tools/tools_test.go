@@ -536,7 +536,6 @@ func TestConfigureReportToolMergeAndReset(t *testing.T) {
 
 	result, err := tool.Execute(json.RawMessage(`{
 		"custom_css":".hero{color:red;}",
-		"custom_js":"console.log('x')",
 		"body_class":"magazine",
 		"hide_cover":true,
 		"hide_toc":true
@@ -557,6 +556,18 @@ func TestConfigureReportToolMergeAndReset(t *testing.T) {
 	}
 	if !state.NeedsFinalize {
 		t.Fatal("expected layout merge to require finalize")
+	}
+
+	rejected, err := tool.Execute(json.RawMessage(`{"custom_js":"console.log('x')"}`))
+	if err != nil {
+		t.Fatalf("unsafe merge execute: %v", err)
+	}
+	var rejectedPayload map[string]interface{}
+	if err := json.Unmarshal([]byte(rejected), &rejectedPayload); err != nil {
+		t.Fatalf("expected failure payload: %v", err)
+	}
+	if rejectedPayload["ok"] != false {
+		t.Fatalf("expected ok=false for unsafe options, got %#v", rejectedPayload["ok"])
 	}
 
 	if _, err := tool.Execute(json.RawMessage(`{"action":"reset"}`)); err != nil {

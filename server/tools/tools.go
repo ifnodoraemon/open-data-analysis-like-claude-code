@@ -554,16 +554,14 @@ type ManageReportBlocksTool struct {
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
 func (t *ConfigureReportTool) Description() string {
-	return "读取并修改报告布局配置。可用于更新或重置 HTML 壳、CSS、JS 和封面/目录显示选项；会修改 report layout 状态，但不会直接修改 block 或 chart。执行后若当前报告已有内容，delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。"
+	return "读取并修改报告布局配置。可用于更新或重置 CSS、body class 和封面/目录显示选项；会修改 report layout 状态，但不会直接修改 block 或 chart。执行后若当前报告已有内容，delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。出于安全原因，不支持注入自定义 HTML 壳或自定义 JS。"
 }
 func (t *ConfigureReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"action": {"type": "string", "enum": ["merge", "reset"], "description": "merge（默认）或 reset。"},
-			"custom_html_shell": {"type": "string", "description": "可选。完整 HTML 壳子模板，支持 {{title}} {{author}} {{date}} {{toc}} {{content}} {{chart_scripts}} {{custom_css}} {{custom_js}} {{body_class}} 占位符。"},
 			"custom_css": {"type": "string", "description": "追加到页面中的自定义 CSS。"},
-			"custom_js": {"type": "string", "description": "追加到页面底部的自定义 JS。"},
 			"body_class": {"type": "string", "description": "附加到 body 的 class。"},
 			"hide_cover": {"type": "boolean", "description": "是否隐藏默认封面。"},
 			"hide_toc": {"type": "boolean", "description": "是否隐藏默认目录。"}
@@ -608,14 +606,14 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 			"ui_summary":                     "已恢复默认报告模板，当前仍是报告草稿",
 		}), nil
 	case "merge":
-		if params.CustomHTMLShell != "" {
-			t.ReportState.Layout.CustomHTMLShell = params.CustomHTMLShell
+		if strings.TrimSpace(params.CustomHTMLShell) != "" || strings.TrimSpace(params.CustomJS) != "" {
+			return toolFailure("report_configure_layout", "unsafe_layout_option", "出于安全原因，当前版本不支持 custom_html_shell 或 custom_js", map[string]interface{}{
+				"action":     action,
+				"ui_summary": "当前版本已禁用自定义 HTML 壳和自定义 JS",
+			}), nil
 		}
 		if params.CustomCSS != "" {
 			t.ReportState.Layout.CustomCSS = params.CustomCSS
-		}
-		if params.CustomJS != "" {
-			t.ReportState.Layout.CustomJS = params.CustomJS
 		}
 		if params.BodyClass != "" {
 			t.ReportState.Layout.BodyClass = strings.TrimSpace(params.BodyClass)
@@ -630,9 +628,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 		delivery := DescribeReportDeliveryState(t.ReportState)
 		return toolSuccess("report_configure_layout", map[string]interface{}{
 			"action":                         action,
-			"has_custom_shell":               t.ReportState.Layout.CustomHTMLShell != "",
 			"has_custom_css":                 t.ReportState.Layout.CustomCSS != "",
-			"has_custom_js":                  t.ReportState.Layout.CustomJS != "",
 			"body_class":                     t.ReportState.Layout.BodyClass,
 			"hide_cover":                     t.ReportState.Layout.HideCover,
 			"hide_toc":                       t.ReportState.Layout.HideTOC,

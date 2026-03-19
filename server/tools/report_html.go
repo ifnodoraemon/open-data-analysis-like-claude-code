@@ -1,10 +1,17 @@
 package tools
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	htmlstd "html"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	htmlnode "golang.org/x/net/html"
 )
 
 func ResolveReportTitleFromState(state *ReportState, fallback string) string {
@@ -26,8 +33,13 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	if author == "" {
 		author = "AI 数据分析师"
 	}
+	title = strings.TrimSpace(title)
+	author = strings.TrimSpace(author)
+	safeTitle := escapeHTMLText(title)
+	safeAuthor := escapeHTMLText(author)
 
 	now := time.Now().Format("2006年01月02日")
+	safeDate := escapeHTMLText(now)
 
 	var tocHTML strings.Builder
 	var bodyHTML strings.Builder
@@ -43,9 +55,8 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	}
 
 	chartScripts := buildChartScripts(state.Charts)
-	customCSS := strings.TrimSpace(state.Layout.CustomCSS)
-	customJS := strings.TrimSpace(state.Layout.CustomJS)
-	bodyClass := strings.TrimSpace(state.Layout.BodyClass)
+	customCSS := sanitizeCSS(state.Layout.CustomCSS)
+	bodyClass := sanitizeBodyClass(state.Layout.BodyClass)
 	coverHTML := ""
 	if !state.Layout.HideCover {
 		coverHTML = fmt.Sprintf(`<div class="cover">
@@ -55,7 +66,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
     <span>📊 %s</span>
     <span>📅 %s</span>
   </div>
-</div>`, title, author, now)
+</div>`, safeTitle, safeAuthor, safeDate)
 	}
 	tocBlockHTML := ""
 	if !state.Layout.HideTOC {
@@ -64,27 +75,10 @@ func RenderReportHTML(title, author string, state *ReportState) string {
   <ol>%s</ol>
 </div>`, tocHTML.String())
 	}
-	if strings.TrimSpace(state.Layout.CustomHTMLShell) != "" {
-		return renderCustomShell(state.Layout.CustomHTMLShell, reportShellData{
-			Title:        title,
-			Author:       author,
-			Date:         now,
-			TOC:          tocBlockHTML,
-			Content:      bodyHTML.String(),
-			ChartScripts: chartScripts,
-			CustomCSS:    customCSS,
-			CustomJS:     customJS,
-			BodyClass:    bodyClass,
-		})
-	}
 
 	customCSSBlock := ""
 	if customCSS != "" {
 		customCSSBlock = "\n" + customCSS + "\n"
-	}
-	customJSBlock := ""
-	if customJS != "" {
-		customJSBlock = fmt.Sprintf("\n<script>\n%s\n</script>", customJS)
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -403,7 +397,7 @@ strong { color: var(--primary); font-weight: 600; }
 }
 %s
 </style>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script id="oda-echarts-loader" src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body class="%s">
 %s
@@ -413,9 +407,8 @@ strong { color: var(--primary); font-weight: 600; }
   <p>本报告由 AI 数据分析智能体自动生成 | %s</p>
 </div>
 %s
-%s
 </body>
-</html>`, title, customCSSBlock, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), now, chartScripts, customJSBlock)
+</html>`, safeTitle, customCSSBlock, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), safeDate, chartScripts)
 }
 
 type reportShellData struct {
@@ -450,12 +443,9 @@ func buildChartScripts(charts []ChartData) string {
 	if len(charts) == 0 {
 		return ""
 	}
-	chartScripts.WriteString("<script>\ndocument.addEventListener('DOMContentLoaded', function() {\n")
+	chartScripts.WriteString("<script id=\"oda-chart-runtime\">\ndocument.addEventListener('DOMContentLoaded', function() {\n")
 	for _, ch := range charts {
-		optionStr := string(ch.Option)
-		if optionStr == "" || optionStr == "null" {
-			optionStr = "{}"
-		}
+		optionStr := safeJSONForInlineScript(ch.Option)
 		chartScripts.WriteString(fmt.Sprintf(`
   (function() {
     var nodes = document.querySelectorAll('[data-chart-id="%s"]');
@@ -576,7 +566,7 @@ func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartDa
 		<div class="%s" id="section-%d" data-block-id="%s" data-block-kind="%s">
 			<h2>%s</h2>
 			<div class="%s">%s</div>
-		</div>`, strings.Join(preset.classes, " "), chapterNum, block.ID, strings.ToLower(strings.TrimSpace(block.Kind)), heading, preset.bodyClass, processContent(block.Content, charts))
+		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(strings.ToLower(strings.TrimSpace(block.Kind))), escapeHTMLText(heading), escapeHTMLAttr(preset.bodyClass), processContent(block.Content, charts))
 }
 
 func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
@@ -609,7 +599,7 @@ func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData) stri
 		<div class="section html-block" id="section-%d" data-block-id="%s" data-block-kind="html">
 			<h2>%d. %s</h2>
 			<div class="content">%s</div>
-		</div>`, chapterNum, block.ID, chapterNum, title, block.Content)
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), chapterNum, escapeHTMLText(title), sanitizeHTMLFragment(block.Content))
 }
 
 func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
@@ -622,7 +612,7 @@ func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData)
 		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart" data-chart-id="%s">
 			<h2>%d. %s</h2>
 			<div class="content">%s</div>
-		</div>`, chapterNum, block.ID, block.ChartID, chapterNum, title, processContent(content, charts))
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(block.ChartID), chapterNum, escapeHTMLText(title), processContent(content, charts))
 }
 
 // processContent 处理内容：Markdown 转 HTML + 替换图表占位符
@@ -643,10 +633,10 @@ func processContent(content string, charts []ChartData) string {
 				}
 				chartRefCounts[chartID]++
 				containerID := fmt.Sprintf("%s-ref-%d", chartID, chartRefCounts[chartID])
-				return fmt.Sprintf(`<div id="%s" data-chart-id="%s" class="chart-box" style="height:%s;"></div>`, containerID, ch.ID, height)
+				return fmt.Sprintf(`<div id="%s" data-chart-id="%s" class="chart-box" style="height:%s;"></div>`, escapeHTMLAttr(containerID), escapeHTMLAttr(ch.ID), escapeHTMLAttr(height))
 			}
 		}
-		return fmt.Sprintf(`<div class="chart-box" style="display:flex;align-items:center;justify-content:center;color:#999;">图表 %s 未找到</div>`, chartID)
+		return fmt.Sprintf(`<div class="chart-box" style="height:400px;"></div><p>图表 %s 未找到</p>`, escapeHTMLText(chartID))
 	})
 
 	return html
@@ -678,7 +668,7 @@ func markdownToHTML(md string) string {
 			html.WriteString("<table><thead><tr>")
 			cells := strings.Split(strings.Trim(trimmed, "|"), "|")
 			for _, cell := range cells {
-				html.WriteString(fmt.Sprintf("<th>%s</th>", strings.TrimSpace(cell)))
+				html.WriteString(fmt.Sprintf("<th>%s</th>", formatInline(strings.TrimSpace(cell))))
 			}
 			html.WriteString("</tr></thead><tbody>\n")
 			inTable = true
@@ -691,7 +681,7 @@ func markdownToHTML(md string) string {
 			html.WriteString("<tr>")
 			cells := strings.Split(strings.Trim(trimmed, "|"), "|")
 			for _, cell := range cells {
-				html.WriteString(fmt.Sprintf("<td>%s</td>", strings.TrimSpace(cell)))
+				html.WriteString(fmt.Sprintf("<td>%s</td>", formatInline(strings.TrimSpace(cell))))
 			}
 			html.WriteString("</tr>\n")
 			continue
@@ -746,9 +736,212 @@ func markdownToHTML(md string) string {
 
 // formatInline 处理行内格式（加粗）
 func formatInline(text string) string {
+	text = escapeHTMLText(text)
 	for strings.Contains(text, "**") {
 		text = strings.Replace(text, "**", "<strong>", 1)
 		text = strings.Replace(text, "**", "</strong>", 1)
 	}
 	return text
+}
+
+func escapeHTMLText(value string) string {
+	return htmlstd.EscapeString(strings.TrimSpace(value))
+}
+
+func escapeHTMLAttr(value string) string {
+	return htmlstd.EscapeString(strings.TrimSpace(value))
+}
+
+func sanitizeBodyClass(value string) string {
+	fields := strings.Fields(value)
+	safe := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		valid := true
+		for _, r := range field {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+				continue
+			}
+			valid = false
+			break
+		}
+		if valid {
+			safe = append(safe, field)
+		}
+	}
+	return strings.Join(safe, " ")
+}
+
+func sanitizeCSS(value string) string {
+	css := strings.TrimSpace(value)
+	if css == "" {
+		return ""
+	}
+	replacements := []string{
+		"</style", "",
+		"@import", "",
+		"expression(", "",
+		"javascript:", "",
+		"behavior:", "",
+	}
+	replacer := strings.NewReplacer(replacements...)
+	return replacer.Replace(css)
+}
+
+func safeJSONForInlineScript(raw json.RawMessage) string {
+	option := strings.TrimSpace(string(raw))
+	if option == "" || option == "null" {
+		return "{}"
+	}
+	var parsed any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "{}"
+	}
+	normalized, err := json.Marshal(parsed)
+	if err != nil {
+		return "{}"
+	}
+	return escapeInlineScript(string(normalized))
+}
+
+func escapeInlineScript(value string) string {
+	replacer := strings.NewReplacer(
+		"</script", "<\\/script",
+		"<!--", "<\\!--",
+		"-->", "--\\>",
+		"\u2028", "\\u2028",
+		"\u2029", "\\u2029",
+	)
+	return replacer.Replace(value)
+}
+
+var allowedHTMLBlockTags = map[string]struct{}{
+	"a": {}, "b": {}, "blockquote": {}, "br": {}, "code": {}, "div": {}, "em": {}, "h1": {}, "h2": {}, "h3": {}, "h4": {}, "h5": {}, "h6": {},
+	"hr": {}, "i": {}, "li": {}, "ol": {}, "p": {}, "pre": {}, "span": {}, "strong": {}, "table": {}, "tbody": {}, "td": {}, "th": {}, "thead": {}, "tr": {}, "ul": {},
+}
+
+func sanitizeHTMLFragment(fragment string) string {
+	doc, err := htmlnode.Parse(strings.NewReader("<!DOCTYPE html><html><body><div id=\"__oda_root__\">" + fragment + "</div></body></html>"))
+	if err != nil {
+		return fmt.Sprintf("<p>%s</p>", escapeHTMLText(fragment))
+	}
+	root := findHTMLNodeByID(doc, "__oda_root__")
+	if root == nil {
+		return fmt.Sprintf("<p>%s</p>", escapeHTMLText(fragment))
+	}
+	container := &htmlnode.Node{Type: htmlnode.ElementNode, Data: "div"}
+	for child := root.FirstChild; child != nil; child = child.NextSibling {
+		sanitizeHTMLNode(container, child)
+	}
+	var out bytes.Buffer
+	for child := container.FirstChild; child != nil; child = child.NextSibling {
+		if err := htmlnode.Render(&out, child); err != nil {
+			return fmt.Sprintf("<p>%s</p>", escapeHTMLText(fragment))
+		}
+	}
+	return out.String()
+}
+
+func sanitizeHTMLNode(parent, node *htmlnode.Node) {
+	switch node.Type {
+	case htmlnode.TextNode:
+		parent.AppendChild(&htmlnode.Node{Type: htmlnode.TextNode, Data: node.Data})
+	case htmlnode.ElementNode:
+		tag := strings.ToLower(strings.TrimSpace(node.Data))
+		switch tag {
+		case "script", "style", "iframe", "object", "embed", "link", "meta", "base":
+			return
+		}
+		if _, ok := allowedHTMLBlockTags[tag]; !ok {
+			for child := node.FirstChild; child != nil; child = child.NextSibling {
+				sanitizeHTMLNode(parent, child)
+			}
+			return
+		}
+		safeNode := &htmlnode.Node{Type: htmlnode.ElementNode, Data: tag}
+		safeNode.Attr = sanitizeHTMLAttrs(tag, node.Attr)
+		parent.AppendChild(safeNode)
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			sanitizeHTMLNode(safeNode, child)
+		}
+	default:
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			sanitizeHTMLNode(parent, child)
+		}
+	}
+}
+
+func sanitizeHTMLAttrs(tag string, attrs []htmlnode.Attribute) []htmlnode.Attribute {
+	safe := make([]htmlnode.Attribute, 0, len(attrs))
+	for _, attr := range attrs {
+		key := strings.ToLower(strings.TrimSpace(attr.Key))
+		value := strings.TrimSpace(attr.Val)
+		if key == "" || strings.HasPrefix(key, "on") {
+			continue
+		}
+		switch key {
+		case "class":
+			className := sanitizeBodyClass(strings.ReplaceAll(value, ":", " "))
+			className = strings.ReplaceAll(className, " ", "-")
+			if className == "" {
+				continue
+			}
+			safe = append(safe, htmlnode.Attribute{Key: key, Val: className})
+		case "href":
+			href, ok := sanitizeURL(value)
+			if !ok || tag != "a" {
+				continue
+			}
+			safe = append(safe, htmlnode.Attribute{Key: key, Val: href})
+			safe = append(safe, htmlnode.Attribute{Key: "rel", Val: "noopener noreferrer"})
+			safe = append(safe, htmlnode.Attribute{Key: "target", Val: "_blank"})
+		case "title":
+			safe = append(safe, htmlnode.Attribute{Key: key, Val: value})
+		case "colspan", "rowspan":
+			if _, err := strconv.Atoi(value); err == nil {
+				safe = append(safe, htmlnode.Attribute{Key: key, Val: value})
+			}
+		}
+	}
+	return safe
+}
+
+func sanitizeURL(value string) (string, bool) {
+	if value == "" {
+		return "", false
+	}
+	if strings.HasPrefix(value, "#") || strings.HasPrefix(value, "/") {
+		return value, true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "mailto":
+		return value, true
+	default:
+		return "", false
+	}
+}
+
+func findHTMLNodeByID(node *htmlnode.Node, id string) *htmlnode.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Type == htmlnode.ElementNode {
+		for _, attr := range node.Attr {
+			if attr.Key == "id" && attr.Val == id {
+				return node
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if found := findHTMLNodeByID(child, id); found != nil {
+			return found
+		}
+	}
+	return nil
 }

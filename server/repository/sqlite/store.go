@@ -64,6 +64,11 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
 	return err
 }
 
+func (r *UserRepository) UpdatePasswordHash(ctx context.Context, userID, passwordHash string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now(), userID)
+	return err
+}
+
 func (r *WorkspaceRepository) GetByID(ctx context.Context, workspaceID string) (*domain.Workspace, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT id, name, slug, owner_user_id, status, created_at, updated_at FROM workspaces WHERE id = ?`, workspaceID)
 	var workspace domain.Workspace
