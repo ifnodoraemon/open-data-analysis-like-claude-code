@@ -1,0 +1,17 @@
+id: roi_joinable
+industry: marketing
+task_length: medium
+prompt: 请综合分析各渠道 ROI、收入贡献和趋势变化，并生成图表。
+files:
+  - marketing_spend_by_channel_month.csv
+  - attributed_revenue_by_channel_month.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  should_finalize_report: true
+  expected_coverage: sufficient
+  required_mentions:
+    - month + channel join
+  forbidden_claims:
+    - tables cannot be combined

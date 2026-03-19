@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
@@ -45,7 +46,7 @@ func (t *SaveMemoryTool) Name() string {
 }
 
 func (t *SaveMemoryTool) Description() string {
-	return "写入一条工作记忆事实。相同 key 会覆盖旧值；此工具会修改 working memory 状态，但不会直接修改报告、目标树或数据。"
+	return "写入一条工作记忆事实。相同 key 会覆盖旧值；此工具会修改 working memory 状态，但不会直接修改报告、目标树或数据，也不会改变 report delivery_state。"
 }
 
 func (t *SaveMemoryTool) Parameters() json.RawMessage {
@@ -82,14 +83,27 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("both 'key' and 'fact' are required")
 	}
 
+	_, existed := t.Memory.Snapshot()[payload.Key]
 	t.Memory.SaveFact(payload.Key, payload.Fact)
+	facts := t.Memory.Snapshot()
 	if t.EmitFunc != nil {
 		t.EmitFunc(WSEvent{
 			Type: EventStateMemoryUpdated,
-			Data: MemoryUpdatedData{Facts: t.Memory.Snapshot()},
+			Data: MemoryUpdatedData{Facts: facts},
 		})
 	}
-	return fmt.Sprintf("工作记忆已更新: [%s]", payload.Key), nil
+	return marshalToolPayload(map[string]interface{}{
+		"ok":                      true,
+		"tool":                    "memory_save_fact",
+		"memory_key":              payload.Key,
+		"fact":                    payload.Fact,
+		"fact_count":              len(facts),
+		"overwrote_existing":      existed,
+		"affects_report_delivery": false,
+		"affects_goal_state":      false,
+		"message":                 "工作记忆已更新。",
+		"ui_summary":              fmt.Sprintf("已写入工作记忆 [%s]。", payload.Key),
+	})
 }
 
 func (t *SaveMemoryTool) SetEventEmitter(emit func(WSEvent)) {
@@ -135,7 +149,7 @@ func (t *AskUserTool) Name() string {
 }
 
 func (t *AskUserTool) Description() string {
-	return "向用户请求补充信息或确认。调用后当前执行会暂停，直到收到用户回复；该工具不返回问题答案本身。"
+	return "向用户发起一次输入请求，并将当前 run 挂起为 waiting_user_input。读取参数 `question` 与可选的 `options`；不会直接返回用户答案，后续用户回复会作为该工具调用结果写回对话。"
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {
@@ -157,6 +171,20 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 }
 
 func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
-	// Execute 本身是一个站位。真正的中断与挂起逻辑将在 Engine.Run 的 interceptor 里处理
-	return "User requested to answer question, pending suspension...", nil
+	var payload struct {
+		Question string   `json:"question"`
+		Options  []string `json:"options"`
+	}
+	if err := json.Unmarshal(args, &payload); err != nil {
+		return "", fmt.Errorf("invalid arguments: %v", err)
+	}
+	return marshalToolPayload(map[string]interface{}{
+		"ok":         true,
+		"tool":       "user_request_input",
+		"question":   payload.Question,
+		"options":    payload.Options,
+		"run_status": "waiting_user_input",
+		"message":    "已发起用户输入请求，等待用户回复。",
+		"ui_summary": "已向用户发起输入请求。",
+	})
 }

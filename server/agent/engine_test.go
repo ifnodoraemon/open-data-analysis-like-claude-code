@@ -160,6 +160,10 @@ func TestInspectGoalsToolReturnsFactsOnly(t *testing.T) {
 	if payload["active_branch_count"].(float64) == 0 {
 		t.Fatalf("expected active branches in payload: %#v", payload)
 	}
+	activeRoots, ok := payload["active_root_goal_ids"].([]interface{})
+	if !ok || len(activeRoots) != 2 {
+		t.Fatalf("expected active_root_goal_ids in payload: %#v", payload["active_root_goal_ids"])
+	}
 }
 
 func TestInspectMemoryToolReturnsFactsOnly(t *testing.T) {

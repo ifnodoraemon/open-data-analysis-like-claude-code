@@ -76,6 +76,9 @@ func TestCreateChartToolReturnsStructuredSuccess(t *testing.T) {
 	if payload["chart_ref"] != "{{chart:chart_sales}}" {
 		t.Fatalf("unexpected chart_ref: %#v", payload["chart_ref"])
 	}
+	if payload["needs_finalize"] != true {
+		t.Fatalf("expected draft marker after chart creation, got %#v", payload["needs_finalize"])
+	}
 }
 
 func TestCreateChartToolBuildsOptionFromDSL(t *testing.T) {
@@ -102,6 +105,9 @@ func TestCreateChartToolBuildsOptionFromDSL(t *testing.T) {
 	}
 	if len(tool.ReportState.Charts) != 1 {
 		t.Fatalf("expected 1 chart, got %d", len(tool.ReportState.Charts))
+	}
+	if !tool.ReportState.NeedsFinalize {
+		t.Fatal("expected report state to require finalize after chart mutation")
 	}
 
 	var option map[string]interface{}
@@ -140,6 +146,9 @@ func TestCreateChartToolAcceptsRawOption(t *testing.T) {
 	}
 	if len(tool.ReportState.Charts) != 1 {
 		t.Fatalf("expected 1 chart, got %d", len(tool.ReportState.Charts))
+	}
+	if !tool.ReportState.NeedsFinalize {
+		t.Fatal("expected report state to require finalize after raw option mutation")
 	}
 
 	var option map[string]interface{}

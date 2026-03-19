@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -119,11 +120,46 @@ func TestSaveMemoryTool(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if !strings.Contains(res, "test_key") {
-		t.Errorf("expected result to contain test_key, got %s", res)
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(res), &payload); err != nil {
+		t.Fatalf("expected save memory json payload: %v", err)
+	}
+	if payload["tool"] != "memory_save_fact" || payload["memory_key"] != "test_key" {
+		t.Fatalf("unexpected save memory payload: %#v", payload)
+	}
+	if payload["fact_count"] != float64(1) {
+		t.Fatalf("expected fact_count=1, got %#v", payload["fact_count"])
+	}
+	if payload["overwrote_existing"] != false {
+		t.Fatalf("expected overwrote_existing=false, got %#v", payload["overwrote_existing"])
+	}
+	if payload["affects_report_delivery"] != false {
+		t.Fatalf("expected affects_report_delivery=false, got %#v", payload["affects_report_delivery"])
 	}
 	if mem.Facts["test_key"] != "test_fact" {
 		t.Errorf("expected fact to be saved in memory")
+	}
+}
+
+func TestSaveMemoryToolReportsOverwrite(t *testing.T) {
+	mem := NewWorkingMemory()
+	mem.SaveFact("test_key", "old_fact")
+	tool := &SaveMemoryTool{Memory: mem}
+
+	res, err := tool.Execute([]byte(`{"key":"test_key","fact":"new_fact"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(res), &payload); err != nil {
+		t.Fatalf("expected overwrite json payload: %v", err)
+	}
+	if payload["overwrote_existing"] != true {
+		t.Fatalf("expected overwrite flag, got %#v", payload["overwrote_existing"])
+	}
+	if mem.Facts["test_key"] != "new_fact" {
+		t.Fatalf("expected fact overwrite, got %#v", mem.Facts["test_key"])
 	}
 }
 
@@ -168,6 +204,16 @@ func TestManageSubgoalsTool(t *testing.T) {
 	if len(sm.Goals) != 1 {
 		t.Errorf("expected 1 goal, got %d", len(sm.Goals))
 	}
+	var addPayload map[string]interface{}
+	if err := json.Unmarshal([]byte(res), &addPayload); err != nil {
+		t.Fatalf("expected add response json payload: %v", err)
+	}
+	if addPayload["tool"] != "goal_manage" || addPayload["action"] != "add" {
+		t.Fatalf("unexpected add payload: %#v", addPayload)
+	}
+	if addPayload["can_finalize"] != false {
+		t.Fatalf("expected add payload to expose can_finalize=false, got %#v", addPayload["can_finalize"])
+	}
 
 	id := sm.Goals[0].ID
 
@@ -188,8 +234,21 @@ func TestManageSubgoalsTool(t *testing.T) {
 	if sm.Goals[0].Status != StatusComplete {
 		t.Errorf("expected status complete, got %s", sm.Goals[0].Status)
 	}
-	if !strings.Contains(res, "结论: done") {
-		t.Errorf("expected result string in response")
+	var completePayload map[string]interface{}
+	if err := json.Unmarshal([]byte(res), &completePayload); err != nil {
+		t.Fatalf("expected complete response json payload: %v", err)
+	}
+	if completePayload["tool"] != "goal_manage" || completePayload["action"] != "complete" {
+		t.Fatalf("unexpected complete payload: %#v", completePayload)
+	}
+	if completePayload["goal_id"] != id {
+		t.Fatalf("expected complete payload to keep goal_id, got %#v", completePayload["goal_id"])
+	}
+	if completePayload["result"] != "done" {
+		t.Fatalf("expected complete payload to keep result, got %#v", completePayload["result"])
+	}
+	if completePayload["can_finalize"] != true {
+		t.Fatalf("expected complete payload to expose can_finalize=true, got %#v", completePayload["can_finalize"])
 	}
 
 	// Unknown Action

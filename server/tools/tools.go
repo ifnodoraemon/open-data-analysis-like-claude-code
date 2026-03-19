@@ -57,11 +57,12 @@ type InspectSessionFilesTool struct {
 }
 
 type ReportState struct {
-	Blocks      []ReportBlock `json:"blocks"`
-	Charts      []ChartData   `json:"charts"`
-	FinalTitle  string        `json:"finalTitle,omitempty"`
-	FinalAuthor string        `json:"finalAuthor,omitempty"`
-	Layout      ReportLayout  `json:"layout,omitempty"`
+	Blocks        []ReportBlock `json:"blocks"`
+	Charts        []ChartData   `json:"charts"`
+	FinalTitle    string        `json:"finalTitle,omitempty"`
+	FinalAuthor   string        `json:"finalAuthor,omitempty"`
+	Layout        ReportLayout  `json:"layout,omitempty"`
+	NeedsFinalize bool          `json:"needsFinalize,omitempty"`
 }
 
 type ReportBlock struct {
@@ -88,6 +89,17 @@ type ReportEditState struct {
 	SelectionText       string              `json:"selectionText,omitempty"`
 	PreserveOtherBlocks bool                `json:"preserveOtherBlocks,omitempty"`
 	AllowedChartIDs     map[string]struct{} `json:"-"`
+}
+
+type ReportDeliveryState struct {
+	HasContent    bool   `json:"has_content"`
+	IsFinalized   bool   `json:"is_finalized"`
+	NeedsFinalize bool   `json:"needs_finalize"`
+	DeliveryState string `json:"delivery_state"`
+	BlockCount    int    `json:"block_count"`
+	ChartCount    int    `json:"chart_count"`
+	FinalTitle    string `json:"final_title,omitempty"`
+	FinalAuthor   string `json:"final_author,omitempty"`
 }
 
 func (s *ReportEditState) Reset() {
@@ -172,6 +184,30 @@ func collectEditableChartIDs(state *ReportState, blockID string) map[string]stru
 		refs[ref] = struct{}{}
 	}
 	return refs
+}
+
+func DescribeReportDeliveryState(state *ReportState) ReportDeliveryState {
+	delivery := ReportDeliveryState{
+		DeliveryState: "empty",
+	}
+	if state == nil {
+		return delivery
+	}
+	delivery.BlockCount = len(state.Blocks)
+	delivery.ChartCount = len(state.Charts)
+	delivery.FinalTitle = strings.TrimSpace(state.FinalTitle)
+	delivery.FinalAuthor = strings.TrimSpace(state.FinalAuthor)
+	delivery.HasContent = delivery.BlockCount > 0 || delivery.ChartCount > 0
+	delivery.NeedsFinalize = state.NeedsFinalize
+	delivery.IsFinalized = delivery.HasContent && !state.NeedsFinalize && delivery.FinalTitle != ""
+	if delivery.HasContent {
+		if delivery.IsFinalized {
+			delivery.DeliveryState = "finalized"
+		} else {
+			delivery.DeliveryState = "draft"
+		}
+	}
+	return delivery
 }
 
 // LoadDataTool 加载数据文件到 SQLite
@@ -306,7 +342,7 @@ type DescribeDataTool struct {
 
 func (t *DescribeDataTool) Name() string { return "data_describe_table" }
 func (t *DescribeDataTool) Description() string {
-	return "返回指定表的 schema 和统计摘要，包括列信息、行数、基础统计和采样值。"
+	return "返回指定表的 schema 和统计摘要，包括列信息、行数、基础统计、采样值以及可观察到的潜在口径歧义候选。"
 }
 func (t *DescribeDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -338,14 +374,109 @@ func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
 			"detail":     err.Error(),
 		}), nil
 	}
+	ambiguousMetricGroups := inferAmbiguousMetricGroups(schema.Columns)
+	uiSummary := fmt.Sprintf("表 %s 已完成 schema 分析，共 %d 列、%d 行", schema.TableName, len(schema.Columns), schema.RowCount)
+	if len(ambiguousMetricGroups) > 0 {
+		uiSummary += fmt.Sprintf("；发现 %d 组可能影响口径的指标候选", len(ambiguousMetricGroups))
+	}
+	primaryTimeColumn := choosePrimaryTimeColumn(schema.TimeColumns)
+	if primaryTimeColumn != nil && primaryTimeColumn.CoverageStart != "" && primaryTimeColumn.CoverageEnd != "" {
+		uiSummary += fmt.Sprintf("；时间字段 %s 为 %s 粒度，覆盖 %s 到 %s", primaryTimeColumn.Name, primaryTimeColumn.Grain, primaryTimeColumn.CoverageStart, primaryTimeColumn.CoverageEnd)
+	}
 
 	return toolSuccess("data_describe_table", map[string]interface{}{
-		"table_name":   schema.TableName,
-		"row_count":    schema.RowCount,
-		"column_count": len(schema.Columns),
-		"schema":       schema,
-		"ui_summary":   fmt.Sprintf("表 %s 已完成 schema 分析，共 %d 列、%d 行", schema.TableName, len(schema.Columns), schema.RowCount),
+		"table_name":                   schema.TableName,
+		"row_count":                    schema.RowCount,
+		"column_count":                 len(schema.Columns),
+		"schema":                       schema,
+		"time_column_count":            len(schema.TimeColumns),
+		"time_columns":                 schema.TimeColumns,
+		"primary_time_column":          primaryTimeColumn,
+		"ambiguous_metric_group_count": len(ambiguousMetricGroups),
+		"ambiguous_metric_groups":      ambiguousMetricGroups,
+		"ui_summary":                   uiSummary,
 	}), nil
+}
+
+func choosePrimaryTimeColumn(columns []data.TimeColumnInfo) *data.TimeColumnInfo {
+	if len(columns) == 0 {
+		return nil
+	}
+	best := columns[0]
+	for _, item := range columns[1:] {
+		if item.DistinctPeriodCount > best.DistinctPeriodCount {
+			best = item
+			continue
+		}
+		if item.DistinctPeriodCount == best.DistinctPeriodCount && strings.TrimSpace(item.Name) < strings.TrimSpace(best.Name) {
+			best = item
+		}
+	}
+	return &best
+}
+
+var metricQualifierTokens = map[string]struct{}{
+	"actual":      {},
+	"adjusted":    {},
+	"booked":      {},
+	"confirmed":   {},
+	"estimated":   {},
+	"est":         {},
+	"final":       {},
+	"forecast":    {},
+	"gross":       {},
+	"net":         {},
+	"planned":     {},
+	"plan":        {},
+	"projected":   {},
+	"raw":         {},
+	"recognized":  {},
+	"target":      {},
+	"tentative":   {},
+	"unconfirmed": {},
+}
+
+func inferAmbiguousMetricGroups(columns []data.ColumnInfo) map[string][]string {
+	grouped := make(map[string][]string)
+	for _, column := range columns {
+		if !strings.EqualFold(strings.TrimSpace(column.Type), "NUMERIC") {
+			continue
+		}
+		tokens := tokenizeColumnName(column.Name)
+		if len(tokens) < 2 {
+			continue
+		}
+		core := make([]string, 0, len(tokens))
+		qualifierCount := 0
+		for _, token := range tokens {
+			if _, ok := metricQualifierTokens[token]; ok {
+				qualifierCount++
+				continue
+			}
+			core = append(core, token)
+		}
+		if qualifierCount == 0 || len(core) == 0 {
+			continue
+		}
+		key := strings.Join(core, "_")
+		grouped[key] = append(grouped[key], column.Name)
+	}
+
+	result := make(map[string][]string)
+	for key, names := range grouped {
+		if len(names) < 2 {
+			continue
+		}
+		sort.Strings(names)
+		result[key] = names
+	}
+	return result
+}
+
+func tokenizeColumnName(name string) []string {
+	return strings.FieldsFunc(strings.ToLower(strings.TrimSpace(name)), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
 }
 
 // QueryDataTool 执行 SQL 查询
@@ -423,7 +554,7 @@ type ManageReportBlocksTool struct {
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
 func (t *ConfigureReportTool) Description() string {
-	return "读取并修改报告布局配置。可用于更新或重置 HTML 壳、CSS、JS 和封面/目录显示选项；会修改 report layout 状态，但不会直接修改 block 或 chart。"
+	return "读取并修改报告布局配置。可用于更新或重置 HTML 壳、CSS、JS 和封面/目录显示选项；会修改 report layout 状态，但不会直接修改 block 或 chart。执行后若当前报告已有内容，delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。"
 }
 func (t *ConfigureReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -465,9 +596,16 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 	switch action {
 	case "reset":
 		t.ReportState.Layout = ReportLayout{}
+		t.ReportState.NeedsFinalize = true
+		delivery := DescribeReportDeliveryState(t.ReportState)
 		return toolSuccess("report_configure_layout", map[string]interface{}{
-			"action":     action,
-			"ui_summary": "已恢复默认报告模板",
+			"action":                         action,
+			"delivery_state":                 delivery.DeliveryState,
+			"is_finalized":                   delivery.IsFinalized,
+			"needs_finalize":                 delivery.NeedsFinalize,
+			"requires_finalize_for_delivery": delivery.HasContent,
+			"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
+			"ui_summary":                     "已恢复默认报告模板，当前仍是报告草稿",
 		}), nil
 	case "merge":
 		if params.CustomHTMLShell != "" {
@@ -488,15 +626,22 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 		if params.HideTOC != nil {
 			t.ReportState.Layout.HideTOC = *params.HideTOC
 		}
+		t.ReportState.NeedsFinalize = true
+		delivery := DescribeReportDeliveryState(t.ReportState)
 		return toolSuccess("report_configure_layout", map[string]interface{}{
-			"action":           action,
-			"has_custom_shell": t.ReportState.Layout.CustomHTMLShell != "",
-			"has_custom_css":   t.ReportState.Layout.CustomCSS != "",
-			"has_custom_js":    t.ReportState.Layout.CustomJS != "",
-			"body_class":       t.ReportState.Layout.BodyClass,
-			"hide_cover":       t.ReportState.Layout.HideCover,
-			"hide_toc":         t.ReportState.Layout.HideTOC,
-			"ui_summary":       "已更新报告布局配置",
+			"action":                         action,
+			"has_custom_shell":               t.ReportState.Layout.CustomHTMLShell != "",
+			"has_custom_css":                 t.ReportState.Layout.CustomCSS != "",
+			"has_custom_js":                  t.ReportState.Layout.CustomJS != "",
+			"body_class":                     t.ReportState.Layout.BodyClass,
+			"hide_cover":                     t.ReportState.Layout.HideCover,
+			"hide_toc":                       t.ReportState.Layout.HideTOC,
+			"delivery_state":                 delivery.DeliveryState,
+			"is_finalized":                   delivery.IsFinalized,
+			"needs_finalize":                 delivery.NeedsFinalize,
+			"requires_finalize_for_delivery": delivery.HasContent,
+			"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
+			"ui_summary":                     "已更新报告布局配置，当前仍是报告草稿",
 		}), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
@@ -505,7 +650,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
 func (t *ManageReportBlocksTool) Description() string {
-	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 title、markdown、html、chart 四类 block；会直接修改报告内容结构。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
+	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 title、markdown、html、chart 四类 block；会直接修改报告内容结构，但执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
 }
 func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -569,11 +714,11 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		}
 		existingIndex := findReportBlockIndex(t.ReportState.Blocks, block.ID)
 		insertHintIndex := -1
-		summaryText := fmt.Sprintf("已添加 block [%s] %s", block.Kind, block.ID)
+		summaryText := fmt.Sprintf("已将 block [%s] %s 写入报告草稿", block.Kind, block.ID)
 		if existingIndex >= 0 {
 			t.ReportState.Blocks = append(t.ReportState.Blocks[:existingIndex], t.ReportState.Blocks[existingIndex+1:]...)
 			insertHintIndex = existingIndex
-			summaryText = fmt.Sprintf("已更新 block [%s] %s", block.Kind, block.ID)
+			summaryText = fmt.Sprintf("已更新报告草稿中的 block [%s] %s", block.Kind, block.ID)
 		}
 		insertAt := len(t.ReportState.Blocks)
 		if strings.TrimSpace(params.BeforeBlockID) == "" && strings.TrimSpace(params.AfterBlockID) == "" && insertHintIndex >= 0 {
@@ -585,12 +730,19 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 			}
 		}
 		t.ReportState.Blocks = insertReportBlockAt(t.ReportState.Blocks, block, insertAt)
+		t.ReportState.NeedsFinalize = true
+		delivery := DescribeReportDeliveryState(t.ReportState)
 		return toolSuccess("report_manage_blocks", map[string]interface{}{
-			"action":      action,
-			"block_id":    block.ID,
-			"block_kind":  block.Kind,
-			"block_count": len(t.ReportState.Blocks),
-			"ui_summary":  summaryText,
+			"action":                         action,
+			"block_id":                       block.ID,
+			"block_kind":                     block.Kind,
+			"block_count":                    len(t.ReportState.Blocks),
+			"delivery_state":                 delivery.DeliveryState,
+			"is_finalized":                   delivery.IsFinalized,
+			"needs_finalize":                 delivery.NeedsFinalize,
+			"requires_finalize_for_delivery": delivery.HasContent,
+			"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
+			"ui_summary":                     summaryText,
 		}), nil
 	case "remove":
 		if t.EditState != nil && !t.EditState.BlockMutationAllowed(action, blockID) {
@@ -606,11 +758,18 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		}
 		removed := t.ReportState.Blocks[index]
 		t.ReportState.Blocks = append(t.ReportState.Blocks[:index], t.ReportState.Blocks[index+1:]...)
+		t.ReportState.NeedsFinalize = true
+		delivery := DescribeReportDeliveryState(t.ReportState)
 		return toolSuccess("report_manage_blocks", map[string]interface{}{
-			"action":      action,
-			"block_id":    blockID,
-			"block_count": len(t.ReportState.Blocks),
-			"ui_summary":  fmt.Sprintf("已删除 block [%s] %s", removed.Kind, removed.ID),
+			"action":                         action,
+			"block_id":                       blockID,
+			"block_count":                    len(t.ReportState.Blocks),
+			"delivery_state":                 delivery.DeliveryState,
+			"is_finalized":                   delivery.IsFinalized,
+			"needs_finalize":                 delivery.NeedsFinalize,
+			"requires_finalize_for_delivery": delivery.HasContent,
+			"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
+			"ui_summary":                     fmt.Sprintf("已从报告草稿删除 block [%s] %s", removed.Kind, removed.ID),
 		}), nil
 	case "move":
 		if t.EditState != nil && !t.EditState.BlockMutationAllowed(action, blockID) {
@@ -632,11 +791,18 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 			return "", err
 		}
 		t.ReportState.Blocks = insertReportBlockAt(blocks, block, insertAt)
+		t.ReportState.NeedsFinalize = true
+		delivery := DescribeReportDeliveryState(t.ReportState)
 		return toolSuccess("report_manage_blocks", map[string]interface{}{
-			"action":      action,
-			"block_id":    blockID,
-			"block_count": len(t.ReportState.Blocks),
-			"ui_summary":  fmt.Sprintf("已重排 block [%s] %s", block.Kind, block.ID),
+			"action":                         action,
+			"block_id":                       blockID,
+			"block_count":                    len(t.ReportState.Blocks),
+			"delivery_state":                 delivery.DeliveryState,
+			"is_finalized":                   delivery.IsFinalized,
+			"needs_finalize":                 delivery.NeedsFinalize,
+			"requires_finalize_for_delivery": delivery.HasContent,
+			"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
+			"ui_summary":                     fmt.Sprintf("已重排报告草稿中的 block [%s] %s", block.Kind, block.ID),
 		}), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
@@ -881,7 +1047,7 @@ type FinalizeReportTool struct {
 
 func (t *FinalizeReportTool) Name() string { return "report_finalize" }
 func (t *FinalizeReportTool) Description() string {
-	return "将当前 report state 标记为最终报告并写入最终标题/作者。调用时会校验报告结构和未闭环目标；如果状态不合法会拒绝执行。该工具不负责补全缺失内容，只负责在当前状态可落地时完成收尾。"
+	return "将当前 report state 从 draft 收尾为 finalized，并写入最终标题/作者。调用时会校验报告结构和未闭环目标；如果状态不合法会拒绝执行。该工具不负责补全缺失内容，只负责在当前状态可落地时完成收尾；未调用时，当前 block/chart 只停留在中间状态，不会落地为最终报告文件。"
 }
 func (t *FinalizeReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -909,23 +1075,52 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	if t.Subgoals != nil {
 		canFinalize, blockers := t.Subgoals.CanFinalize()
 		if !canFinalize {
-			return "", fmt.Errorf("Action Denied: 当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。active branches: %s", strings.Join(blockers, " | "))
+			delivery := DescribeReportDeliveryState(t.ReportState)
+			return toolFailure("report_finalize", "active_goals_block_finalize", "当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。", map[string]interface{}{
+				"delivery_state":      delivery.DeliveryState,
+				"is_finalized":        delivery.IsFinalized,
+				"needs_finalize":      delivery.NeedsFinalize,
+				"active_branch_count": len(blockers),
+				"active_branches":     blockers,
+				"can_finalize":        false,
+				"message":             "当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。",
+				"ui_summary":          fmt.Sprintf("报告暂不能 finalize：仍有 %d 条活跃分支。", len(blockers)),
+			}), nil
 		}
 	}
 	if issues := reportFinalizeIssues(t.ReportState); len(issues) > 0 {
-		return "", fmt.Errorf("Action Denied: 当前报告状态未通过最终收尾校验：%s", strings.Join(issues, ", "))
+		delivery := DescribeReportDeliveryState(t.ReportState)
+		return toolFailure("report_finalize", "report_state_invalid", "当前报告状态未通过最终收尾校验。", map[string]interface{}{
+			"delivery_state":       delivery.DeliveryState,
+			"is_finalized":         delivery.IsFinalized,
+			"needs_finalize":       delivery.NeedsFinalize,
+			"can_finalize":         false,
+			"finalize_issue_count": len(issues),
+			"finalize_issues":      issues,
+			"message":              "当前报告状态未通过最终收尾校验。",
+			"ui_summary":           fmt.Sprintf("报告暂不能 finalize：还有 %d 个结构问题。", len(issues)),
+		}), nil
 	}
 
 	t.ReportState.FinalTitle = params.ReportTitle
 	t.ReportState.FinalAuthor = params.Author
+	t.ReportState.NeedsFinalize = false
 
 	chartCount := len(t.ReportState.Charts)
 	blockCount := len(t.ReportState.Blocks)
 	return toolSuccess("report_finalize", map[string]interface{}{
-		"report_title": params.ReportTitle,
-		"author":       params.Author,
-		"block_count":  blockCount,
-		"chart_count":  chartCount,
-		"ui_summary":   fmt.Sprintf("研究报告已生成完成（%d 个内容块，%d 个交互式图表）", blockCount, chartCount),
+		"report_title":   params.ReportTitle,
+		"author":         params.Author,
+		"block_count":    blockCount,
+		"chart_count":    chartCount,
+		"delivery_state": "finalized",
+		"is_finalized":   true,
+		"needs_finalize": false,
+		"message":        "当前报告已完成最终收尾，并可作为最终报告交付。",
+		"ui_summary":     fmt.Sprintf("研究报告已生成完成（%d 个内容块，%d 个交互式图表）", blockCount, chartCount),
 	}), nil
+}
+
+func ReportFinalizeIssuesForAgent(state *ReportState) []string {
+	return reportFinalizeIssues(state)
 }

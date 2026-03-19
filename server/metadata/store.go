@@ -23,6 +23,10 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("打开 metadata 数据库失败: %w", err)
 	}
+	if err := configureSQLite(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	store := &Store{DB: db}
 	if err := store.migrate(); err != nil {
@@ -31,6 +35,24 @@ func Open(path string) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+func configureSQLite(db *sql.DB) error {
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	pragmas := []string{
+		`PRAGMA journal_mode=WAL`,
+		`PRAGMA busy_timeout=5000`,
+		`PRAGMA foreign_keys=ON`,
+		`PRAGMA synchronous=NORMAL`,
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			return fmt.Errorf("配置 SQLite 失败 (%s): %w", pragma, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) migrate() error {

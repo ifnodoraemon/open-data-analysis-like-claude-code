@@ -1,0 +1,17 @@
+id: join_key_conflict
+industry: saas
+task_length: medium
+prompt: 请综合分析投放 ROI，并解释不同渠道带来的收入表现。
+files:
+  - campaign_spend_daily.csv
+  - crm_bookings_monthly.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: false
+  should_ask_user: true
+  expected_coverage: partial
+  required_mentions:
+    - no stable attribution key
+    - grain mismatch between campaign daily spend and monthly bookings
+  forbidden_claims:
+    - directly attributed crm bookings to campaign spend

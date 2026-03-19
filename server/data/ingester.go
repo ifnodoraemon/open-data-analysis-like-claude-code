@@ -46,8 +46,30 @@ func (ing *Ingester) InitDB(sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("创建 SQLite 数据库失败: %w", err)
 	}
+	if err := configureSQLite(db); err != nil {
+		_ = db.Close()
+		return err
+	}
 	ing.db = db
 	ing.dbPath = dbPath
+	return nil
+}
+
+func configureSQLite(db *sql.DB) error {
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	pragmas := []string{
+		`PRAGMA journal_mode=WAL`,
+		`PRAGMA busy_timeout=5000`,
+		`PRAGMA foreign_keys=ON`,
+		`PRAGMA synchronous=NORMAL`,
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			return fmt.Errorf("配置 SQLite 失败 (%s): %w", pragma, err)
+		}
+	}
 	return nil
 }
 
@@ -492,9 +514,9 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 		for tableRows.Next() {
 			var tName string
 			if err := tableRows.Scan(&tName); err == nil {
-                if tName != schema.TableName {
-				    activeTables = append(activeTables, tName)
-                }
+				if tName != schema.TableName {
+					activeTables = append(activeTables, tName)
+				}
 			}
 		}
 		tableRows.Close()

@@ -1,0 +1,16 @@
+id: retail_alias_headers
+industry: retail
+task_length: short
+prompt: 请快速分析这份零售门店数据，给出趋势、门店对比和产品线表现。
+files:
+  - retail_alias_headers.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  expected_coverage: sufficient
+  required_mentions:
+    - date field mapped from dt
+    - revenue field mapped from gmv
+  forbidden_claims:
+    - cannot analyze due to missing standard headers

@@ -1,0 +1,21 @@
+id: manufacturing_long
+industry: manufacturing
+task_length: long
+prompt: 请对这组制造业经营数据做全面分析，覆盖订单、产能、库存、交付和质量风险。
+files:
+  - manufacturing_orders_monthly.csv
+  - manufacturing_output_monthly.csv
+  - manufacturing_inventory_monthly.csv
+  - manufacturing_quality_returns_monthly.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  expected_coverage: sufficient
+  required_mentions:
+    - orders
+    - capacity
+    - inventory
+    - quality
+  forbidden_claims:
+    - unsupported causal certainty

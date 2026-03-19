@@ -10,6 +10,7 @@ This repository follows an agentic runtime model.
 - Keep prompts short and operational. Put durable project guidance here, not in the runtime prompt.
 - Keep tool descriptions factual and contract-oriented: what the tool does, when it applies, when it does not, what state it reads/writes, and what it returns.
 - Use thin guardrails only to block invalid final output or unsafe execution.
+- When a requested analysis depends on ambiguous metric definitions, join keys, time grains, units, or field mappings, do not silently lock in one interpretation. Let the agent inspect facts, then ask the user or make an explicit assumption only when the user has allowed that tradeoff.
 - Do not return `next_action`-style advice from tools.
 - Do not inject hidden workflow hints such as “first call tool X” into handler-assembled user messages.
 - Keep UI summaries separate from fact payloads. Prefer `ui_summary` for display/logging fields; do not introduce new `summary_text` writes.

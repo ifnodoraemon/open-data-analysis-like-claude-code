@@ -330,6 +330,7 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 		HideCover:       snapshot.Layout.HideCover,
 		HideTOC:         snapshot.Layout.HideTOC,
 	}
+	s.ReportState.NeedsFinalize = false
 	s.ReportState.Blocks = make([]tools.ReportBlock, 0, len(snapshot.Blocks))
 	for _, block := range snapshot.Blocks {
 		s.ReportState.Blocks = append(s.ReportState.Blocks, tools.ReportBlock{
@@ -389,6 +390,7 @@ func (s *Session) Reset(keepFiles bool) error {
 	s.ReportState.FinalTitle = ""
 	s.ReportState.FinalAuthor = ""
 	s.ReportState.Layout = tools.ReportLayout{}
+	s.ReportState.NeedsFinalize = false
 	if s.EditState != nil {
 		s.EditState.Reset()
 	}

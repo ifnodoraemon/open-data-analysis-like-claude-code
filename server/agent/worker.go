@@ -72,7 +72,7 @@ func (t *ManageSubgoalsTool) Name() string {
 }
 
 func (t *ManageSubgoalsTool) Description() string {
-	return "记录或更新目标树中的节点状态。只修改状态，不执行任务。"
+	return "记录或更新目标树中的节点状态。支持 add、complete、reject；只修改目标状态，不执行任务。返回变更后的 goal_id 与当前目标树事实。"
 }
 
 func (t *ManageSubgoalsTool) Parameters() json.RawMessage {
@@ -128,7 +128,19 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		}
 		id := t.Subgoals.AddGoal(payload.Description, payload.ParentGoalID)
 		t.emitUpdate()
-		return fmt.Sprintf("已记录目标，ID: %s。该记录不会自动执行。", id), nil
+		result := buildGoalStateFacts(t.Subgoals, false)
+		result["ok"] = true
+		result["tool"] = "goal_manage"
+		result["action"] = "add"
+		result["goal_id"] = id
+		result["status"] = StatusPending
+		result["description"] = payload.Description
+		if strings.TrimSpace(payload.ParentGoalID) != "" {
+			result["parent_goal_id"] = payload.ParentGoalID
+		}
+		result["message"] = "已记录目标状态。该记录不会自动执行。"
+		result["ui_summary"] = fmt.Sprintf("已记录目标 %s。", id)
+		return marshalToolPayload(result)
 	case "complete":
 		if payload.GoalID == "" {
 			return "", fmt.Errorf("goal_id is required for complete action")
@@ -137,7 +149,16 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 			return "", err
 		}
 		t.emitUpdate()
-		return fmt.Sprintf("已将目标[%s]标记为完成。附加结论: %s", payload.GoalID, payload.Result), nil
+		result := buildGoalStateFacts(t.Subgoals, false)
+		result["ok"] = true
+		result["tool"] = "goal_manage"
+		result["action"] = "complete"
+		result["goal_id"] = payload.GoalID
+		result["status"] = StatusComplete
+		result["result"] = payload.Result
+		result["message"] = "已更新目标状态。"
+		result["ui_summary"] = fmt.Sprintf("已将目标 %s 标记为完成。", payload.GoalID)
+		return marshalToolPayload(result)
 	case "reject":
 		if payload.GoalID == "" {
 			return "", fmt.Errorf("goal_id is required for reject action")
@@ -146,7 +167,16 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 			return "", err
 		}
 		t.emitUpdate()
-		return fmt.Sprintf("已将目标[%s]标记为放弃。原因: %s", payload.GoalID, payload.Result), nil
+		result := buildGoalStateFacts(t.Subgoals, false)
+		result["ok"] = true
+		result["tool"] = "goal_manage"
+		result["action"] = "reject"
+		result["goal_id"] = payload.GoalID
+		result["status"] = StatusRejected
+		result["result"] = payload.Result
+		result["message"] = "已更新目标状态。"
+		result["ui_summary"] = fmt.Sprintf("已将目标 %s 标记为放弃。", payload.GoalID)
+		return marshalToolPayload(result)
 	default:
 		return "", fmt.Errorf("unknown action: %s", payload.Action)
 	}
@@ -188,7 +218,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return "创建一个受限子代理来执行指定任务。需要提供任务说明和允许使用的工具列表。"
+	return "创建一个受限子代理并执行指定任务。读取 role_name、task_instruction、allowed_tools 与可选 goal_id/system_prompt；成功时返回 child_run_id、delegate_summary、trace，失败时返回结构化错误与 child_run_status。"
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -223,7 +253,7 @@ func (t *DelegateTaskTool) Parameters() json.RawMessage {
 
 func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	if t.BaseRegistry == nil {
-		return "", fmt.Errorf("delegate base registry is not configured")
+		return delegateToolFailure("", "", "", nil, "", "delegate_registry_missing", "delegate base registry is not configured", nil), nil
 	}
 
 	var payload struct {
@@ -234,21 +264,21 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		GoalID          string   `json:"goal_id"`
 	}
 	if err := json.Unmarshal(args, &payload); err != nil {
-		return "", fmt.Errorf("invalid arguments: %v", err)
+		return delegateToolFailure("", "", "", nil, "", "invalid_arguments", fmt.Sprintf("invalid arguments: %v", err), nil), nil
 	}
 	if strings.TrimSpace(payload.RoleName) == "" {
-		return "", fmt.Errorf("role_name is required")
+		return delegateToolFailure("", "", payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "missing_role_name", "role_name is required", nil), nil
 	}
 	if strings.TrimSpace(payload.TaskInstruction) == "" {
-		return "", fmt.Errorf("task_instruction is required")
+		return delegateToolFailure("", payload.RoleName, "", payload.AllowedTools, payload.GoalID, "missing_task_instruction", "task_instruction is required", nil), nil
 	}
 	if len(payload.AllowedTools) == 0 {
-		return "", fmt.Errorf("allowed_tools is required")
+		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, nil, payload.GoalID, "missing_allowed_tools", "allowed_tools is required", nil), nil
 	}
 
 	subReg := t.BaseRegistry.CloneFiltered(payload.AllowedTools)
 	if len(subReg.ListTools()) == 0 {
-		return "", fmt.Errorf("no allowed tools resolved for delegate")
+		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "no_allowed_tools_resolved", "no allowed tools resolved for delegate", nil), nil
 	}
 
 	ctx := t.ParentContext
@@ -272,7 +302,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			AllowedTools: payload.AllowedTools,
 		})
 		if err != nil {
-			return "", fmt.Errorf("failed to start child run: %w", err)
+			return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "child_run_start_failed", fmt.Sprintf("failed to start child run: %v", err), nil), nil
 		}
 	}
 	childCtx := ctx
@@ -343,14 +373,18 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				msg := err.Error()
 				_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusFailed), &msg)
 			}
-			return "", fmt.Errorf("delegated agent failed: %w", err)
+			return delegateToolFailure(childRunID, payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "delegate_execution_failed", fmt.Sprintf("delegated agent failed: %v", err), map[string]interface{}{
+				"child_run_status": string(domain.RunStatusFailed),
+			}), nil
 		}
 		if len(resp.Choices) == 0 {
 			if persistence != nil && childRunID != "" {
 				msg := "delegated agent returned no response"
 				_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusFailed), &msg)
 			}
-			return "", fmt.Errorf("delegated agent returned no response")
+			return delegateToolFailure(childRunID, payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "delegate_no_response", "delegated agent returned no response", map[string]interface{}{
+				"child_run_status": string(domain.RunStatusFailed),
+			}), nil
 		}
 
 		choice := resp.Choices[0]
@@ -411,7 +445,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				resultEv := WSEvent{Type: EventToolResult, RunID: childRunID, Data: ToolResultData{
 					ID:       toolCall.ID,
 					Name:     toolCall.Function.Name,
-					Result:   execErr.Error(),
+					Result:   delegateChildToolFailure(toolCall.Function.Name, execErr.Error()),
 					Success:  false,
 					Duration: duration,
 				}}
@@ -421,7 +455,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				}
 				messages = append(messages, openai.ChatCompletionMessage{
 					Role:       openai.ChatMessageRoleTool,
-					Content:    fmt.Sprintf("Tool Failed: %v", execErr),
+					Content:    delegateChildToolFailure(toolCall.Function.Name, execErr.Error()),
 					ToolCallID: toolCall.ID,
 				})
 				continue
@@ -454,7 +488,9 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		msg := fmt.Sprintf("delegated agent %s max iterations reached", payload.RoleName)
 		_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusFailed), &msg)
 	}
-	return "", fmt.Errorf("delegated agent %s max iterations reached", payload.RoleName)
+	return delegateToolFailure(childRunID, payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "delegate_max_iterations_reached", fmt.Sprintf("delegated agent %s max iterations reached", payload.RoleName), map[string]interface{}{
+		"child_run_status": string(domain.RunStatusFailed),
+	}), nil
 }
 
 func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTools []string, goalID, summary string, trace []delegateTraceItem) string {
@@ -466,6 +502,7 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 		"task_instruction": taskInstruction,
 		"allowed_tools":    allowedTools,
 		"delegate_summary": summary,
+		"child_run_status": string(domain.RunStatusCompleted),
 		"ui_summary":       fmt.Sprintf("子 Agent %s 已完成: %s", roleName, summary),
 		"trace":            trace,
 	}
@@ -475,6 +512,50 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return `{"ok":false,"tool":"task_delegate","message":"delegate response marshal failed"}`
+	}
+	return string(encoded)
+}
+
+func delegateToolFailure(childRunID, roleName, taskInstruction string, allowedTools []string, goalID, code, message string, extra map[string]interface{}) string {
+	payload := map[string]interface{}{
+		"ok":               false,
+		"tool":             "task_delegate",
+		"error_code":       code,
+		"message":          message,
+		"delegate_role":    roleName,
+		"task_instruction": taskInstruction,
+		"allowed_tools":    allowedTools,
+		"ui_summary":       fmt.Sprintf("子 Agent %s 执行失败。", roleName),
+	}
+	if strings.TrimSpace(childRunID) != "" {
+		payload["child_run_id"] = childRunID
+	}
+	if strings.TrimSpace(goalID) != "" {
+		payload["goal_id"] = goalID
+	}
+	if strings.TrimSpace(roleName) == "" {
+		payload["ui_summary"] = "子 Agent 执行失败。"
+	}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return `{"ok":false,"tool":"task_delegate","error_code":"delegate_response_marshal_failed","message":"delegate response marshal failed"}`
+	}
+	return string(encoded)
+}
+
+func delegateChildToolFailure(toolName, message string) string {
+	payload := map[string]interface{}{
+		"ok":         false,
+		"tool":       toolName,
+		"error_code": "execution_error",
+		"message":    message,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf(`{"ok":false,"tool":"%s","error_code":"execution_error","message":"%s"}`, toolName, clipDelegateText(message, 120))
 	}
 	return string(encoded)
 }

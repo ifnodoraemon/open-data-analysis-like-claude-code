@@ -1,0 +1,15 @@
+id: ambiguous_metrics
+industry: marketing
+task_length: medium
+prompt: 请分析各渠道收入和 ROI 趋势，并解释差异。
+files:
+  - revenue_ambiguous_metrics.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: false
+  should_ask_user: true
+  expected_coverage: partial
+  required_mentions:
+    - multiple revenue definitions exist
+  forbidden_claims:
+    - selected one revenue definition without clarification

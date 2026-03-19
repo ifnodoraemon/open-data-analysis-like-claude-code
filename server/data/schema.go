@@ -5,37 +5,70 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	queryTimeout   = 5 * time.Second
-	queryRowLimit  = 200
-	queryProbeRows = queryRowLimit + 1
+	queryTimeout            = 5 * time.Second
+	queryRowLimit           = 200
+	queryProbeRows          = queryRowLimit + 1
+	schemaDistinctProbeRows = 200
 )
 
 var forbiddenSQLKeywordPattern = regexp.MustCompile(`\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|ATTACH|DETACH|REINDEX|VACUUM|PRAGMA|REPLACE|MERGE|UPSERT|TRUNCATE)\b`)
+var timeColumnNameHintPattern = regexp.MustCompile(`(^|_)(date|dt|day|week|month|year|quarter|period|ym|yyyymm|yyyymmdd)(_|$)`)
+var (
+	isoDatePattern      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	slashDatePattern    = regexp.MustCompile(`^\d{4}/\d{2}/\d{2}$`)
+	compactDatePattern  = regexp.MustCompile(`^\d{8}$`)
+	isoMonthPattern     = regexp.MustCompile(`^\d{4}-\d{2}$`)
+	slashMonthPattern   = regexp.MustCompile(`^\d{4}/\d{2}$`)
+	compactMonthPattern = regexp.MustCompile(`^\d{6}$`)
+	quarterPattern      = regexp.MustCompile(`^\d{4}[-/ ]?Q[1-4]$`)
+	yearPattern         = regexp.MustCompile(`^\d{4}$`)
+)
 
 // SchemaInfo 表 Schema 信息
 type SchemaInfo struct {
-	TableName string       `json:"tableName"`
-	RowCount  int          `json:"rowCount"`
-	Columns   []ColumnInfo `json:"columns"`
+	TableName   string           `json:"tableName"`
+	RowCount    int              `json:"rowCount"`
+	Columns     []ColumnInfo     `json:"columns"`
+	TimeColumns []TimeColumnInfo `json:"timeColumns,omitempty"`
 }
 
 // ColumnInfo 列信息
 type ColumnInfo struct {
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`
-	NonNullRate  float64  `json:"nonNullRate"`
-	UniqueCount  int      `json:"uniqueCount"`
-	SampleValues []string `json:"sampleValues"`
+	Name         string          `json:"name"`
+	Type         string          `json:"type"`
+	NonNullRate  float64         `json:"nonNullRate"`
+	UniqueCount  int             `json:"uniqueCount"`
+	SampleValues []string        `json:"sampleValues"`
+	TimeProfile  *TimeColumnInfo `json:"timeProfile,omitempty"`
 	// 数值列统计
 	Min    *float64 `json:"min,omitempty"`
 	Max    *float64 `json:"max,omitempty"`
 	Avg    *float64 `json:"avg,omitempty"`
 	Median *float64 `json:"median,omitempty"`
+}
+
+type TimeColumnInfo struct {
+	Name                string   `json:"name"`
+	ValueKind           string   `json:"valueKind"`
+	Grain               string   `json:"grain"`
+	CoverageStart       string   `json:"coverageStart,omitempty"`
+	CoverageEnd         string   `json:"coverageEnd,omitempty"`
+	DistinctPeriodCount int      `json:"distinctPeriodCount"`
+	SamplePeriods       []string `json:"samplePeriods,omitempty"`
+	RollupGrains        []string `json:"rollupGrains,omitempty"`
+}
+
+type normalizedTimeValue struct {
+	grain     string
+	canonical string
+	sortKey   string
 }
 
 // ExtractSchema 提取表的 Schema 和统计摘要
@@ -83,16 +116,20 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 		// 唯一值数
 		db.QueryRow(fmt.Sprintf("SELECT COUNT(DISTINCT \"%s\") FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != ''", col, tableName, col, col)).Scan(&colInfo.UniqueCount)
 
-		// 采样值 (前 5 个不同值)
-		sampleRows, err := db.Query(fmt.Sprintf("SELECT DISTINCT \"%s\" FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != '' LIMIT 5", col, tableName, col, col))
+		observedValues, err := collectDistinctColumnValues(db, tableName, col, schemaDistinctProbeRows)
 		if err == nil {
-			for sampleRows.Next() {
-				var val string
-				if sampleRows.Scan(&val) == nil {
-					colInfo.SampleValues = append(colInfo.SampleValues, val)
-				}
+			if len(observedValues) > 5 {
+				colInfo.SampleValues = append(colInfo.SampleValues, observedValues[:5]...)
+			} else {
+				colInfo.SampleValues = append(colInfo.SampleValues, observedValues...)
 			}
-			sampleRows.Close()
+			if timeInfo := detectTimeColumnInfo(col, observedValues, colInfo.UniqueCount); timeInfo != nil {
+				colInfo.Type = "TIME"
+				colInfo.TimeProfile = timeInfo
+				schema.TimeColumns = append(schema.TimeColumns, *timeInfo)
+				schema.Columns = append(schema.Columns, colInfo)
+				continue
+			}
 		}
 
 		// 尝试数值统计
@@ -116,6 +153,180 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 	return schema, nil
 }
 
+func collectDistinctColumnValues(db *sql.DB, tableName, column string, limit int) ([]string, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		"SELECT DISTINCT CAST(\"%s\" AS TEXT) FROM \"%s\" WHERE \"%s\" IS NOT NULL AND CAST(\"%s\" AS TEXT) != '' ORDER BY 1 LIMIT %d",
+		column, tableName, column, column, limit,
+	))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	values := make([]string, 0, limit)
+	for rows.Next() {
+		var value string
+		if rows.Scan(&value) == nil {
+			values = append(values, strings.TrimSpace(value))
+		}
+	}
+	return values, rows.Err()
+}
+
+func detectTimeColumnInfo(columnName string, observedValues []string, uniqueCount int) *TimeColumnInfo {
+	if len(observedValues) == 0 {
+		return nil
+	}
+
+	nameHint := looksLikeTimeColumnName(columnName)
+	matched := make([]normalizedTimeValue, 0, len(observedValues))
+	grainCounts := make(map[string]int)
+	for _, raw := range observedValues {
+		value, ok := normalizeTimeValue(columnName, raw)
+		if !ok {
+			continue
+		}
+		matched = append(matched, value)
+		grainCounts[value.grain]++
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+
+	dominantGrain := ""
+	dominantCount := 0
+	for grain, count := range grainCounts {
+		if count > dominantCount {
+			dominantGrain = grain
+			dominantCount = count
+		}
+	}
+	if dominantGrain == "" {
+		return nil
+	}
+
+	matchRatio := float64(dominantCount) / float64(len(observedValues))
+	if !nameHint && matchRatio < 0.8 {
+		return nil
+	}
+	if nameHint && matchRatio < 0.6 {
+		return nil
+	}
+
+	filtered := make([]normalizedTimeValue, 0, dominantCount)
+	seen := make(map[string]struct{}, dominantCount)
+	for _, item := range matched {
+		if item.grain != dominantGrain {
+			continue
+		}
+		if _, ok := seen[item.canonical]; ok {
+			continue
+		}
+		seen[item.canonical] = struct{}{}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].sortKey == filtered[j].sortKey {
+			return filtered[i].canonical < filtered[j].canonical
+		}
+		return filtered[i].sortKey < filtered[j].sortKey
+	})
+
+	samplePeriods := make([]string, 0, minInt(5, len(filtered)))
+	for _, item := range filtered {
+		samplePeriods = append(samplePeriods, item.canonical)
+		if len(samplePeriods) >= 5 {
+			break
+		}
+	}
+
+	distinctPeriods := uniqueCount
+	if distinctPeriods <= 0 {
+		distinctPeriods = len(filtered)
+	}
+
+	return &TimeColumnInfo{
+		Name:                columnName,
+		ValueKind:           dominantGrain,
+		Grain:               dominantGrain,
+		CoverageStart:       filtered[0].canonical,
+		CoverageEnd:         filtered[len(filtered)-1].canonical,
+		DistinctPeriodCount: distinctPeriods,
+		SamplePeriods:       samplePeriods,
+		RollupGrains:        rollupGrainsForTimeGrain(dominantGrain),
+	}
+}
+
+func looksLikeTimeColumnName(columnName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(columnName))
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	return timeColumnNameHintPattern.MatchString(normalized)
+}
+
+func normalizeTimeValue(columnName, raw string) (normalizedTimeValue, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return normalizedTimeValue{}, false
+	}
+
+	switch {
+	case isoDatePattern.MatchString(trimmed):
+		return normalizedTimeValue{grain: "day", canonical: trimmed, sortKey: trimmed}, true
+	case slashDatePattern.MatchString(trimmed):
+		canonical := strings.ReplaceAll(trimmed, "/", "-")
+		return normalizedTimeValue{grain: "day", canonical: canonical, sortKey: canonical}, true
+	case compactDatePattern.MatchString(trimmed) && looksLikeTimeColumnName(columnName):
+		canonical := fmt.Sprintf("%s-%s-%s", trimmed[:4], trimmed[4:6], trimmed[6:8])
+		return normalizedTimeValue{grain: "day", canonical: canonical, sortKey: canonical}, true
+	case isoMonthPattern.MatchString(trimmed):
+		return normalizedTimeValue{grain: "month", canonical: trimmed, sortKey: trimmed}, true
+	case slashMonthPattern.MatchString(trimmed):
+		canonical := strings.ReplaceAll(trimmed, "/", "-")
+		return normalizedTimeValue{grain: "month", canonical: canonical, sortKey: canonical}, true
+	case compactMonthPattern.MatchString(trimmed) && looksLikeTimeColumnName(columnName):
+		canonical := fmt.Sprintf("%s-%s", trimmed[:4], trimmed[4:6])
+		return normalizedTimeValue{grain: "month", canonical: canonical, sortKey: canonical}, true
+	case quarterPattern.MatchString(strings.ToUpper(trimmed)):
+		upper := strings.ToUpper(trimmed)
+		year := upper[:4]
+		quarter := upper[len(upper)-1:]
+		canonical := fmt.Sprintf("%s-Q%s", year, quarter)
+		sortKey := fmt.Sprintf("%s-%s", year, quarter)
+		return normalizedTimeValue{grain: "quarter", canonical: canonical, sortKey: sortKey}, true
+	case yearPattern.MatchString(trimmed) && looksLikeTimeColumnName(columnName):
+		year, err := strconv.Atoi(trimmed)
+		if err != nil || year < 1900 || year > 2100 {
+			return normalizedTimeValue{}, false
+		}
+		return normalizedTimeValue{grain: "year", canonical: trimmed, sortKey: trimmed}, true
+	default:
+		return normalizedTimeValue{}, false
+	}
+}
+
+func rollupGrainsForTimeGrain(grain string) []string {
+	switch grain {
+	case "day":
+		return []string{"month", "quarter", "year"}
+	case "month":
+		return []string{"quarter", "year"}
+	case "quarter":
+		return []string{"year"}
+	default:
+		return nil
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // GetSampleRows 获取采样行数据
 func GetSampleRows(db *sql.DB, tableName string, limit int) ([]map[string]interface{}, error) {

@@ -1,0 +1,17 @@
+id: unit_mismatch_explicit
+industry: manufacturing
+task_length: long
+prompt: 请分析各工厂盈利能力和单件成本，并说明是否存在效率差异。
+files:
+  - factory_cost_cny.csv
+  - factory_revenue_10k_cny.csv
+  - factory_output_units.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  expected_coverage: sufficient
+  required_mentions:
+    - normalized revenue_10k_cny before comparing with cost_cny
+  forbidden_claims:
+    - compared 10k cny revenue directly with cny cost without conversion

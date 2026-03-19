@@ -61,7 +61,7 @@ func (t *CreateChartTool) Name() string { return "report_create_chart" }
 func (t *CreateChartTool) Strict() bool { return true }
 
 func (t *CreateChartTool) Description() string {
-	return "创建或更新一个 ECharts 图表。支持简化 DSL 或原生 option，返回 chart_id 与引用标记；会修改 report chart 状态，但不会自动创建或更新正文 block。在局部编辑范围存在时，只允许修改被授权的 chart_id。"
+	return "创建或更新一个 ECharts 图表。支持简化 DSL 或原生 option，返回 chart_id 与引用标记；会修改 report chart 状态，但不会自动创建或更新正文 block。执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，只允许修改被授权的 chart_id。"
 }
 
 func (t *CreateChartTool) Parameters() json.RawMessage {
@@ -157,12 +157,19 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 	if !replaced {
 		t.ReportState.Charts = append(t.ReportState.Charts, chart)
 	}
+	t.ReportState.NeedsFinalize = true
+	delivery := DescribeReportDeliveryState(t.ReportState)
 
 	return toolSuccess("report_create_chart", map[string]interface{}{
-		"chart_id":   params.ChartID,
-		"title":      params.Title,
-		"chart_ref":  "{{chart:" + params.ChartID + "}}",
-		"ui_summary": fmt.Sprintf("图表 %s 已%s成功", params.ChartID, map[bool]string{true: "更新", false: "创建"}[replaced]),
+		"chart_id":                       params.ChartID,
+		"title":                          params.Title,
+		"chart_ref":                      "{{chart:" + params.ChartID + "}}",
+		"delivery_state":                 delivery.DeliveryState,
+		"is_finalized":                   delivery.IsFinalized,
+		"needs_finalize":                 delivery.NeedsFinalize,
+		"requires_finalize_for_delivery": delivery.HasContent,
+		"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
+		"ui_summary":                     fmt.Sprintf("图表 %s 已%s到报告草稿", params.ChartID, map[bool]string{true: "更新", false: "写入"}[replaced]),
 	}), nil
 }
 

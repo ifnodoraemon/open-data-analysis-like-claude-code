@@ -1,0 +1,16 @@
+id: roi_unjoinable
+industry: marketing
+task_length: medium
+prompt: 请综合分析投放 ROI，并说明各渠道表现。
+files:
+  - marketing_spend_by_campaign_month.csv
+  - sales_by_region_month.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: false
+  should_ask_user: false
+  expected_coverage: partial
+  required_mentions:
+    - no stable join key
+  forbidden_claims:
+    - exact roi attribution by campaign or region

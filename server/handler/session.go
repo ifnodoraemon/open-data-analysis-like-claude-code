@@ -32,8 +32,7 @@ func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
 	sessionID := chi.URLParam(r, "sessionID")
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "会话不存在", http.StatusNotFound)
+	if writeRepoLookupError(w, err, "会话不存在") {
 		return
 	}
 	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {
@@ -90,8 +89,7 @@ func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "会话不存在", http.StatusNotFound)
+	if writeRepoLookupError(w, err, "会话不存在") {
 		return
 	}
 	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {
@@ -126,8 +124,7 @@ func DeleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "会话不存在", http.StatusNotFound)
+	if writeRepoLookupError(w, err, "会话不存在") {
 		return
 	}
 	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {

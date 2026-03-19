@@ -1,0 +1,13 @@
+month,warehouse,product_line,on_hand_units,weeks_of_cover,stockout_risk,aged_inventory_units,inventory_value
+2025-01,East Hub,Industrial Pumps,184,4.8,low,22,620000
+2025-01,East Hub,Control Valves,142,4.1,medium,28,470000
+2025-01,North Hub,Industrial Pumps,166,4.3,medium,24,558000
+2025-01,North Hub,Control Valves,128,3.8,medium,31,426000
+2025-02,East Hub,Industrial Pumps,176,4.5,medium,25,598000
+2025-02,East Hub,Control Valves,133,3.7,medium,33,441000
+2025-02,North Hub,Industrial Pumps,158,4.0,medium,27,532000
+2025-02,North Hub,Control Valves,119,3.4,high,35,399000
+2025-03,East Hub,Industrial Pumps,168,4.1,medium,29,571000
+2025-03,East Hub,Control Valves,126,3.3,high,38,418000
+2025-03,North Hub,Industrial Pumps,149,3.6,high,31,504000
+2025-03,North Hub,Control Valves,108,3.0,high,41,362000

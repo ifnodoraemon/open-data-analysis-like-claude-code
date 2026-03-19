@@ -1,0 +1,13 @@
+month,factory,product_line,planned_units,actual_units,capacity_utilization,scrap_rate,overtime_hours
+2025-01,Suzhou Plant,Industrial Pumps,620,598,0.89,0.021,420
+2025-01,Suzhou Plant,Control Valves,520,488,0.86,0.027,390
+2025-01,Tianjin Plant,Industrial Pumps,590,562,0.87,0.024,405
+2025-01,Tianjin Plant,Control Valves,470,438,0.84,0.031,372
+2025-02,Suzhou Plant,Industrial Pumps,640,608,0.90,0.022,436
+2025-02,Suzhou Plant,Control Valves,530,492,0.85,0.029,401
+2025-02,Tianjin Plant,Industrial Pumps,605,571,0.86,0.026,418
+2025-02,Tianjin Plant,Control Valves,482,446,0.83,0.032,381
+2025-03,Suzhou Plant,Industrial Pumps,658,617,0.90,0.023,452
+2025-03,Suzhou Plant,Control Valves,542,499,0.84,0.031,415
+2025-03,Tianjin Plant,Industrial Pumps,618,579,0.86,0.027,429
+2025-03,Tianjin Plant,Control Valves,490,451,0.82,0.034,390

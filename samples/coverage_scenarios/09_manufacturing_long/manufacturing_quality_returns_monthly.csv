@@ -1,0 +1,7 @@
+month,product_line,returned_units,return_rate,warranty_cost,major_defect_cases,customer_complaints
+2025-01,Industrial Pumps,18,0.012,68000,2,14
+2025-01,Control Valves,22,0.016,74000,3,18
+2025-02,Industrial Pumps,21,0.014,73500,3,16
+2025-02,Control Valves,27,0.019,81200,4,22
+2025-03,Industrial Pumps,25,0.016,80100,4,19
+2025-03,Control Valves,33,0.023,92800,5,27

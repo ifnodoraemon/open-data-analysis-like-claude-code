@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +76,100 @@ func TestExecuteQueryReturnsRowsWithinLimit(t *testing.T) {
 	}
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+}
+
+func TestIngesterInitDBConfiguresSQLite(t *testing.T) {
+	t.Parallel()
+
+	ing := NewIngester(t.TempDir())
+	if err := ing.InitDB("sess_config"); err != nil {
+		t.Fatalf("InitDB returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if ing.db != nil {
+			_ = ing.db.Close()
+		}
+	})
+
+	var journalMode string
+	if err := ing.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("expected WAL journal mode, got %q", journalMode)
+	}
+
+	var busyTimeout int
+	if err := ing.db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("expected busy_timeout=5000, got %d", busyTimeout)
+	}
+}
+
+func TestExtractSchemaDetectsTimeCoverage(t *testing.T) {
+	t.Parallel()
+
+	db := openTestSQLiteDB(t)
+	if _, err := db.Exec(`CREATE TABLE spend (dt TEXT, channel TEXT, ad_spend INTEGER)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO spend (dt, channel, ad_spend) VALUES
+		('2025-01-05','Search',980),
+		('2025-01-12','Search',1040),
+		('2025-01-19','Search',1120),
+		('2025-01-26','Search',1190),
+		('2025-01-06','Social',760),
+		('2025-01-13','Social',790),
+		('2025-01-20','Social',820),
+		('2025-01-27','Social',850),
+		('2025-02-02','Search',1210),
+		('2025-02-09','Search',1260),
+		('2025-02-16','Social',870),
+		('2025-02-23','Social',910)
+	`); err != nil {
+		t.Fatalf("insert rows: %v", err)
+	}
+
+	schema, err := ExtractSchema(db, "spend")
+	if err != nil {
+		t.Fatalf("ExtractSchema returned error: %v", err)
+	}
+	if len(schema.TimeColumns) != 1 {
+		t.Fatalf("expected 1 time column, got %#v", schema.TimeColumns)
+	}
+	timeInfo := schema.TimeColumns[0]
+	if timeInfo.Name != "dt" || timeInfo.Grain != "day" {
+		t.Fatalf("unexpected time info: %#v", timeInfo)
+	}
+	if timeInfo.CoverageStart != "2025-01-05" || timeInfo.CoverageEnd != "2025-02-23" {
+		t.Fatalf("unexpected coverage: %#v", timeInfo)
+	}
+	if timeInfo.DistinctPeriodCount != 12 {
+		t.Fatalf("expected 12 distinct periods, got %#v", timeInfo)
+	}
+	if len(timeInfo.RollupGrains) == 0 || timeInfo.RollupGrains[0] != "month" {
+		t.Fatalf("expected day grain to roll up to month, got %#v", timeInfo.RollupGrains)
+	}
+
+	found := false
+	for _, column := range schema.Columns {
+		if column.Name != "dt" {
+			continue
+		}
+		found = true
+		if column.Type != "TIME" {
+			t.Fatalf("expected dt column type TIME, got %#v", column.Type)
+		}
+		if column.TimeProfile == nil || column.TimeProfile.CoverageEnd != "2025-02-23" {
+			t.Fatalf("expected dt column time profile, got %#v", column.TimeProfile)
+		}
+	}
+	if !found {
+		t.Fatalf("dt column not found in schema columns: %#v", schema.Columns)
 	}
 }
 

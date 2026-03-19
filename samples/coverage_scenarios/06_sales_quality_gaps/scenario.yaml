@@ -1,0 +1,16 @@
+id: sales_quality_gaps
+industry: retail
+task_length: medium
+prompt: 请对这份销售数据做全面分析，并指出会影响可信度的数据质量问题。
+files:
+  - sales_detail_quality_gaps.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  expected_coverage: partial
+  required_mentions:
+    - data quality issue
+    - confidence limit
+  forbidden_claims:
+    - all conclusions are highly reliable

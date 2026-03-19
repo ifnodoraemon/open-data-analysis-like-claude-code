@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -178,6 +179,99 @@ func TestDescribeDataToolReturnsStructuredSchema(t *testing.T) {
 	}
 }
 
+func TestDescribeDataToolExposesAmbiguousMetricGroups(t *testing.T) {
+	t.Parallel()
+
+	ing := data.NewIngester(t.TempDir())
+	if err := ing.InitDB("session_describe_ambiguity"); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	if _, err := ing.GetDB().Exec(`CREATE TABLE revenue_metrics (channel TEXT, gross_revenue INTEGER, net_revenue INTEGER, recognized_revenue INTEGER, ad_spend INTEGER)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := ing.GetDB().Exec(`INSERT INTO revenue_metrics (channel, gross_revenue, net_revenue, recognized_revenue, ad_spend) VALUES ('Search', 100, 90, 80, 10), ('Social', 120, 100, 95, 20)`); err != nil {
+		t.Fatalf("insert rows: %v", err)
+	}
+
+	tool := &DescribeDataTool{Ingester: ing}
+	result, err := tool.Execute(json.RawMessage(`{"table_name":"revenue_metrics"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload struct {
+		OK                        bool                `json:"ok"`
+		AmbiguousMetricGroupCount int                 `json:"ambiguous_metric_group_count"`
+		AmbiguousMetricGroups     map[string][]string `json:"ambiguous_metric_groups"`
+	}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json payload: %v", err)
+	}
+	if !payload.OK || payload.AmbiguousMetricGroupCount != 1 {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+	if !sameStrings(payload.AmbiguousMetricGroups["revenue"], []string{"gross_revenue", "net_revenue", "recognized_revenue"}) {
+		t.Fatalf("unexpected ambiguous metric groups: %#v", payload.AmbiguousMetricGroups)
+	}
+}
+
+func TestDescribeDataToolExposesTimeCoverageFacts(t *testing.T) {
+	t.Parallel()
+
+	ing := data.NewIngester(t.TempDir())
+	if err := ing.InitDB("session_describe_time"); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	if _, err := ing.GetDB().Exec(`CREATE TABLE spend (dt TEXT, channel TEXT, ad_spend INTEGER)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := ing.GetDB().Exec(`
+		INSERT INTO spend (dt, channel, ad_spend) VALUES
+		('2025-01-05','Search',980),
+		('2025-01-12','Search',1040),
+		('2025-01-19','Search',1120),
+		('2025-01-26','Search',1190),
+		('2025-01-06','Social',760),
+		('2025-01-13','Social',790),
+		('2025-01-20','Social',820),
+		('2025-01-27','Social',850),
+		('2025-02-02','Search',1210),
+		('2025-02-09','Search',1260),
+		('2025-02-16','Social',870),
+		('2025-02-23','Social',910)
+	`); err != nil {
+		t.Fatalf("insert rows: %v", err)
+	}
+
+	tool := &DescribeDataTool{Ingester: ing}
+	result, err := tool.Execute(json.RawMessage(`{"table_name":"spend"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload struct {
+		OK                bool                  `json:"ok"`
+		TimeColumnCount   int                   `json:"time_column_count"`
+		TimeColumns       []data.TimeColumnInfo `json:"time_columns"`
+		PrimaryTimeColumn *data.TimeColumnInfo  `json:"primary_time_column"`
+	}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json payload: %v", err)
+	}
+	if !payload.OK || payload.TimeColumnCount != 1 || len(payload.TimeColumns) != 1 {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+	if payload.PrimaryTimeColumn == nil {
+		t.Fatalf("expected primary time column, got nil")
+	}
+	if payload.PrimaryTimeColumn.Name != "dt" || payload.PrimaryTimeColumn.Grain != "day" {
+		t.Fatalf("unexpected primary time column: %#v", payload.PrimaryTimeColumn)
+	}
+	if payload.PrimaryTimeColumn.CoverageStart != "2025-01-05" || payload.PrimaryTimeColumn.CoverageEnd != "2025-02-23" {
+		t.Fatalf("unexpected time coverage: %#v", payload.PrimaryTimeColumn)
+	}
+}
+
 func TestDescribeDataToolReturnsStructuredFailure(t *testing.T) {
 	t.Parallel()
 
@@ -261,6 +355,22 @@ func TestQueryDataToolReturnsStructuredFailure(t *testing.T) {
 	}
 }
 
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	gotCopy := append([]string(nil), got...)
+	wantCopy := append([]string(nil), want...)
+	sort.Strings(gotCopy)
+	sort.Strings(wantCopy)
+	for i := range gotCopy {
+		if gotCopy[i] != wantCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestManageReportBlocksAndFinalizeReturnStructuredPayloads(t *testing.T) {
 	t.Parallel()
 
@@ -300,6 +410,9 @@ func TestManageReportBlocksAndFinalizeReturnStructuredPayloads(t *testing.T) {
 	if !finalizePayload.OK || finalizePayload.ReportTitle != "销售分析" || finalizePayload.BlockCount != 1 || finalizePayload.ChartCount != 0 {
 		t.Fatalf("unexpected finalize payload: %#v", finalizePayload)
 	}
+	if state.NeedsFinalize {
+		t.Fatal("expected finalize to clear draft flag")
+	}
 }
 
 func TestFinalizeReportRejectsOpenActiveBranch(t *testing.T) {
@@ -313,15 +426,23 @@ func TestFinalizeReportRejectsOpenActiveBranch(t *testing.T) {
 		},
 	}
 
-	_, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
-	if err == nil {
-		t.Fatal("expected finalize to be rejected")
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("expected structured tool failure instead of error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "active branch") {
-		t.Fatalf("expected active branch hint in error, got %v", err)
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize failure json payload: %v", err)
 	}
-	if !strings.Contains(err.Error(), "East") {
-		t.Fatalf("expected blocker details in error, got %v", err)
+	if payload["ok"] != false || payload["error_code"] != "active_goals_block_finalize" {
+		t.Fatalf("unexpected finalize failure payload: %#v", payload)
+	}
+	if payload["active_branch_count"].(float64) != 1 {
+		t.Fatalf("expected active branch count in payload: %#v", payload)
+	}
+	branches, ok := payload["active_branches"].([]interface{})
+	if !ok || len(branches) != 1 || !strings.Contains(branches[0].(string), "East") {
+		t.Fatalf("expected blocker details in payload, got %#v", payload["active_branches"])
 	}
 }
 
@@ -340,15 +461,30 @@ func TestFinalizeReportRejectsInvalidReportState(t *testing.T) {
 		},
 	}
 
-	_, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
-	if err == nil {
-		t.Fatal("expected finalize to reject invalid report state")
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("expected structured tool failure instead of error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "missing_chart:chart_missing") {
-		t.Fatalf("expected missing chart issue, got %v", err)
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize failure json payload: %v", err)
 	}
-	if !strings.Contains(err.Error(), "duplicate_chart:chart_sales(x2)") {
-		t.Fatalf("expected duplicate chart issue, got %v", err)
+	if payload["ok"] != false || payload["error_code"] != "report_state_invalid" {
+		t.Fatalf("unexpected finalize failure payload: %#v", payload)
+	}
+	issues, ok := payload["finalize_issues"].([]interface{})
+	if !ok {
+		t.Fatalf("expected finalize_issues in payload: %#v", payload)
+	}
+	joined := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		joined = append(joined, issue.(string))
+	}
+	if !strings.Contains(strings.Join(joined, ","), "missing_chart:chart_missing") {
+		t.Fatalf("expected missing chart issue, got %#v", issues)
+	}
+	if !strings.Contains(strings.Join(joined, ","), "duplicate_chart:chart_sales(x2)") {
+		t.Fatalf("expected duplicate chart issue, got %#v", issues)
 	}
 }
 
@@ -367,15 +503,28 @@ func TestFinalizeReportRejectsDuplicateBlockHeadingAndMissingChartCaption(t *tes
 		},
 	}
 
-	_, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
-	if err == nil {
-		t.Fatal("expected finalize to reject invalid report state")
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("expected structured tool failure instead of error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "duplicate_block_heading:overview") {
-		t.Fatalf("expected duplicate block heading issue, got %v", err)
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize failure json payload: %v", err)
 	}
-	if !strings.Contains(err.Error(), "chart_block_missing_caption:sales_chart") {
-		t.Fatalf("expected chart block caption issue, got %v", err)
+	issues, ok := payload["finalize_issues"].([]interface{})
+	if !ok {
+		t.Fatalf("expected finalize_issues in payload: %#v", payload)
+	}
+	joined := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		joined = append(joined, issue.(string))
+	}
+	issueText := strings.Join(joined, ",")
+	if !strings.Contains(issueText, "duplicate_block_heading:overview") {
+		t.Fatalf("expected duplicate block heading issue, got %#v", issues)
+	}
+	if !strings.Contains(issueText, "chart_block_missing_caption:sales_chart") {
+		t.Fatalf("expected chart block caption issue, got %#v", issues)
 	}
 }
 
@@ -406,12 +555,18 @@ func TestConfigureReportToolMergeAndReset(t *testing.T) {
 	if !state.Layout.HideCover || !state.Layout.HideTOC || state.Layout.BodyClass != "magazine" {
 		t.Fatalf("unexpected layout after merge: %#v", state.Layout)
 	}
+	if !state.NeedsFinalize {
+		t.Fatal("expected layout merge to require finalize")
+	}
 
 	if _, err := tool.Execute(json.RawMessage(`{"action":"reset"}`)); err != nil {
 		t.Fatalf("reset execute: %v", err)
 	}
 	if state.Layout != (ReportLayout{}) {
 		t.Fatalf("expected empty layout after reset, got %#v", state.Layout)
+	}
+	if !state.NeedsFinalize {
+		t.Fatal("expected layout reset to require finalize")
 	}
 }
 
@@ -429,6 +584,9 @@ func TestManageReportBlocksToolSupportsCRUD(t *testing.T) {
 	}
 	if len(state.Blocks) != 2 {
 		t.Fatalf("expected 2 blocks, got %d", len(state.Blocks))
+	}
+	if !state.NeedsFinalize {
+		t.Fatal("expected block mutation to require finalize")
 	}
 
 	if _, err := tool.Execute(json.RawMessage(`{"action":"upsert","block_id":"intro","block_kind":"markdown","title":"导言","content":"更新后的第一段"}`)); err != nil {
@@ -450,5 +608,35 @@ func TestManageReportBlocksToolSupportsCRUD(t *testing.T) {
 	}
 	if len(state.Blocks) != 1 || state.Blocks[0].ID != "chart-1" {
 		t.Fatalf("expected only chart block remaining, got %#v", state.Blocks)
+	}
+	if !state.NeedsFinalize {
+		t.Fatal("expected report state to remain draft after block edits")
+	}
+}
+
+func TestDescribeReportDeliveryStateTracksDraftAndFinalized(t *testing.T) {
+	t.Parallel()
+
+	empty := DescribeReportDeliveryState(&ReportState{})
+	if empty.DeliveryState != "empty" || empty.HasContent {
+		t.Fatalf("unexpected empty delivery state: %#v", empty)
+	}
+
+	draft := DescribeReportDeliveryState(&ReportState{
+		Blocks:        []ReportBlock{{ID: "b1", Kind: "markdown", Content: "test"}},
+		NeedsFinalize: true,
+	})
+	if draft.DeliveryState != "draft" || draft.IsFinalized {
+		t.Fatalf("unexpected draft delivery state: %#v", draft)
+	}
+
+	finalized := DescribeReportDeliveryState(&ReportState{
+		Blocks:        []ReportBlock{{ID: "b1", Kind: "markdown", Content: "test"}},
+		FinalTitle:    "报告",
+		FinalAuthor:   "AI",
+		NeedsFinalize: false,
+	})
+	if finalized.DeliveryState != "finalized" || !finalized.IsFinalized {
+		t.Fatalf("unexpected finalized delivery state: %#v", finalized)
 	}
 }

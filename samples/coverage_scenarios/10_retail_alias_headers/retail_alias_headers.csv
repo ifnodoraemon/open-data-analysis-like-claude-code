@@ -1,0 +1,13 @@
+dt,shop_name,sales_region,prod_line,ord_cnt,qty,gmv,gp,disc_amt
+2025-03-01,Hangzhou Westlake,East,Electronics,42,58,28600,9100,1800
+2025-03-01,Nanjing Xinjiekou,East,Home,37,49,21400,6900,1320
+2025-03-01,Wuhan Optics Valley,Central,Beauty,29,46,16800,5400,980
+2025-03-02,Hangzhou Westlake,East,Electronics,45,61,30100,9560,1920
+2025-03-02,Nanjing Xinjiekou,East,Home,39,52,22500,7210,1410
+2025-03-02,Wuhan Optics Valley,Central,Beauty,31,48,17200,5520,1010
+2025-03-03,Hangzhou Westlake,East,Electronics,48,65,31800,10080,2050
+2025-03-03,Nanjing Xinjiekou,East,Home,41,55,23300,7480,1490
+2025-03-03,Wuhan Optics Valley,Central,Beauty,28,44,15900,5060,940
+2025-03-04,Hangzhou Westlake,East,Electronics,46,63,30900,9810,1980
+2025-03-04,Nanjing Xinjiekou,East,Home,43,57,24100,7740,1530
+2025-03-04,Wuhan Optics Valley,Central,Beauty,33,51,18100,5810,1060

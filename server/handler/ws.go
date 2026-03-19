@@ -30,6 +30,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+const persistenceTimeout = 10 * time.Second
+
 type delegateRunPersistence struct {
 	workspaceID string
 	sessionID   string
@@ -63,7 +65,9 @@ func (p delegateRunPersistence) StartChildRun(ctx context.Context, input agent.C
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := runRepo.Create(ctx, run); err != nil {
+	if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		return runRepo.Create(persistCtx, run)
+	}); err != nil {
 		return "", err
 	}
 	p.emitChildRunsUpdate(ctx, input.ParentRunID)
@@ -76,20 +80,26 @@ func (p delegateRunPersistence) AppendChildEvent(ctx context.Context, childRunID
 }
 
 func (p delegateRunPersistence) UpdateChildRunStatus(ctx context.Context, childRunID string, status string, errMsg *string) error {
-	if err := runRepo.UpdateStatus(ctx, childRunID, domain.RunStatus(status), errMsg); err != nil {
+	if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		return runRepo.UpdateStatus(persistCtx, childRunID, domain.RunStatus(status), errMsg)
+	}); err != nil {
 		return err
 	}
-	if run, err := runRepo.GetByID(ctx, childRunID); err == nil && run.ParentRunID != nil {
+	run, err := getRunWithPersistence(ctx, childRunID)
+	if err == nil && run.ParentRunID != nil {
 		p.emitChildRunsUpdate(ctx, *run.ParentRunID)
 	}
 	return nil
 }
 
 func (p delegateRunPersistence) UpdateChildRunSummary(ctx context.Context, childRunID, summary string) error {
-	if err := runRepo.UpdateSummary(ctx, childRunID, strings.TrimSpace(summary)); err != nil {
+	if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		return runRepo.UpdateSummary(persistCtx, childRunID, strings.TrimSpace(summary))
+	}); err != nil {
 		return err
 	}
-	if run, err := runRepo.GetByID(ctx, childRunID); err == nil && run.ParentRunID != nil {
+	run, err := getRunWithPersistence(ctx, childRunID)
+	if err == nil && run.ParentRunID != nil {
 		p.emitChildRunsUpdate(ctx, *run.ParentRunID)
 	}
 	return nil
@@ -99,7 +109,15 @@ func (p delegateRunPersistence) emitChildRunsUpdate(ctx context.Context, parentR
 	if p.emit == nil || strings.TrimSpace(parentRunID) == "" {
 		return
 	}
-	childRuns, err := runRepo.ListByParent(ctx, parentRunID)
+	var childRuns []domain.AnalysisRun
+	err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		runs, err := runRepo.ListByParent(persistCtx, parentRunID)
+		if err != nil {
+			return err
+		}
+		childRuns = runs
+		return nil
+	})
 	if err != nil {
 		return
 	}
@@ -108,7 +126,7 @@ func (p delegateRunPersistence) emitChildRunsUpdate(ctx context.Context, parentR
 		RunID: parentRunID,
 		Data: agent.ChildRunsUpdatedData{
 			ParentRunID: parentRunID,
-			ChildRuns:   serializeRuns(ctx, childRuns),
+			ChildRuns:   serializeRuns(detachedContext(ctx), childRuns),
 		},
 	})
 }
@@ -116,6 +134,29 @@ func (p delegateRunPersistence) emitChildRunsUpdate(ctx context.Context, parentR
 func shouldEmitReportPreview(toolName string) bool {
 	_, ok := reportPreviewTools[toolName]
 	return ok
+}
+
+func detachedContext(parent context.Context) context.Context {
+	if parent == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(parent)
+}
+
+func withPersistenceContext(parent context.Context, fn func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(detachedContext(parent), persistenceTimeout)
+	defer cancel()
+	return fn(ctx)
+}
+
+func getRunWithPersistence(ctx context.Context, runID string) (*domain.AnalysisRun, error) {
+	var run *domain.AnalysisRun
+	err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		var err error
+		run, err = runRepo.GetByID(persistCtx, runID)
+		return err
+	})
+	return run, err
 }
 
 func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sessID, workspaceID, runID string, state *tools.ReportState) {
@@ -131,19 +172,27 @@ func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu 
 
 func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) {
 	finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
-	if reportFile, err := fileService.SaveReportHTML(ctx, service.SaveReportInput{
-		UserID:      identity.UserID,
-		WorkspaceID: sess.WorkspaceID,
-		SessionID:   sess.ID,
-		RunID:       runID,
-		Title:       sess.ReportState.FinalTitle,
-		Author:      sess.ReportState.FinalAuthor,
-		HTML:        finalHTML,
-		Snapshot:    buildReportSnapshot(sess.ReportState),
-	}); err == nil {
-		_ = runRepo.BindReportFile(ctx, runID, reportFile.ID)
+	err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		reportFile, err := fileService.SaveReportHTML(persistCtx, service.SaveReportInput{
+			UserID:      identity.UserID,
+			WorkspaceID: sess.WorkspaceID,
+			SessionID:   sess.ID,
+			RunID:       runID,
+			Title:       sess.ReportState.FinalTitle,
+			Author:      sess.ReportState.FinalAuthor,
+			HTML:        finalHTML,
+			Snapshot:    buildReportSnapshot(sess.ReportState),
+		})
+		if err != nil {
+			return err
+		}
+		if err := runRepo.BindReportFile(persistCtx, runID, reportFile.ID); err != nil {
+			return err
+		}
 		log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
-	} else {
+		return nil
+	})
+	if err != nil {
 		errEv := agent.WSEvent{
 			Type: agent.EventError,
 			Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
@@ -152,7 +201,9 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 		saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, errEv)
 	}
 	if title := strings.TrimSpace(sess.ReportState.FinalTitle); title != "" {
-		_ = sessionRepo.UpdateTitle(ctx, sess.ID, title)
+		_ = withPersistenceContext(ctx, func(persistCtx context.Context) error {
+			return sessionRepo.UpdateTitle(persistCtx, sess.ID, title)
+		})
 	}
 	finalEv := agent.WSEvent{
 		Type: agent.EventReportFinal,
@@ -215,6 +266,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	defer log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 
 	memory, subgoals := sess.RuntimeState()
+	requestCtx := detachedContext(r.Context())
 
 	sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 		Type: agent.EventSessionReady,
@@ -268,15 +320,15 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			runEmitter := func(runID string) func(agent.WSEvent) {
 				return func(ev agent.WSEvent) {
 					sendSessionEvent(conn, &writeMu, sess.ID, runID, ev)
-					saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, ev)
+					saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, runID, ev)
 
 					if ev.Type == agent.EventToolResult {
 						if result, ok := ev.Data.(agent.ToolResultData); ok {
 							if shouldEmitReportPreview(result.Name) {
-								emitReportPreviewUpdate(r.Context(), conn, &writeMu, sess.ID, sess.WorkspaceID, runID, sess.ReportState)
+								emitReportPreviewUpdate(requestCtx, conn, &writeMu, sess.ID, sess.WorkspaceID, runID, sess.ReportState)
 							}
-							if result.Name == "report_finalize" {
-								finalizeAndPersistReport(r.Context(), conn, &writeMu, sess, identity, runID)
+							if result.Name == "report_finalize" && result.Success {
+								finalizeAndPersistReport(requestCtx, conn, &writeMu, sess, identity, runID)
 							}
 						}
 					}
@@ -284,29 +336,41 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					switch ev.Type {
 					case agent.EventUserRequestInput:
 						sess.SuspendRun(runID)
-						_ = runRepo.UpdateStatus(r.Context(), runID, "waiting_user_input", nil)
+						_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+							return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusWaitingUserInput, nil)
+						})
 						log.Printf("run suspended waiting_user_input run_id=%s session_id=%s", runID, sess.ID)
 					case agent.EventRunCompleted:
 						sess.FinishRun(runID, "completed")
-						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCompleted, nil)
+						_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+							return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusCompleted, nil)
+						})
 						if complete, ok := ev.Data.(agent.CompleteData); ok {
-							_ = runRepo.UpdateSummary(r.Context(), runID, strings.TrimSpace(complete.Summary))
+							_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+								return runRepo.UpdateSummary(persistCtx, runID, strings.TrimSpace(complete.Summary))
+							})
 							log.Printf("run completed run_id=%s session_id=%s summary_chars=%d", runID, sess.ID, len([]rune(strings.TrimSpace(complete.Summary))))
 						} else {
 							log.Printf("run completed run_id=%s session_id=%s", runID, sess.ID)
 						}
 					case agent.EventRunCancelled:
 						sess.FinishRun(runID, "cancelled")
-						_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusCancelled, nil)
+						_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+							return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusCancelled, nil)
+						})
 						log.Printf("run cancelled run_id=%s session_id=%s", runID, sess.ID)
 					case agent.EventError:
 						sess.FinishRun(runID, "failed")
 						if errData, ok := ev.Data.(agent.ErrorData); ok {
 							msg := errData.Message
-							_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, &msg)
+							_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+								return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusFailed, &msg)
+							})
 							log.Printf("run failed run_id=%s session_id=%s error=%q", runID, sess.ID, clipLogText(msg, 240))
 						} else {
-							_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, nil)
+							_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+								return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusFailed, nil)
+							})
 							log.Printf("run failed run_id=%s session_id=%s", runID, sess.ID)
 						}
 					}
@@ -327,18 +391,20 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// 将用户的回答也写入数据库历史
-				saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, activeRunID, agent.WSEvent{
+				saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, activeRunID, agent.WSEvent{
 					Type: "user",
 					Data: userMsg,
 				})
 
 				sess.ResumeRun(activeRunID)
-				_ = runRepo.UpdateStatus(r.Context(), activeRunID, domain.RunStatusRunning, nil)
+				_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+					return runRepo.UpdateStatus(persistCtx, activeRunID, domain.RunStatusRunning, nil)
+				})
 
 				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "已收到反馈，继续分析..."}})
 
 				// 恢复执行 (传入空 userInput，因为问题已作为 tool result)
-				resumeCtx := agent.WithTraceMetadata(r.Context(), agent.TraceMetadata{
+				resumeCtx := agent.WithTraceMetadata(requestCtx, agent.TraceMetadata{
 					WorkspaceID: sess.WorkspaceID,
 					SessionID:   sess.ID,
 					RunID:       activeRunID,
@@ -361,7 +427,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			runID, ctx, err := sess.StartRun(r.Context())
+			runID, ctx, err := sess.StartRun(requestCtx)
 			if err != nil {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 					Type: agent.EventError,
@@ -373,17 +439,19 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			now := time.Now()
 			rawInput := strings.TrimSpace(userMsg.Content)
 			log.Printf("run started run_id=%s session_id=%s workspace_id=%s user_id=%s input_chars=%d", runID, sess.ID, sess.WorkspaceID, identity.UserID, len([]rune(rawInput)))
-			if err := runRepo.Create(r.Context(), &domain.AnalysisRun{
-				ID:           runID,
-				SessionID:    sess.ID,
-				WorkspaceID:  sess.WorkspaceID,
-				UserID:       identity.UserID,
-				RunKind:      domain.RunKindRoot,
-				Status:       domain.RunStatusRunning,
-				InputMessage: rawInput,
-				StartedAt:    &now,
-				CreatedAt:    now,
-				UpdatedAt:    now,
+			if err := withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+				return runRepo.Create(persistCtx, &domain.AnalysisRun{
+					ID:           runID,
+					SessionID:    sess.ID,
+					WorkspaceID:  sess.WorkspaceID,
+					UserID:       identity.UserID,
+					RunKind:      domain.RunKindRoot,
+					Status:       domain.RunStatusRunning,
+					InputMessage: rawInput,
+					StartedAt:    &now,
+					CreatedAt:    now,
+					UpdatedAt:    now,
+				})
 			}); err != nil {
 				sess.CancelRun(runID)
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
@@ -394,15 +462,28 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Persist UserMessage
-			saveEventToDB(r.Context(), sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
+			saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
 				Type: "user",
 				Data: userMsg,
 			})
 
-			_ = sessionRepo.UpdateLastRun(r.Context(), sess.ID, runID)
-			if record, err := sessionRepo.GetByID(r.Context(), sess.ID); err == nil {
+			_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+				return sessionRepo.UpdateLastRun(persistCtx, sess.ID, runID)
+			})
+			record, err := func() (*domain.Session, error) {
+				var record *domain.Session
+				err := withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+					var err error
+					record, err = sessionRepo.GetByID(persistCtx, sess.ID)
+					return err
+				})
+				return record, err
+			}()
+			if err == nil {
 				if record.Title == "" || record.Title == "未命名分析" {
-					_ = sessionRepo.UpdateTitle(r.Context(), sess.ID, deriveSessionTitle(rawInput))
+					_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+						return sessionRepo.UpdateTitle(persistCtx, sess.ID, deriveSessionTitle(rawInput))
+					})
 				}
 			}
 
@@ -414,7 +495,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			userContent, err := buildRunUserContent(sess, userMsg)
 			if err != nil {
 				sess.CancelRun(runID)
-				_ = runRepo.UpdateStatus(r.Context(), runID, domain.RunStatusFailed, nil)
+				_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
+					return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusFailed, nil)
+				})
 				sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 					Type: agent.EventError,
 					Data: agent.ErrorData{Message: err.Error()},
@@ -543,7 +626,9 @@ func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev
 		}
 	}
 
-	if err := messageRepo.Create(ctx, msg); err != nil {
+	if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
+		return messageRepo.Create(persistCtx, msg)
+	}); err != nil {
 		log.Printf("Failed to save event to db run_id=%s type=%s err=%v", runID, ev.Type, err)
 	}
 }

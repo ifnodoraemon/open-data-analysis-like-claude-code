@@ -1,0 +1,13 @@
+month,product_line,region,booked_orders,booked_units,booked_revenue,backlog_units,on_time_delivery_rate
+2025-01,Industrial Pumps,East,128,540,1860000,210,0.93
+2025-01,Control Valves,East,112,468,1540000,185,0.91
+2025-01,Industrial Pumps,North,118,505,1745000,198,0.92
+2025-01,Control Valves,North,96,402,1368000,162,0.90
+2025-02,Industrial Pumps,East,134,566,1942000,224,0.92
+2025-02,Control Valves,East,116,481,1596000,192,0.90
+2025-02,Industrial Pumps,North,122,519,1801000,205,0.91
+2025-02,Control Valves,North,101,418,1419000,168,0.89
+2025-03,Industrial Pumps,East,141,592,2035000,236,0.91
+2025-03,Control Valves,East,121,496,1642000,198,0.89
+2025-03,Industrial Pumps,North,127,534,1867000,211,0.90
+2025-03,Control Valves,North,105,431,1463000,173,0.88

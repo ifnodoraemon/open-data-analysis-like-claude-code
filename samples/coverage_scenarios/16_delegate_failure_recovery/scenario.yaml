@@ -1,0 +1,21 @@
+id: delegate_failure_recovery
+industry: marketing
+task_length: medium
+prompt: 请先故意调用一次 `task_delegate` 来验证恢复能力：`role_name` 用 `precheck`，`task_instruction` 写“检查这两张表能否做 ROI 分析”，并把 `allowed_tools` 严格设为 `["missing_tool"]`，不要自行修正。如果这次委派失败，不要中断，也不要让我重试；请改为你自己继续完成各渠道 ROI、收入贡献和趋势变化分析，生成图表，并输出最终报告。
+files:
+  - marketing_spend_by_channel_month.csv
+  - attributed_revenue_by_channel_month.csv
+expected:
+  should_inspect_schema: true
+  should_auto_map: true
+  should_ask_user: false
+  should_finalize_report: true
+  expected_coverage: sufficient
+  required_tool_calls:
+    - task_delegate
+  required_tool_result_codes:
+    - task_delegate:no_allowed_tools_resolved
+  required_mentions:
+    - month + channel join
+  forbidden_claims:
+    - tables cannot be combined

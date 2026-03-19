@@ -6,11 +6,12 @@ type RunStatus string
 type RunKind string
 
 const (
-	RunStatusQueued    RunStatus = "queued"
-	RunStatusRunning   RunStatus = "running"
-	RunStatusCompleted RunStatus = "completed"
-	RunStatusFailed    RunStatus = "failed"
-	RunStatusCancelled RunStatus = "cancelled"
+	RunStatusQueued           RunStatus = "queued"
+	RunStatusRunning          RunStatus = "running"
+	RunStatusWaitingUserInput RunStatus = "waiting_user_input"
+	RunStatusCompleted        RunStatus = "completed"
+	RunStatusFailed           RunStatus = "failed"
+	RunStatusCancelled        RunStatus = "cancelled"
 
 	RunKindRoot     RunKind = "root"
 	RunKindDelegate RunKind = "delegate"

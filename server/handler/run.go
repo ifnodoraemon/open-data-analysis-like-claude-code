@@ -26,8 +26,7 @@ func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "会话不存在", http.StatusNotFound)
+	if writeRepoLookupError(w, err, "会话不存在") {
 		return
 	}
 	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {
@@ -52,8 +51,7 @@ func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
 	runID := chi.URLParam(r, "runID")
 	run, err := runRepo.GetByID(r.Context(), runID)
-	if err != nil {
-		http.Error(w, "任务不存在", http.StatusNotFound)
+	if writeRepoLookupError(w, err, "任务不存在") {
 		return
 	}
 	if run.UserID != identity.UserID || run.WorkspaceID != identity.WorkspaceID {
@@ -81,8 +79,7 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
 	runID := chi.URLParam(r, "runID")
 	run, err := runRepo.GetByID(r.Context(), runID)
-	if err != nil {
-		http.Error(w, "任务不存在", http.StatusNotFound)
+	if writeRepoLookupError(w, err, "任务不存在") {
 		return
 	}
 	if run.UserID != identity.UserID || run.WorkspaceID != identity.WorkspaceID {

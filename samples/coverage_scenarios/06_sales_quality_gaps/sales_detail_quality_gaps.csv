@@ -1,0 +1,13 @@
+month,region,channel,product_category,orders,units,revenue,gross_profit,new_customers,refund_amount
+2025-01,East,Search,Electronics,120,265,158000,51200,38,4200
+2025-01,,Social,Home,92,210,121500,34800,29,3900
+2025-01,North,Search,Electronics,108,238,,46800,34,3600
+2025-01,North,Affiliate,Fashion,86,194,112400,-30100,24,4100
+2025-02,South,Social,Beauty,101,238,124600,34900,33,5480
+2025-02,West,Affiliate,Home,82,188,108900,29500,22,3410
+2025-03,East,Search,Electronics,136,295,174800,56400,44,4480
+2025-03,East,Social,Home,104,234,132400,37750,32,4180
+2025-03,North,Search,Electronics,118,259,155100,49820,37,120000
+2025-04,North,Affiliate,Fashion,97,221,126500,33920,28,4470
+2025-04,South,Social,Beauty,112,258,0,37880,35,5880
+2025-04,West,Affiliate,Home,91,205,118400,32150,24,

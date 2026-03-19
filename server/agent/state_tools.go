@@ -47,7 +47,7 @@ func (t *InspectGoalsTool) Name() string {
 }
 
 func (t *InspectGoalsTool) Description() string {
-	return "读取目标树的事实状态。返回目标数量、状态分布、活跃分支和目标清单；不修改任何状态。"
+	return "读取目标树的事实状态。返回目标数量、状态分布、活跃根目标、活跃分支与 finalize 就绪情况；不修改任何状态。"
 }
 
 func (t *InspectGoalsTool) Parameters() json.RawMessage {
@@ -59,40 +59,10 @@ func (t *InspectGoalsTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("subgoals is not initialized")
 	}
 
-	goals := t.Subgoals.ListAll()
-	payload := map[string]interface{}{
-		"ok":             true,
-		"tool":           "state_goal_inspect",
-		"goal_count":     len(goals),
-		"goals":          goals,
-		"active_roots":   0,
-		"running_goals":  0,
-		"pending_goals":  0,
-		"complete_goals": 0,
-		"rejected_goals": 0,
-	}
-
-	for _, goal := range goals {
-		if strings.TrimSpace(goal.ParentGoalID) == "" && !isTerminalSubgoalStatus(goal.Status) {
-			payload["active_roots"] = payload["active_roots"].(int) + 1
-		}
-		switch goal.Status {
-		case StatusRunning:
-			payload["running_goals"] = payload["running_goals"].(int) + 1
-		case StatusPending:
-			payload["pending_goals"] = payload["pending_goals"].(int) + 1
-		case StatusComplete:
-			payload["complete_goals"] = payload["complete_goals"].(int) + 1
-		case StatusRejected:
-			payload["rejected_goals"] = payload["rejected_goals"].(int) + 1
-		}
-	}
-
-	canFinalize, blockers := t.Subgoals.CanFinalize()
-	payload["can_finalize"] = canFinalize
-	payload["active_branches"] = blockers
-	payload["active_branch_count"] = len(blockers)
-	payload["ui_summary"] = fmt.Sprintf("当前共有 %d 个目标，%d 条活跃分支。", len(goals), len(blockers))
+	payload := buildGoalStateFacts(t.Subgoals, true)
+	payload["ok"] = true
+	payload["tool"] = "state_goal_inspect"
+	payload["ui_summary"] = fmt.Sprintf("当前共有 %d 个目标，%d 条活跃分支。", payload["goal_count"], payload["active_branch_count"])
 
 	return marshalToolPayload(payload)
 }
@@ -111,7 +81,7 @@ func (t *InspectReportStateTool) Name() string {
 }
 
 func (t *InspectReportStateTool) Description() string {
-	return "读取当前报告状态的事实视图。返回 block、chart、引用关系和完整性计数；不修改任何状态。"
+	return "读取当前报告状态的事实视图。返回 block、chart、引用关系、delivery_state 与 finalize 完整性计数；不修改任何状态。"
 }
 
 func (t *InspectReportStateTool) Parameters() json.RawMessage {
@@ -217,6 +187,8 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 			textBlocksWithoutCharts++
 		}
 	}
+	delivery := tools.DescribeReportDeliveryState(t.ReportState)
+	finalizeIssues := tools.ReportFinalizeIssuesForAgent(t.ReportState)
 
 	payload := map[string]interface{}{
 		"ok":                            true,
@@ -233,6 +205,15 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		"chart_blocks_missing_caption":  chartBlocksMissingCaption,
 		"text_block_count":              textBlockCount,
 		"text_blocks_without_chart":     textBlocksWithoutCharts,
+		"has_content":                   delivery.HasContent,
+		"delivery_state":                delivery.DeliveryState,
+		"is_finalized":                  delivery.IsFinalized,
+		"needs_finalize":                delivery.NeedsFinalize,
+		"final_title":                   delivery.FinalTitle,
+		"final_author":                  delivery.FinalAuthor,
+		"can_finalize_structurally":     len(finalizeIssues) == 0,
+		"finalize_issue_count":          len(finalizeIssues),
+		"finalize_issues":               finalizeIssues,
 		"ui_summary":                    fmt.Sprintf("当前报告共有 %d 个 block、%d 张图表。", len(t.ReportState.Blocks), len(chartIDs)),
 	}
 	return marshalToolPayload(payload)
