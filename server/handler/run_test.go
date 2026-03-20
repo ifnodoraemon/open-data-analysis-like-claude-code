@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
@@ -33,5 +34,39 @@ func TestSummarizeRunMessageFallsBackToSummaryText(t *testing.T) {
 	summary := summarizeRunMessage(msg)
 	if summary != "已导入 2 张表" {
 		t.Fatalf("expected summary_text fallback, got %q", summary)
+	}
+}
+
+func TestRenderReportHTMLFromSnapshotRegeneratesCurrentTemplate(t *testing.T) {
+	t.Parallel()
+
+	report := &domain.Report{
+		Title: "测试报告",
+		SnapshotJSON: `{
+			"version":"v3",
+			"title":"测试报告",
+			"author":"AI",
+			"blocks":[
+				{"id":"blk_1","kind":"markdown","title":"一、概览","content":"说明"},
+				{"id":"blk_chart","kind":"chart","title":"趋势图","content":"图表说明","chartId":"chart_sales"}
+			],
+			"charts":[
+				{"id":"chart_sales","option":{"series":[{"type":"bar","data":[1]}]}}
+			]
+		}`,
+	}
+
+	html, ok := renderReportHTMLFromSnapshot(report)
+	if !ok {
+		t.Fatal("expected snapshot to be rendered")
+	}
+	if !strings.Contains(html, `<h2>1. 概览</h2>`) {
+		t.Fatalf("expected regenerated html to normalize prefixed titles, got: %s", html)
+	}
+	if !strings.Contains(html, `document.querySelectorAll('.chart-box[data-chart-id="chart_sales"]')`) {
+		t.Fatalf("expected regenerated html to use chart-box-only selector, got: %s", html)
+	}
+	if strings.Contains(html, `data-block-id="blk_chart" data-block-kind="chart" data-chart-id="chart_sales"`) {
+		t.Fatalf("expected chart wrapper not to retain duplicate data-chart-id, got: %s", html)
 	}
 }

@@ -209,6 +209,12 @@ func TestRenderReportHTMLUsesBlocksAsPrimaryModel(t *testing.T) {
 	if !strings.Contains(html, `data-chart-id="chart_sales"`) || !strings.Contains(html, "图表解读") {
 		t.Fatalf("expected chart block to render chart and commentary")
 	}
+	if strings.Contains(html, `data-block-id="trend" data-block-kind="chart" data-chart-id="chart_sales"`) {
+		t.Fatalf("expected chart block wrapper not to carry data-chart-id, got: %s", html)
+	}
+	if !strings.Contains(html, `document.querySelectorAll('.chart-box[data-chart-id="chart_sales"]')`) {
+		t.Fatalf("expected chart runtime to target chart boxes only, got: %s", html)
+	}
 }
 
 func TestRenderReportHTMLSanitizesUnsafeHTML(t *testing.T) {

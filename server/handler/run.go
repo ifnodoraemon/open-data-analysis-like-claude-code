@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ifnodoraemon/openDataAnalysis/auth"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
 const runPreviewLimit = 3
@@ -89,6 +90,12 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 
 	report, reportErr := reportRepo.GetByRunID(r.Context(), runID)
 	if reportErr == nil && report != nil {
+		if html, ok := renderReportHTMLFromSnapshot(report); ok {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Disposition", `inline; filename="`+safeHeaderFilename(reportFilename(report.Title, runID))+`"`)
+			_, _ = io.WriteString(w, html)
+			return
+		}
 		reader, err := fileService.OpenStoredObject(r.Context(), identity.UserID, identity.WorkspaceID, report.HTMLStorageKey)
 		if err == nil {
 			defer reader.Close()
@@ -125,6 +132,55 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", defaultContentType(file.ContentType))
 	w.Header().Set("Content-Disposition", `inline; filename="`+safeHeaderFilename(file.DisplayName)+`"`)
 	_, _ = io.Copy(w, reader)
+}
+
+func renderReportHTMLFromSnapshot(report *domain.Report) (string, bool) {
+	if report == nil || strings.TrimSpace(report.SnapshotJSON) == "" {
+		return "", false
+	}
+
+	var snapshot domain.ReportSnapshot
+	if err := json.Unmarshal([]byte(report.SnapshotJSON), &snapshot); err != nil {
+		return "", false
+	}
+
+	state := &tools.ReportState{
+		FinalTitle:  strings.TrimSpace(snapshot.Title),
+		FinalAuthor: strings.TrimSpace(snapshot.Author),
+		Layout: tools.ReportLayout{
+			CustomHTMLShell: snapshot.Layout.CustomHTMLShell,
+			CustomCSS:       snapshot.Layout.CustomCSS,
+			CustomJS:        snapshot.Layout.CustomJS,
+			BodyClass:       snapshot.Layout.BodyClass,
+			HideCover:       snapshot.Layout.HideCover,
+			HideTOC:         snapshot.Layout.HideTOC,
+		},
+		NeedsFinalize: false,
+		Blocks:        make([]tools.ReportBlock, 0, len(snapshot.Blocks)),
+		Charts:        make([]tools.ChartData, 0, len(snapshot.Charts)),
+	}
+
+	for _, block := range snapshot.Blocks {
+		reportBlock := tools.ReportBlock{
+			ID:      block.ID,
+			Kind:    block.Kind,
+			Title:   block.Title,
+			Content: block.Content,
+			ChartID: block.ChartID,
+		}
+		state.Blocks = append(state.Blocks, reportBlock)
+	}
+
+	for _, chart := range snapshot.Charts {
+		state.Charts = append(state.Charts, tools.ChartData{
+			ID:     chart.ID,
+			Option: chart.Option,
+			Width:  chart.Width,
+			Height: chart.Height,
+		})
+	}
+
+	return tools.RenderReportHTML(snapshot.Title, snapshot.Author, state), true
 }
 
 func serializeRuns(ctx context.Context, runs []domain.AnalysisRun) []map[string]interface{} {

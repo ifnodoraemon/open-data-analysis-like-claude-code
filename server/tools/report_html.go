@@ -448,7 +448,7 @@ func buildChartScripts(charts []ChartData) string {
 		optionStr := safeJSONForInlineScript(ch.Option)
 		chartScripts.WriteString(fmt.Sprintf(`
   (function() {
-    var nodes = document.querySelectorAll('[data-chart-id="%s"]');
+    var nodes = document.querySelectorAll('.chart-box[data-chart-id="%s"]');
     if (nodes.length > 0) {
       var option = %s;
       nodes.forEach(function(el) {
@@ -640,10 +640,10 @@ func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData)
 		content += "\n\n" + block.Content
 	}
 	return fmt.Sprintf(`
-		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart" data-chart-id="%s">
+		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart">
 			<h2>%d. %s</h2>
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(block.ChartID), chapterNum, escapeHTMLText(title), processContent(content, charts))
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), chapterNum, escapeHTMLText(title), processContent(content, charts))
 }
 
 // processContent 处理内容：Markdown 转 HTML + 替换图表占位符
