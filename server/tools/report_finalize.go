@@ -1,0 +1,67 @@
+package tools
+
+import (
+	"fmt"
+	"strings"
+)
+
+type reportFinalizeParams struct {
+	ReportTitle string `json:"report_title"`
+	Author      string `json:"author"`
+}
+
+type reportFinalizeResult struct {
+	ReportTitle string
+	Author      string
+	BlockCount  int
+	ChartCount  int
+}
+
+type reportFinalizeBlockedError struct {
+	Blockers []string
+}
+
+func (e reportFinalizeBlockedError) Error() string {
+	return fmt.Sprintf("finalize blocked by %d active branches", len(e.Blockers))
+}
+
+type reportFinalizeIssuesError struct {
+	Issues []string
+}
+
+func (e reportFinalizeIssuesError) Error() string {
+	return fmt.Sprintf("finalize blocked by %d report issues", len(e.Issues))
+}
+
+func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params reportFinalizeParams) (reportFinalizeResult, error) {
+	if state == nil {
+		return reportFinalizeResult{}, fmt.Errorf("report state is not initialized")
+	}
+
+	params.Author = strings.TrimSpace(params.Author)
+	if params.Author == "" {
+		params.Author = "AI 数据分析师"
+	}
+
+	if subgoals != nil {
+		canFinalize, blockers := subgoals.CanFinalize()
+		if !canFinalize {
+			return reportFinalizeResult{}, reportFinalizeBlockedError{Blockers: blockers}
+		}
+	}
+
+	if issues := reportFinalizeIssues(state); len(issues) > 0 {
+		return reportFinalizeResult{}, reportFinalizeIssuesError{Issues: issues}
+	}
+
+	state.FinalTitle = params.ReportTitle
+	state.FinalAuthor = params.Author
+	state.NeedsFinalize = false
+
+	return reportFinalizeResult{
+		ReportTitle: params.ReportTitle,
+		Author:      params.Author,
+		BlockCount:  len(state.Blocks),
+		ChartCount:  len(state.Charts),
+	}, nil
+}

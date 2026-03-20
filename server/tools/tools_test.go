@@ -11,7 +11,6 @@ import (
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/data"
-	"github.com/sashabaranov/go-openai"
 )
 
 type stubSubgoalChecker struct {
@@ -27,7 +26,7 @@ func TestMain(m *testing.M) {
 	config.Cfg = &config.Config{
 		LLMAPIKey: "mock-key",
 	}
-	data.AnalyzeTableSemantics = func(ctx context.Context, client *openai.Client, schema *data.SchemaInfo, activeTables []string) (*data.SemanticProfile, error) {
+	data.AnalyzeTableSemantics = func(ctx context.Context, chatFn data.LLMChatFunc, schema *data.SchemaInfo, activeTables []string) (*data.SemanticProfile, error) {
 		return &data.SemanticProfile{
 			TableSummary: "Mock test semantics",
 		}, nil

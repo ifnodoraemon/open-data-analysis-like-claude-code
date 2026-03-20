@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -121,55 +122,24 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
-	var option json.RawMessage
-	var err error
-	if hasRawChartOption(params.Option) {
-		option = params.Option
-	} else {
-		option, err = buildOptionFromDSL(params)
-		if err != nil {
-			return chartValidationFeedback("invalid_chart_spec", params.ChartID, params.Title, "图表定义无效", err.Error()), nil
+	result, err := applyReportChartMutation(t.ReportState, t.EditState, params)
+	if err != nil {
+		var validationErr reportChartValidationError
+		if errors.As(err, &validationErr) {
+			return chartValidationFeedback("invalid_chart_spec", validationErr.ChartID, validationErr.Title, "图表定义无效", validationErr.Detail), nil
 		}
-	}
-
-	chart := ChartData{
-		ID:     params.ChartID,
-		Option: option,
-		Width:  "100%",
-		Height: "400px",
-	}
-
-	if t.EditState != nil && !t.EditState.ChartMutationAllowed(params.ChartID) {
-		return toolFailure("report_create_chart", "edit_scope_violation", "当前编辑范围不允许修改该图表", map[string]interface{}{
-			"chart_id":   params.ChartID,
-			"ui_summary": fmt.Sprintf("图表 %s 超出当前局部编辑范围", params.ChartID),
-		}), nil
-	}
-
-	replaced := false
-	for i := range t.ReportState.Charts {
-		if strings.TrimSpace(t.ReportState.Charts[i].ID) == params.ChartID {
-			t.ReportState.Charts[i] = chart
-			replaced = true
-			break
+		var scopeErr reportChartScopeError
+		if errors.As(err, &scopeErr) {
+			return reportEditScopeFailure("report_create_chart", "chart_id", scopeErr.ChartID, "图表", fmt.Sprintf("图表 %s 超出当前局部编辑范围", scopeErr.ChartID), nil), nil
 		}
+		return "", err
 	}
-	if !replaced {
-		t.ReportState.Charts = append(t.ReportState.Charts, chart)
-	}
-	t.ReportState.NeedsFinalize = true
-	delivery := DescribeReportDeliveryState(t.ReportState)
 
-	return toolSuccess("report_create_chart", map[string]interface{}{
-		"chart_id":                       params.ChartID,
-		"title":                          params.Title,
-		"chart_ref":                      "{{chart:" + params.ChartID + "}}",
-		"delivery_state":                 delivery.DeliveryState,
-		"is_finalized":                   delivery.IsFinalized,
-		"needs_finalize":                 delivery.NeedsFinalize,
-		"requires_finalize_for_delivery": delivery.HasContent,
-		"message":                        "当前报告仍处于草稿态，尚未生成最终报告文件。",
-		"ui_summary":                     fmt.Sprintf("图表 %s 已%s到报告草稿", params.ChartID, map[bool]string{true: "更新", false: "写入"}[replaced]),
+	return reportDraftSuccess("report_create_chart", t.ReportState, map[string]interface{}{
+		"chart_id":   result.ChartID,
+		"title":      result.Title,
+		"chart_ref":  result.ChartRef,
+		"ui_summary": fmt.Sprintf("图表 %s 已%s到报告草稿", result.ChartID, map[bool]string{true: "更新", false: "写入"}[result.Replaced]),
 	}), nil
 }
 
