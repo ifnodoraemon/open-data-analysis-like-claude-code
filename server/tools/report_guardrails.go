@@ -1,0 +1,175 @@
+package tools
+
+import (
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+var (
+	sectionChapterPrefixPattern = regexp.MustCompile(`^(第[一二三四五六七八九十百千0-9]+(?:章|节|部分|篇)\s*)`)
+	sectionOrdinalPrefixPattern = regexp.MustCompile(`^([一二三四五六七八九十百千0-9]+[.、)）]\s*)`)
+	sectionWhitespacePattern    = regexp.MustCompile(`\s+`)
+)
+
+func (s *ReportEditState) RefreshFromReportState(state *ReportState) {
+	if s == nil {
+		return
+	}
+	s.AllowedChartIDs = collectEditableChartIDs(state, s.TargetBlockID)
+}
+
+func (s *ReportEditState) BlockMutationAllowed(action, blockID string) bool {
+	if !s.Active() || !s.PreserveOtherBlocks {
+		return true
+	}
+	target := strings.TrimSpace(s.TargetBlockID)
+	id := strings.TrimSpace(blockID)
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "upsert":
+		return target != "" && id == target
+	default:
+		return false
+	}
+}
+
+func (s *ReportEditState) ChartMutationAllowed(chartID string) bool {
+	if !s.Active() || !s.PreserveOtherBlocks {
+		return true
+	}
+	_, ok := s.AllowedChartIDs[strings.TrimSpace(chartID)]
+	return ok
+}
+
+func collectEditableChartIDs(state *ReportState, blockID string) map[string]struct{} {
+	refs := make(map[string]struct{})
+	if state == nil || strings.TrimSpace(blockID) == "" {
+		return refs
+	}
+	index := findReportBlockIndex(state.Blocks, strings.TrimSpace(blockID))
+	if index < 0 {
+		return refs
+	}
+	block := state.Blocks[index]
+	if strings.TrimSpace(block.ChartID) != "" {
+		refs[strings.TrimSpace(block.ChartID)] = struct{}{}
+	}
+	for _, ref := range chartRefsOutsideChartBlock(block.Content) {
+		refs[ref] = struct{}{}
+	}
+	return refs
+}
+
+func referencedChartsOutsideChartBlocks(blocks []ReportBlock) map[string]struct{} {
+	refs := make(map[string]struct{})
+	for _, block := range blocks {
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") {
+			continue
+		}
+		for _, ref := range chartRefsOutsideChartBlock(block.Content) {
+			refs[ref] = struct{}{}
+		}
+	}
+	return refs
+}
+
+func reportFinalizeIssues(state *ReportState) []string {
+	if state == nil {
+		return []string{"report_state_missing"}
+	}
+
+	chartSet := make(map[string]struct{}, len(state.Charts))
+	for _, chart := range state.Charts {
+		chartID := strings.TrimSpace(chart.ID)
+		if chartID != "" {
+			chartSet[chartID] = struct{}{}
+		}
+	}
+
+	refCounts := make(map[string]int)
+	for _, block := range state.Blocks {
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") && strings.TrimSpace(block.ChartID) != "" {
+			refCounts[strings.TrimSpace(block.ChartID)]++
+		}
+		for chartID := range referencedChartsOutsideChartBlocks([]ReportBlock{block}) {
+			refCounts[chartID]++
+		}
+	}
+
+	var issues []string
+	if len(state.Blocks) == 0 {
+		issues = append(issues, "report_has_no_blocks")
+	}
+	for _, block := range state.Blocks {
+		if hasDuplicateLeadingHeading(block) {
+			issues = append(issues, "duplicate_block_heading:"+block.ID)
+		}
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") && strings.TrimSpace(block.ChartID) != "" && strings.TrimSpace(block.Content) == "" {
+			issues = append(issues, "chart_block_missing_caption:"+block.ID)
+		}
+	}
+
+	var missingCharts []string
+	for chartID := range refCounts {
+		if _, ok := chartSet[chartID]; !ok {
+			missingCharts = append(missingCharts, chartID)
+		}
+	}
+	sort.Strings(missingCharts)
+	for _, chartID := range missingCharts {
+		issues = append(issues, "missing_chart:"+chartID)
+	}
+
+	var duplicateCharts []string
+	for chartID, count := range refCounts {
+		if count > 1 {
+			duplicateCharts = append(duplicateCharts, fmt.Sprintf("%s(x%d)", chartID, count))
+		}
+	}
+	sort.Strings(duplicateCharts)
+	for _, item := range duplicateCharts {
+		issues = append(issues, "duplicate_chart:"+item)
+	}
+
+	return issues
+}
+
+func hasDuplicateLeadingHeading(block ReportBlock) bool {
+	kind := strings.ToLower(strings.TrimSpace(block.Kind))
+	if kind != "markdown" && kind != "html" {
+		return false
+	}
+	if strings.TrimSpace(block.Title) == "" || strings.TrimSpace(block.Content) == "" {
+		return false
+	}
+	lines := strings.Split(block.Content, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "#") {
+			return false
+		}
+		heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		return normalizeSectionTitle(heading) == normalizeSectionTitle(block.Title)
+	}
+	return false
+}
+
+func HasDuplicateLeadingHeadingForAgent(block ReportBlock) bool {
+	return hasDuplicateLeadingHeading(block)
+}
+
+func normalizeSectionTitle(value string) string {
+	normalized := strings.TrimSpace(value)
+	normalized = sectionChapterPrefixPattern.ReplaceAllString(normalized, "")
+	normalized = sectionOrdinalPrefixPattern.ReplaceAllString(normalized, "")
+	normalized = sectionWhitespacePattern.ReplaceAllString(normalized, "")
+	return normalized
+}
+
+func ReportFinalizeIssuesForAgent(state *ReportState) []string {
+	return reportFinalizeIssues(state)
+}
