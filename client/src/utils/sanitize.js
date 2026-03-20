@@ -56,22 +56,15 @@ function cleanAttributes(node, { allowMarkdownClasses = false, allowChartStyle =
       continue
     }
     if (name === 'style') {
-      if (!allowChartStyle || !node.hasAttribute('data-chart-id')) {
+      if (!allowChartStyle) {
         node.removeAttribute('style')
-        continue
       }
-      const match = String(value || '').match(/height\s*:\s*([0-9.]+(?:px|%|vh|rem))/i)
-      if (!match) {
-        node.removeAttribute('style')
-        continue
-      }
-      node.setAttribute('style', `height:${match[1]};`)
       continue
     }
     if (name === 'target' || name === 'rel') {
       continue
     }
-    if (name.startsWith('data-') || name === 'id' || name === 'title' || name === 'colspan' || name === 'rowspan') {
+    if (name.startsWith('data-') || ['id', 'title', 'colspan', 'rowspan', 'charset', 'name', 'content'].includes(name)) {
       continue
     }
     node.removeAttribute(attr.name)
@@ -111,14 +104,27 @@ export function sanitizeReportHTML(html) {
   const doc = parser.parseFromString(String(html || ''), 'text/html')
 
   doc.querySelectorAll('iframe, object, embed, base, meta[http-equiv]').forEach(node => node.remove())
-  doc.querySelectorAll('link').forEach(node => node.remove())
+  doc.querySelectorAll('link').forEach(node => {
+    const href = node.getAttribute('href') || ''
+    if (!href.startsWith('https://fonts.')) {
+      node.remove()
+    }
+  })
+
+  // 在 DOMParser 处理前先保存白名单脚本的原始 textContent。
+  // DOMParser 序列化 script raw text 时会把内部的 < > 转为 HTML 实体，
+  // 导致 chart runtime 的 innerHTML 赋值字符串损坏，图表无法渲染。
+  const scriptSnapshots = new Map()
   doc.querySelectorAll('script').forEach((node) => {
-    const id = node.getAttribute('id') || ''
     const src = node.getAttribute('src') || ''
-    const isSafeLoader = id === 'oda-echarts-loader' && src === 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js'
-    const isSafeRuntime = id === 'oda-chart-runtime' && !src
+    const isSafeLoader = src.includes('echarts.min.js')
+    const isSafeRuntime = !src
     if (!isSafeLoader && !isSafeRuntime) {
       node.remove()
+    } else if (isSafeRuntime) {
+      const scriptId = node.getAttribute('id') || `script-${Math.random().toString(36).substr(2, 9)}`
+      if (!node.getAttribute('id')) node.setAttribute('id', scriptId)
+      scriptSnapshots.set(scriptId, node.textContent)
     }
   })
 
@@ -129,6 +135,17 @@ export function sanitizeReportHTML(html) {
     doc.body.removeAttribute('class')
   }
 
-  sanitizeTree(doc.documentElement, { allowChartStyle: true })
-  return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`
+  sanitizeTree(doc.documentElement, { allowMarkdownClasses: true, allowChartStyle: true })
+
+  // 序列化后，用字符串替换还原脚本内容（绕过 outerHTML 的实体转义问题）
+  let serialized = `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`
+  scriptSnapshots.forEach((originalText, scriptId) => {
+    if (!originalText) return
+    const regex = new RegExp(`(<script[^>]*id="${scriptId}"[^>]*>)([\\s\\S]*?)(<\\/script>)`)
+    serialized = serialized.replace(
+      regex,
+      (_, open, _body, close) => `${open}${originalText}${close}`
+    )
+  })
+  return serialized
 }

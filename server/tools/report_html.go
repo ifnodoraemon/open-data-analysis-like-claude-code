@@ -522,10 +522,41 @@ func isTitleBlock(block ReportBlock) bool {
 	return strings.EqualFold(strings.TrimSpace(block.Kind), "title")
 }
 
+var titleOrdinalPrefixPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^\s*第\s*[0-9一二三四五六七八九十百千万零两]+\s*[章节部分篇]\s*[:：、.\-]?\s*`),
+	regexp.MustCompile(`^\s*[（(]\s*[0-9一二三四五六七八九十百千万零两]+\s*[)）]\s*`),
+	regexp.MustCompile(`^\s*[0-9]{1,2}(?:\.[0-9]{1,2})?\s*[.、:：\-]\s*`),
+	regexp.MustCompile(`^\s*[一二三四五六七八九十百千万零两]{1,3}\s*[.、:：\-]\s*`),
+	regexp.MustCompile(`^\s*[0-9]{1,2}\s+`),
+}
+
+func normalizeBlockDisplayTitle(title string) string {
+	normalized := strings.TrimSpace(title)
+	if normalized == "" {
+		return ""
+	}
+
+	for range 4 {
+		changed := false
+		for _, pattern := range titleOrdinalPrefixPatterns {
+			next := strings.TrimSpace(pattern.ReplaceAllString(normalized, ""))
+			if next != "" && next != normalized {
+				normalized = next
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return normalized
+}
+
 func blockDisplayTitle(block ReportBlock, chapterNum int) string {
 	title := strings.TrimSpace(block.Title)
 	if title != "" {
-		return title
+		return normalizeBlockDisplayTitle(title)
 	}
 	switch strings.ToLower(strings.TrimSpace(block.Kind)) {
 	case "chart":

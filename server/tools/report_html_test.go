@@ -89,6 +89,37 @@ func TestRenderReportHTMLSupportsCustomSectionKinds(t *testing.T) {
 	}
 }
 
+func TestRenderReportHTMLNormalizesPrefixedSectionTitles(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "sec-1", Kind: "markdown", Title: "一、数据概览", Content: "内容 1"},
+			{ID: "sec-2", Kind: "markdown", Title: "02 各维度分布", Content: "内容 2"},
+			{ID: "sec-3", Kind: "markdown", Title: "第3章 趋势变化", Content: "内容 3"},
+		},
+	})
+
+	if !strings.Contains(html, `<li><a href="#section-1">数据概览</a></li>`) {
+		t.Fatalf("expected toc title to strip ordinal prefix, got: %s", html)
+	}
+	if !strings.Contains(html, `<li><a href="#section-2">各维度分布</a></li>`) {
+		t.Fatalf("expected numeric space prefix to be stripped, got: %s", html)
+	}
+	if !strings.Contains(html, `<li><a href="#section-3">趋势变化</a></li>`) {
+		t.Fatalf("expected chapter prefix to be stripped, got: %s", html)
+	}
+	if !strings.Contains(html, `<h2>1. 数据概览</h2>`) {
+		t.Fatalf("expected heading to keep single generated ordinal, got: %s", html)
+	}
+	if !strings.Contains(html, `<h2>2. 各维度分布</h2>`) {
+		t.Fatalf("expected heading to normalize prefixed title, got: %s", html)
+	}
+	if !strings.Contains(html, `<h2>3. 趋势变化</h2>`) {
+		t.Fatalf("expected heading to normalize chapter title, got: %s", html)
+	}
+}
+
 func TestRenderReportHTMLSupportsLayoutOverrides(t *testing.T) {
 	t.Parallel()
 
