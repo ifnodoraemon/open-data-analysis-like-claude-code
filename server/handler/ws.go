@@ -316,71 +316,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Define runEmitter once for the entire EventUserMessage case
-			runEmitter := func(runID string) func(agent.WSEvent) {
-				return func(ev agent.WSEvent) {
-					sendSessionEvent(conn, &writeMu, sess.ID, runID, ev)
-					saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, runID, ev)
-
-					if ev.Type == agent.EventToolResult {
-						if result, ok := ev.Data.(agent.ToolResultData); ok {
-							if shouldEmitReportPreview(result.Name) {
-								emitReportPreviewUpdate(requestCtx, conn, &writeMu, sess.ID, sess.WorkspaceID, runID, sess.ReportState)
-							}
-							if result.Name == "report_finalize" && result.Success {
-								finalizeAndPersistReport(requestCtx, conn, &writeMu, sess, identity, runID)
-							}
-						}
-					}
-
-					switch ev.Type {
-					case agent.EventUserRequestInput:
-						sess.SuspendRun(runID)
-						_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
-							return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusWaitingUserInput, nil)
-						})
-						log.Printf("run suspended waiting_user_input run_id=%s session_id=%s", runID, sess.ID)
-					case agent.EventRunCompleted:
-						sess.FinishRun(runID, "completed")
-						_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
-							return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusCompleted, nil)
-						})
-						if complete, ok := ev.Data.(agent.CompleteData); ok {
-							_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
-								return runRepo.UpdateSummary(persistCtx, runID, strings.TrimSpace(complete.Summary))
-							})
-							log.Printf("run completed run_id=%s session_id=%s summary_chars=%d", runID, sess.ID, len([]rune(strings.TrimSpace(complete.Summary))))
-						} else {
-							log.Printf("run completed run_id=%s session_id=%s", runID, sess.ID)
-						}
-					case agent.EventRunCancelled:
-						sess.FinishRun(runID, "cancelled")
-						_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
-							return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusCancelled, nil)
-						})
-						log.Printf("run cancelled run_id=%s session_id=%s", runID, sess.ID)
-					case agent.EventError:
-						sess.FinishRun(runID, "failed")
-						if errData, ok := ev.Data.(agent.ErrorData); ok {
-							msg := errData.Message
-							_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
-								return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusFailed, &msg)
-							})
-							log.Printf("run failed run_id=%s session_id=%s error=%q", runID, sess.ID, clipLogText(msg, 240))
-						} else {
-							_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
-								return runRepo.UpdateStatus(persistCtx, runID, domain.RunStatusFailed, nil)
-							})
-							log.Printf("run failed run_id=%s session_id=%s", runID, sess.ID)
-						}
-					}
-				}
-			}
-
 			// 检查是否正在等待用户回答
 			activeRunID, isWaiting := sess.GetWaitingRunID()
 
 			if isWaiting {
+				runEmitter := newRuntimeEventDispatcher(requestCtx, conn, &writeMu, sess, identity, activeRunID)
 				err := sess.Engine.ProvideAskUserResult(userMsg.Content)
 				if err != nil {
 					sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{
@@ -413,13 +353,13 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					workspaceID: sess.WorkspaceID,
 					sessionID:   sess.ID,
 					userID:      identity.UserID,
-					emit:        runEmitter(activeRunID),
+					emit:        runEmitter.Emit,
 				})
-				go sess.Engine.Run(resumeCtx, "", runEmitter(activeRunID))
+				go sess.Engine.Run(resumeCtx, "", runEmitter.Emit)
 				continue
 			}
 
-			if err := sess.PrepareUserRun(r.Context(), userMsg, handlerReportSnapshotLoader{}); err != nil {
+			if err := runBeforeUserRunHooks(r.Context(), sess, userMsg, prepareUserRunHook(handlerReportSnapshotLoader{})); err != nil {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 					Type: agent.EventError,
 					Data: agent.ErrorData{Message: err.Error()},
@@ -491,6 +431,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				Type: agent.EventRunStarted,
 				Data: agent.RunStartedData{RunID: runID},
 			})
+			runEmitter := newRuntimeEventDispatcher(requestCtx, conn, &writeMu, sess, identity, runID)
 
 			userContent, err := buildRunUserContent(sess, userMsg)
 			if err != nil {
@@ -514,10 +455,10 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				workspaceID: sess.WorkspaceID,
 				sessionID:   sess.ID,
 				userID:      identity.UserID,
-				emit:        runEmitter(runID),
+				emit:        runEmitter.Emit,
 			})
 
-			go sess.Engine.Run(ctx, userContent, runEmitter(runID))
+			go sess.Engine.Run(ctx, userContent, runEmitter.Emit)
 
 		case agent.EventStop:
 			dataBytes, _ := json.Marshal(event.Data)
