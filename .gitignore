@@ -1,6 +1,9 @@
 # Dependencies
 server/vendor/
 client/node_modules/
+node_modules/
+.venv-scenario/
+tmp/
 
 # Build output
 client/dist/
