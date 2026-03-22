@@ -49,3 +49,49 @@ jobs:
 
     - name: Build Docker Compose
       run: docker compose build
+
+  scenario-smoke:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test-backend, build-frontend]
+    continue-on-error: true  # LLM credentials may not be available
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run Go tests
+      working-directory: ./server
+      run: go test -v ./...
+
+    - name: Start services
+      run: |
+        cp server/.env.example server/.env
+        docker compose up -d --build
+        sleep 10
+
+    - name: Run smoke scenarios
+      env:
+        SMOKE_SCENARIOS: "01_sales_complete 12_ambiguous_metrics"
+        SKIP_INFRA_FAILURES: "1"
+      run: bash scripts/smoke_test.sh http://127.0.0.1 120
+
+    - name: Run eval report
+      if: always()
+      run: node scripts/eval_report.js --results-dir tmp/scenario-runs
+
+    - name: Upload smoke results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: smoke-test-results
+        path: tmp/smoke-test-summary.json
+        retention-days: 14

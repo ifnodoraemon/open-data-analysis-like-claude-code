@@ -344,6 +344,8 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	trace := make([]delegateTraceItem, 0, 12)
 
 	const maxWorkerIterations = 25
+	totalPromptTokens := 0
+	totalCompletionTokens := 0
 	for i := 0; i < maxWorkerIterations; i++ {
 		if childCtx.Err() != nil {
 			if t.Subgoals != nil && payload.GoalID != "" {
@@ -361,6 +363,12 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		}
 
 		resp, err := llmClient.ChatWithTools(childCtx, messages, oaiTools)
+		if err == nil {
+			// 累计 token 消耗，并触发上下文压缩
+			totalPromptTokens += resp.Usage.PromptTokens
+			totalCompletionTokens += resp.Usage.CompletionTokens
+			messages = compactWorkerMessages(messages, resp.Usage.PromptTokens)
+		}
 		if err != nil {
 			if t.Subgoals != nil && payload.GoalID != "" {
 				_ = t.Subgoals.UpdateGoalStatus(payload.GoalID, StatusPending, err.Error())
@@ -372,6 +380,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			if persistence != nil && childRunID != "" {
 				msg := err.Error()
 				_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusFailed), &msg)
+				_ = persistence.UpdateChildRunTokens(childCtx, childRunID, totalPromptTokens, totalCompletionTokens)
 			}
 			return delegateToolFailure(childRunID, payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "delegate_execution_failed", fmt.Sprintf("delegated agent failed: %v", err), map[string]interface{}{
 				"child_run_status": string(domain.RunStatusFailed),
@@ -405,6 +414,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				_ = persistence.UpdateChildRunSummary(childCtx, childRunID, result)
 				_ = persistence.AppendChildEvent(childCtx, childRunID, WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: result}})
 				_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusCompleted), nil)
+				_ = persistence.UpdateChildRunTokens(childCtx, childRunID, totalPromptTokens, totalCompletionTokens)
 			}
 			return delegateToolSuccess(childRunID, payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, result, trace), nil
 		}
@@ -487,6 +497,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	if persistence != nil && childRunID != "" {
 		msg := fmt.Sprintf("delegated agent %s max iterations reached", payload.RoleName)
 		_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusFailed), &msg)
+		_ = persistence.UpdateChildRunTokens(childCtx, childRunID, totalPromptTokens, totalCompletionTokens)
 	}
 	return delegateToolFailure(childRunID, payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "delegate_max_iterations_reached", fmt.Sprintf("delegated agent %s max iterations reached", payload.RoleName), map[string]interface{}{
 		"child_run_status": string(domain.RunStatusFailed),

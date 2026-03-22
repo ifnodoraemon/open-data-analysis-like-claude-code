@@ -40,6 +40,90 @@ type executionContextAware interface {
 
 type specialToolHandler func(context.Context, openai.ToolCall, func(WSEvent)) (string, error, bool)
 
+// isRetryableToolError 判断工具执行错误是否属于可重试的网络临时故障。
+func isRetryableToolError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "tls handshake") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "connection reset by peer")
+}
+
+// retryableToolExec 在工具执行层面对瞬态网络错误做最多 3 次指数退避重试。
+// 注意：special handler（user_request_input / report_finalize）不经过此函数。
+func retryableToolExec(ctx context.Context, registry *tools.Registry, toolName string, args json.RawMessage) (string, error) {
+	delays := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	var result string
+	var execErr error
+	for attempt := 0; attempt <= len(delays); attempt++ {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		result, execErr = registry.Execute(toolName, args)
+		if execErr == nil || !isRetryableToolError(execErr) {
+			return result, execErr
+		}
+		if attempt < len(delays) {
+			log.Printf("Tool %s 瞬态错误 (第 %d 次): %v — %s 后重试", toolName, attempt+1, execErr, delays[attempt])
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(delays[attempt]):
+			}
+		}
+	}
+	return result, execErr
+}
+
+// compactWorkerMessages 对子代理消息历史做上下文压缩。
+// 始终保留 messages[0]（system prompt）和 messages[1]（用户任务指令），
+// 对 messages[2:] 中超出最近窗口的部分注入摘要并裁剪。
+func compactWorkerMessages(messages []openai.ChatCompletionMessage, promptTokens int) []openai.ChatCompletionMessage {
+	// 至少需要 system + user_task + 1 条历史才值得压缩
+	if len(messages) <= 2 {
+		return messages
+	}
+	if promptTokens <= 0 || promptTokens <= contextCompactTriggerTokens {
+		return messages
+	}
+
+	// historyStart 为可压缩历史的起始索引（跳过 system + user_task）
+	historyStart := 2
+	existingDigest := ""
+	if len(messages) > 2 && isHistoryDigestMessage(messages[2]) {
+		existingDigest = strings.TrimSpace(strings.TrimPrefix(messages[2].Content, historyDigestPrefix))
+		historyStart = 3
+	}
+
+	if len(messages)-historyStart <= recentContextWindow {
+		return messages
+	}
+
+	recentStart := len(messages) - recentContextWindow
+	if recentStart < historyStart {
+		recentStart = historyStart
+	}
+
+	digest := buildHistoryDigest(existingDigest, messages[historyStart:recentStart])
+	if digest == "" {
+		return messages
+	}
+
+	compacted := make([]openai.ChatCompletionMessage, 0, recentContextWindow+3)
+	compacted = append(compacted, messages[0], messages[1])
+	compacted = append(compacted, openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleSystem,
+		Content: digest,
+	})
+	compacted = append(compacted, messages[recentStart:]...)
+	return compacted
+}
+
 // NewEngine 创建 Agent 引擎（支持多轮对话）
 func NewEngine(registry *tools.Registry, systemPrompt string) *Engine {
 	if systemPrompt == "" {
@@ -277,9 +361,43 @@ func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
 func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 	return map[string]specialToolHandler{
 		"user_request_input": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
-			var payload AskUserData
-			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &payload); err != nil {
+			// LLM 可能发送 options 为对象数组 [{id,label,hint}] 或字符串数组 ["a","b"]
+			// AskUserData.Options 是 []string，所以需要打开解析
+			var raw struct {
+				Question   string          `json:"question"`
+				Reason     string          `json:"reason"`
+				Scope      string          `json:"scope"`
+				ContextRef string          `json:"context_ref"`
+				Required   bool            `json:"required"`
+				Options    json.RawMessage `json:"options"`
+			}
+			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &raw); err != nil {
 				return "", fmt.Errorf("user_request_input 参数解析失败: %w", err), true
+			}
+			payload := AskUserData{
+				Question:   raw.Question,
+				Reason:     raw.Reason,
+				Scope:      raw.Scope,
+				ContextRef: raw.ContextRef,
+				Required:   raw.Required,
+			}
+			// 尝试解析为字符串数组
+			var stringOpts []string
+			if json.Unmarshal(raw.Options, &stringOpts) == nil {
+				payload.Options = stringOpts
+			} else {
+				// 尝试解析为结构化选项对象数组
+				var structOpts []AskUserOption
+				if json.Unmarshal(raw.Options, &structOpts) == nil {
+					payload.StructuredOptions = structOpts
+					for _, opt := range structOpts {
+						if opt.Label != "" {
+							payload.Options = append(payload.Options, opt.Label)
+						} else if opt.ID != "" {
+							payload.Options = append(payload.Options, opt.ID)
+						}
+					}
+				}
 			}
 			emit(WSEvent{Type: EventUserRequestInput, Data: payload})
 			return "", nil, true
@@ -287,6 +405,9 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 		"report_finalize": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
 			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "开始生成最终报告..."}})
 			result, err := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+			if err == nil && result != "" {
+				result = applyReportHTMLGuardrail(result)
+			}
 			return result, err, false
 		},
 	}
@@ -417,7 +538,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 						return
 					}
 				} else {
-					result, execErr = e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+					result, execErr = retryableToolExec(ctx, e.registry, toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 				}
 
 				duration := time.Since(start).Milliseconds()
@@ -571,8 +692,7 @@ func compactToolResult(toolName, result string) string {
 	case "data_query_sql":
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-			minified, _ := json.Marshal(stripHistorySummaryFields(payload))
-			return string(minified)
+			return compactQueryResult(payload)
 		}
 	case "data_describe_table":
 		var payload map[string]interface{}
@@ -625,6 +745,81 @@ func stripHistorySummaryFields(payload map[string]interface{}) map[string]interf
 		cloned[key] = value
 	}
 	return cloned
+}
+
+const queryCompactRowThreshold = 20
+const queryCompactKeepRows = 10
+
+// compactQueryResult 为 data_query_sql 的大结果添加列统计摘要，不截断行数据。
+// 满足两个目标：保留完整数据供下游推理使用，同时提供统计摘要加速理解。
+func compactQueryResult(payload map[string]interface{}) string {
+	cloned := stripHistorySummaryFields(payload)
+
+	rows, ok := cloned["rows"].([]interface{})
+	if !ok || len(rows) <= queryCompactRowThreshold {
+		minified, _ := json.Marshal(cloned)
+		return string(minified)
+	}
+
+	// 为数值列生成统计摘要（不截断行）
+	cloned["_row_count"] = len(rows)
+	if columns, ok := cloned["columns"].([]interface{}); ok && len(rows) > 0 {
+		stats := buildColumnStats(columns, rows)
+		if len(stats) > 0 {
+			cloned["column_stats"] = stats
+		}
+	}
+
+	minified, _ := json.Marshal(cloned)
+	return string(minified)
+}
+
+// buildColumnStats 为每个数值列生成 min/max/count 摘要
+func buildColumnStats(columns []interface{}, rows []interface{}) map[string]interface{} {
+	stats := make(map[string]interface{})
+	for _, colRaw := range columns {
+		col, ok := colRaw.(string)
+		if !ok {
+			continue
+		}
+
+		var min, max float64
+		numericCount := 0
+		for _, rowRaw := range rows {
+			row, ok := rowRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			val, exists := row[col]
+			if !exists || val == nil {
+				continue
+			}
+			num, ok := val.(float64)
+			if !ok {
+				continue
+			}
+			if numericCount == 0 {
+				min, max = num, num
+			} else {
+				if num < min {
+					min = num
+				}
+				if num > max {
+					max = num
+				}
+			}
+			numericCount++
+		}
+		// 只为数值列生成统计
+		if numericCount > 0 {
+			stats[col] = map[string]interface{}{
+				"min":   min,
+				"max":   max,
+				"count": numericCount,
+			}
+		}
+	}
+	return stats
 }
 
 func traceCount(value interface{}) int {

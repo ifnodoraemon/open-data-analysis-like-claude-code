@@ -105,6 +105,19 @@ func (p delegateRunPersistence) UpdateChildRunSummary(ctx context.Context, child
 	return nil
 }
 
+func (p delegateRunPersistence) UpdateChildRunTokens(ctx context.Context, childRunID string, promptTokens, completionTokens int) error {
+	// 将 token 消耗嵌入一条日志事件，供评估脚本和分析使用。
+	// 不改动 domain 字段，保持持久化层最小互动。
+	return p.AppendChildEvent(ctx, childRunID, agent.WSEvent{
+		Type: "child_run_tokens",
+		Data: map[string]interface{}{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+			"total_tokens":      promptTokens + completionTokens,
+		},
+	})
+}
+
 func (p delegateRunPersistence) emitChildRunsUpdate(ctx context.Context, parentRunID string) {
 	if p.emit == nil || strings.TrimSpace(parentRunID) == "" {
 		return
@@ -621,13 +634,20 @@ func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
 	}
 	snapshot.Blocks = make([]domain.ReportSnapshotBlock, 0, len(state.Blocks))
 	for _, block := range state.Blocks {
-		snapshot.Blocks = append(snapshot.Blocks, domain.ReportSnapshotBlock{
+		snapshotBlock := domain.ReportSnapshotBlock{
 			ID:      block.ID,
 			Kind:    block.Kind,
 			Title:   block.Title,
 			Content: block.Content,
 			ChartID: block.ChartID,
-		})
+		}
+		if len(block.Sources) > 0 {
+			sourcesJSON, err := json.Marshal(block.Sources)
+			if err == nil {
+				snapshotBlock.Sources = sourcesJSON
+			}
+		}
+		snapshot.Blocks = append(snapshot.Blocks, snapshotBlock)
 	}
 	snapshot.Charts = make([]domain.ReportSnapshotChart, 0, len(state.Charts))
 	for _, chart := range state.Charts {
