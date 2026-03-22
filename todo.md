@@ -87,6 +87,10 @@
 
 > 子代理上下文压缩（`compactWorkerMessages`）、幂等工具重试（`retryableToolExec` 指数退避）、子代理 token 追踪（`UpdateChildRunTokens` 接口 + child_run_tokens 事件）、Evaluation 管道（`scripts/eval_report.js` + CI 步骤）、报告 HTML Guardrail（`html_sanitize.go` + `applyReportHTMLGuardrail`）均已落地并通过测试。
 
+### ~~P3. Code Review 问题修复~~ ✅ 已完成（2026-03-22）
+
+> LLM 指数退避重试 + `isRetryableLLMError`（#12）、子代理工具调用 `retryableToolExec` 重试（#13）、Anthropic 历史摘要多 system 消息合并（#14）、`ConsumeWaitingRun` 原子竞态修复（#15）、`saveEventToDB` 异步队列化（#16）、历史摘要改用 `digestSummary` 语义提取（#17）、`clipText` 系列合并至 `stringutil.go`（#18）。
+
 ## 暂不进入近期开发
 
 这些方向不是不做，而是不应排在当前缺口前面：
@@ -96,3 +100,4 @@
 - MySQL 支持
 - live query
 - 过早微服务化
+

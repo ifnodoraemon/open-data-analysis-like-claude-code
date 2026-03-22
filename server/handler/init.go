@@ -111,6 +111,9 @@ func Initialize() {
 		config.Cfg.TempDir,
 		config.Cfg.TempCleanupOnStart,
 	)
+
+	// 启动异步事件持久化 goroutine（#16），生产环境不需要手动 shutdown
+	_ = startEventPersistWorker()
 }
 
 func AuthMiddleware(next http.Handler) http.Handler {

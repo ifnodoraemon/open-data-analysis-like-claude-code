@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -85,13 +87,49 @@ func (l *LLMClient) SimpleChatFunc() func(ctx context.Context, systemPrompt, use
 	}
 }
 
-// ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑
+// isRetryableLLMError 判断 LLM 调用错误是否属于可重试的瞬态错误。
+// 4xx（认证/权限/请求格式错误）不可重试；5xx 和网络层错误可重试。
+func isRetryableLLMError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	// 非重试：客户端错误（4xx）
+	for _, code := range []string{"status=400", "status=401", "status=403", "status=404", "status=422"} {
+		if strings.Contains(msg, code) {
+			return false
+		}
+	}
+	// 可重试：常见瞬态错误
+	if strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "tls handshake") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "status=429") || // rate limit
+		strings.Contains(msg, "status=500") ||
+		strings.Contains(msg, "status=502") ||
+		strings.Contains(msg, "status=503") ||
+		strings.Contains(msg, "status=504") {
+		return true
+	}
+	// context 取消不重试
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return false
+}
+
+// ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑（指数退避，区分可重试错误）
 func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
 	var resp *openai.ChatCompletionResponse
 	var err error
 
-	for retry := 0; retry < 3; retry++ {
-		// 检查 context 是否已被取消
+	// 指数退避：1s, 3s, 8s（共 3 次重试，第 0 次无等待）
+	retryDelays := []time.Duration{time.Second, 3 * time.Second, 8 * time.Second}
+
+	for attempt := 0; attempt <= len(retryDelays); attempt++ {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -107,12 +145,22 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCom
 			return resp, nil
 		}
 
-		// 如果只有一次就不打印了，如果有重试，可以稍微等一等
-		// 这里的 err 往往是 TLS/网络中断等问题
-		time.Sleep(time.Second * 2)
+		// 不可重试的错误直接返回
+		if !isRetryableLLMError(err) {
+			return nil, err
+		}
+
+		if attempt < len(retryDelays) {
+			log.Printf("LLM 瞬态错误 (第 %d 次，%.0fs 后重试): %v", attempt+1, retryDelays[attempt].Seconds(), err)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryDelays[attempt]):
+			}
+		}
 	}
 
-	return nil, fmt.Errorf("LLM API request failed after 3 retries: %v", err)
+	return nil, fmt.Errorf("LLM API request failed after %d retries: %v", len(retryDelays), err)
 }
 
 // chatOpenAI OpenAI 格式调用
@@ -375,17 +423,7 @@ func summarizeTools(tools []openai.Tool) []string {
 	return names
 }
 
-func clipText(input string, max int) string {
-	input = strings.TrimSpace(input)
-	if input == "" || max <= 0 {
-		return input
-	}
-	runes := []rune(input)
-	if len(runes) <= max {
-		return input
-	}
-	return string(runes[:max]) + "...(truncated)"
-}
+// clipText 已迁移至 stringutil.go
 
 func firstAnthropicText(content []anthropic.MessageContent) string {
 	for _, block := range content {
@@ -456,7 +494,12 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCom
 	for _, msg := range messages {
 		switch msg.Role {
 		case openai.ChatMessageRoleSystem:
-			systemPrompt = msg.Content
+			// 修复 #14：合并所有 system 消息（含上下文压缩后注入的历史摘要），与 buildResponsesRequest 保持一致
+			if systemPrompt == "" {
+				systemPrompt = msg.Content
+			} else if strings.TrimSpace(msg.Content) != "" {
+				systemPrompt += "\n\n" + msg.Content
+			}
 
 		case openai.ChatMessageRoleUser:
 			anthropicMsgs = append(anthropicMsgs, anthropic.Message{

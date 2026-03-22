@@ -271,6 +271,7 @@ func (s *Session) ResumeRun(runID string) {
 	s.LastSeenAt = time.Now()
 }
 
+// GetWaitingRunID 返回正在等待用户输入的 run ID。
 func (s *Session) GetWaitingRunID() (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,6 +279,22 @@ func (s *Session) GetWaitingRunID() (string, bool) {
 		return s.ActiveRun.RunID, true
 	}
 	return "", false
+}
+
+// ConsumeWaitingRun 原子地检查并清除 waiting_user_input 状态。
+// 若当前确实处于等待状态，则将状态改为 running 并返回 runID。
+// 返回 empty string 表示当前不处于等待状态（已被其它 goroutine 消费）。
+// 用于替代原来的 GetWaitingRunID + ResumeRun 两步操作，将第二次重复提交的竞态消除。
+func (s *Session) ConsumeWaitingRun() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ActiveRun == nil || s.ActiveRun.Status != "waiting_user_input" {
+		return ""
+	}
+	runID := s.ActiveRun.RunID
+	s.ActiveRun.Status = "running"
+	s.LastSeenAt = time.Now()
+	return runID
 }
 
 func (s *Session) CancelRun(runID string) bool {

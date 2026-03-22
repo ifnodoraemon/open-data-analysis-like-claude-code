@@ -157,27 +157,20 @@ func isHistoryDigestMessage(msg openai.ChatCompletionMessage) bool {
 	return msg.Role == openai.ChatMessageRoleSystem && strings.HasPrefix(strings.TrimSpace(msg.Content), historyDigestPrefix)
 }
 
-func compactTextForDigest(input string, limit int) string {
-	text := strings.Join(strings.Fields(strings.TrimSpace(input)), " ")
-	if text == "" || limit <= 0 {
-		return ""
-	}
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return text
-	}
-	return string(runes[:limit]) + "...(truncated)"
-}
-
+// summarizeMessageForDigest 为历史摘要提取每条消息的最有价值片段。
+// - tool result：优先使用 ui_summary/message 等语义字段（由 digestSummary 提取），不截断
+// - assistant thinking：取末段结论（结论往往在末尾），而非首部截断
+// - user / tool_call：取末段，400 字上限
 func summarizeMessageForDigest(msg openai.ChatCompletionMessage) string {
 	switch msg.Role {
 	case openai.ChatMessageRoleUser:
-		if text := compactTextForDigest(msg.Content, 180); text != "" {
+		if text := digestSummary(msg.Content, 400); text != "" {
 			return "用户: " + text
 		}
 	case openai.ChatMessageRoleAssistant:
 		parts := make([]string, 0, len(msg.ToolCalls)+1)
-		if text := compactTextForDigest(msg.Content, 180); text != "" {
+		// 取 thinking 末段结论，400 字
+		if text := digestSummary(msg.Content, 400); text != "" {
 			parts = append(parts, "助手: "+text)
 		}
 		if len(msg.ToolCalls) > 0 {
@@ -189,7 +182,9 @@ func summarizeMessageForDigest(msg openai.ChatCompletionMessage) string {
 		}
 		return strings.Join(parts, " | ")
 	case openai.ChatMessageRoleTool:
-		if summary := compactTextForDigest(extractToolSummary(msg.Content), 180); summary != "" {
+		// digestSummary 会优先提取 ui_summary 等语义字段，不截断语义完整的摘要
+		rawSummary := extractToolSummary(msg.Content)
+		if summary := digestSummary(rawSummary, 400); summary != "" {
 			return "工具结果: " + summary
 		}
 	}
@@ -649,7 +644,7 @@ func compactToolArguments(toolName, raw string) string {
 				"chart_id":      payload.ChartID,
 				"content_note":  "compacted_for_history",
 				"content_chars": len([]rune(payload.Content)),
-				"content_head":  clipHistoryText(payload.Content, 120),
+				"content_head":  clipText(payload.Content, 120),
 			})
 			return string(summary)
 		}
@@ -670,17 +665,7 @@ func compactToolArguments(toolName, raw string) string {
 	return raw
 }
 
-func clipHistoryText(input string, max int) string {
-	input = strings.Join(strings.Fields(strings.TrimSpace(input)), " ")
-	if max <= 0 {
-		return ""
-	}
-	runes := []rune(input)
-	if len(runes) <= max {
-		return input
-	}
-	return string(runes[:max]) + "...(truncated)"
-}
+// clipHistoryText 已迁移至 stringutil.go clipText
 
 func compactToolResult(toolName, result string) string {
 	trimmed := strings.TrimSpace(result)

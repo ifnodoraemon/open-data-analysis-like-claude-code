@@ -399,7 +399,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		choice := resp.Choices[0]
 		if choice.Message.Content != "" {
 			content := strings.TrimSpace(choice.Message.Content)
-			trace = append(trace, delegateTraceItem{Kind: "thinking", Summary: clipDelegateText(content, 160)})
+			trace = append(trace, delegateTraceItem{Kind: "thinking", Summary: clipText(content, 160)})
 			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: fmt.Sprintf("[%s 思考] %s", payload.RoleName, content)}}
 			emit(ev)
 			if persistence != nil && childRunID != "" {
@@ -427,7 +427,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		for _, toolCall := range choice.Message.ToolCalls {
 			trace = append(trace, delegateTraceItem{
 				Kind:    "tool_call",
-				Summary: fmt.Sprintf("%s(%s)", toolCall.Function.Name, clipDelegateText(toolCall.Function.Arguments, 120)),
+				Summary: fmt.Sprintf("%s(%s)", toolCall.Function.Name, clipText(toolCall.Function.Arguments, 120)),
 			})
 			callEv := WSEvent{
 				Type:  EventToolCall,
@@ -444,13 +444,14 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			}
 
 			start := time.Now()
-			result, execErr := subReg.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+			// 修复 #13：子代理工具调用与主代理保持一致，走 retryableToolExec 指数退避重试
+			result, execErr := retryableToolExec(childCtx, subReg, toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 			duration := time.Since(start).Milliseconds()
 
 			if execErr != nil {
 				trace = append(trace, delegateTraceItem{
 					Kind:    "tool_error",
-					Summary: fmt.Sprintf("%s failed: %s", toolCall.Function.Name, clipDelegateText(execErr.Error(), 160)),
+					Summary: fmt.Sprintf("%s failed: %s", toolCall.Function.Name, clipText(execErr.Error(), 160)),
 				})
 				resultEv := WSEvent{Type: EventToolResult, RunID: childRunID, Data: ToolResultData{
 					ID:       toolCall.ID,
@@ -566,7 +567,7 @@ func delegateChildToolFailure(toolName, message string) string {
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Sprintf(`{"ok":false,"tool":"%s","error_code":"execution_error","message":"%s"}`, toolName, clipDelegateText(message, 120))
+		return fmt.Sprintf(`{"ok":false,"tool":"%s","error_code":"execution_error","message":"%s"}`, toolName, clipText(message, 120))
 	}
 	return string(encoded)
 }
@@ -575,28 +576,18 @@ func clipDelegateToolResult(raw string, max int) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err == nil {
 		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
-			return clipDelegateText(summary, max)
+			return clipText(summary, max)
 		}
 		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
-			return clipDelegateText(summary, max)
+			return clipText(summary, max)
 		}
 		if message, ok := payload["message"].(string); ok && strings.TrimSpace(message) != "" {
-			return clipDelegateText(message, max)
+			return clipText(message, max)
 		}
 		encoded, _ := json.Marshal(payload)
-		return clipDelegateText(string(encoded), max)
+		return clipText(string(encoded), max)
 	}
-	return clipDelegateText(raw, max)
+	return clipText(raw, max)
 }
 
-func clipDelegateText(input string, max int) string {
-	input = strings.Join(strings.Fields(strings.TrimSpace(input)), " ")
-	if max <= 0 {
-		return ""
-	}
-	runes := []rune(input)
-	if len(runes) <= max {
-		return input
-	}
-	return string(runes[:max]) + "...(truncated)"
-}
+// clipText 已迁移至 stringutil.go clipText

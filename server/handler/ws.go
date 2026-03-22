@@ -32,6 +32,38 @@ var upgrader = websocket.Upgrader{
 
 const persistenceTimeout = 10 * time.Second
 
+// persistJob 异步事件持久化任务
+type persistJob struct {
+	workspaceID string
+	sessionID   string
+	runID       string
+	ev          agent.WSEvent
+}
+
+// 全局异步持久化队列（#16）。
+// 由 startEventPersistWorker 在服务器启动时初始化。
+var eventPersistQueue chan persistJob
+
+// startEventPersistWorker 开启后台持久化 goroutine，不影响实时事件推送。
+// 返回的 shutdown 函数会关闭队列并等待 goroutine 完全退出，用于测试和优雅关闭。
+func startEventPersistWorker() func() {
+	q := make(chan persistJob, 512)
+	eventPersistQueue = q
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for job := range q {
+			saveEventToDBSync(job.workspaceID, job.sessionID, job.runID, job.ev)
+		}
+	}()
+	return func() {
+		eventPersistQueue = nil
+		close(q)
+		wg.Wait() // 等待 worker goroutine 完全退出（包含最后一次 saveEventToDBSync 返回）
+	}
+}
+
 type delegateRunPersistence struct {
 	workspaceID string
 	sessionID   string
@@ -329,10 +361,12 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// 检查是否正在等待用户回答
-			activeRunID, isWaiting := sess.GetWaitingRunID()
+			// 修复 #15：用 ConsumeWaitingRun 原子地检查并清除等待状态。
+			// 若返回非空，说明当前 run 正在等待用户输入，继续恢复执行；
+			// 若返回空字符串（并发竞争被其他 goroutine 消费），则作为新任务处理。
+			activeRunID := sess.ConsumeWaitingRun()
 
-			if isWaiting {
+			if activeRunID != "" {
 				runEmitter := newRuntimeEventDispatcher(requestCtx, conn, &writeMu, sess, identity, activeRunID)
 				err := sess.Engine.ProvideAskUserResult(userMsg.Content)
 				if err != nil {
@@ -343,13 +377,13 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				// 将用户的回答也写入数据库历史
+				// 将用户的回答写入数据库历史
 				saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, activeRunID, agent.WSEvent{
 					Type: "user",
 					Data: userMsg,
 				})
 
-				sess.ResumeRun(activeRunID)
+				// ConsumeWaitingRun 已将状态改为 running，更新 DB
 				_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
 					return runRepo.UpdateStatus(persistCtx, activeRunID, domain.RunStatusRunning, nil)
 				})
@@ -531,7 +565,21 @@ func deriveSessionTitle(input string) string {
 	return title
 }
 
+// saveEventToDB 将事件投递到异步持乇化队列（#16）。
+// 非阻塞：若队列满则丢弃并打印 warning（事件持乇化允许有损，不影响实时性）。
 func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev agent.WSEvent) {
+	if messageRepo == nil || eventPersistQueue == nil {
+		return
+	}
+	select {
+	case eventPersistQueue <- persistJob{workspaceID: workspaceID, sessionID: sessionID, runID: runID, ev: ev}:
+	default:
+		log.Printf("[warn] eventPersistQueue full, dropping event type=%s run_id=%s", ev.Type, runID)
+	}
+}
+
+// saveEventToDBSync 是实际的同步写库逻辑，由后台 goroutine 调用。
+func saveEventToDBSync(workspaceID, sessionID, runID string, ev agent.WSEvent) {
 	if messageRepo == nil {
 		return
 	}
@@ -580,9 +628,9 @@ func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev
 		}
 	}
 
-	if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
-		return messageRepo.Create(persistCtx, msg)
-	}); err != nil {
+	ctx2, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	if err := messageRepo.Create(ctx2, msg); err != nil {
 		log.Printf("Failed to save event to db run_id=%s type=%s err=%v", runID, ev.Type, err)
 	}
 }
