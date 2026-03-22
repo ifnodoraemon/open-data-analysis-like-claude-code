@@ -94,6 +94,23 @@ func Initialize() {
 
 	sessionManager = session.NewManager(config.Cfg.CacheRoot, fileService)
 	sessionManager.SetSessionRepository(sessionRepo)
+
+	// 注册全链路删除回调，供 TTL 清理器使用
+	sessionManager.SetFullDeleteFunc(func(ctx context.Context, sessionID string) error {
+		sess, err := sessionRepo.GetByID(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		return deleteSessionResources(ctx, *sess)
+	})
+
+	sessionManager.StartPeriodicCleanup(
+		config.Cfg.SessionTTLHours,
+		config.Cfg.TraceRetentionDays,
+		config.Cfg.LLMDebugDir,
+		config.Cfg.TempDir,
+		config.Cfg.TempCleanupOnStart,
+	)
 }
 
 func AuthMiddleware(next http.Handler) http.Handler {

@@ -95,10 +95,22 @@ type ToolResultData struct {
 	Success  bool   `json:"success"`
 }
 
-// AskUserData 等待用户回答事件
+// AskUserOption 确认协议的结构化选项
+type AskUserOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Hint  string `json:"hint,omitempty"`
+}
+
+// AskUserData 等待用户回答事件（结构化确认协议）
 type AskUserData struct {
-	Question string   `json:"question"`
-	Options  []string `json:"options,omitempty"`
+	Question   string          `json:"question"`
+	Reason     string          `json:"reason,omitempty"`      // 确认原因：为什么需要用户确认
+	Scope      string          `json:"scope,omitempty"`       // 作用域: join_key | metric | time_grain | filter | general
+	ContextRef string          `json:"context_ref,omitempty"` // 关联上下文（表名、列名等）
+	Required   bool            `json:"required"`
+	Options    []string        `json:"options,omitempty"`              // 纯文本选项（向后兼容当前客户端）
+	StructuredOptions []AskUserOption `json:"structured_options,omitempty"` // 结构化选项（客户端升级后使用）
 }
 
 type MemoryUpdatedData struct {

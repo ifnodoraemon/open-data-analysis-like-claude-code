@@ -160,10 +160,36 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 				"type": "string",
 				"description": "问题文本。"
 			},
+			"reason": {
+				"type": "string",
+				"description": "确认原因：为什么需要用户确认这个问题，例如'存在多个可能的 join key'。"
+			},
+			"scope": {
+				"type": "string",
+				"enum": ["join_key", "metric", "time_grain", "filter", "general"],
+				"description": "确认的作用域类型。"
+			},
+			"context_ref": {
+				"type": "string",
+				"description": "关联上下文，例如表名、列名、指标名等。"
+			},
+			"required": {
+				"type": "boolean",
+				"description": "是否必须确认，为 true 则用户不能跳过。",
+				"default": false
+			},
 			"options": {
 				"type": "array",
-				"items": {"type": "string"},
-				"description": "可选项列表。"
+				"items": {
+					"type": "object",
+					"properties": {
+						"id":    {"type": "string", "description": "选项稳定 ID"},
+						"label": {"type": "string", "description": "选项显示文字"},
+						"hint":  {"type": "string", "description": "选项描述"}
+					},
+					"required": ["id", "label"]
+				},
+				"description": "可选项列表，每个选项带稳定 ID。"
 			}
 		},
 		"required": ["question"]
@@ -172,19 +198,37 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 
 func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 	var payload struct {
-		Question string   `json:"question"`
-		Options  []string `json:"options"`
+		Question   string           `json:"question"`
+		Reason     string           `json:"reason"`
+		Scope      string           `json:"scope"`
+		ContextRef string           `json:"context_ref"`
+		Required   bool             `json:"required"`
+		Options    []AskUserOption  `json:"options"`
 	}
 	if err := json.Unmarshal(args, &payload); err != nil {
 		return "", fmt.Errorf("invalid arguments: %v", err)
 	}
+	// 构建纯文本 options 用于向后兼容客户端
+	stringOptions := make([]string, 0, len(payload.Options))
+	for _, opt := range payload.Options {
+		if opt.Label != "" {
+			stringOptions = append(stringOptions, opt.Label)
+		} else if opt.ID != "" {
+			stringOptions = append(stringOptions, opt.ID)
+		}
+	}
 	return marshalToolPayload(map[string]interface{}{
-		"ok":         true,
-		"tool":       "user_request_input",
-		"question":   payload.Question,
-		"options":    payload.Options,
-		"run_status": "waiting_user_input",
-		"message":    "已发起用户输入请求，等待用户回复。",
-		"ui_summary": "已向用户发起输入请求。",
+		"ok":                  true,
+		"tool":                "user_request_input",
+		"question":            payload.Question,
+		"reason":              payload.Reason,
+		"scope":               payload.Scope,
+		"context_ref":         payload.ContextRef,
+		"required":            payload.Required,
+		"options":             stringOptions,
+		"structured_options":  payload.Options,
+		"run_status":          "waiting_user_input",
+		"message":             "已发起用户输入请求，等待用户回复。",
+		"ui_summary":          "已向用户发起输入请求。",
 	})
 }

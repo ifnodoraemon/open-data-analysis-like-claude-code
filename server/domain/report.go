@@ -38,11 +38,12 @@ type ReportSnapshotLayout struct {
 }
 
 type ReportSnapshotBlock struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`
-	Title   string `json:"title,omitempty"`
-	Content string `json:"content,omitempty"`
-	ChartID string `json:"chartId,omitempty"`
+	ID      string          `json:"id"`
+	Kind    string          `json:"kind"`
+	Title   string          `json:"title,omitempty"`
+	Content string          `json:"content,omitempty"`
+	ChartID string          `json:"chartId,omitempty"`
+	Sources json.RawMessage `json:"sources,omitempty"`
 }
 
 type ReportSnapshotChart struct {

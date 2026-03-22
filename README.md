@@ -190,6 +190,21 @@ Authenticated endpoints currently include:
 - Final report HTML can be reopened after refresh
 - Uploaded source files remain session-scoped and are not mixed with generated report artifacts
 
+## Product Boundaries
+
+Current known limits and design constraints:
+
+| Aspect | Status |
+|---|---|
+| **CSV** | Recommended for large files; streaming batch insert, no row limit |
+| **Excel** | Hard cap at 100,000 rows per sheet; returns explicit error if exceeded |
+| **Database sources** | Not yet available; see `docs/database-source-mvp.md` for planned design |
+| **Semantic profile** | Requires LLM configuration (`LLM_API_KEY`). Without it, schema metadata (columns, types, stats) is still fully available; semantic aliases and join hints will be absent |
+| **Python analysis** | Available only when `python-executor` service is running. Intended for advanced analysis that SQL alone cannot express; not a default analysis path |
+| **Storage** | Local filesystem only. S3-compatible backend is abstracted but not yet implemented |
+| **Metadata DB** | SQLite in production. PostgreSQL migration path is prepared but not enabled |
+| **Concurrent runs** | One active run per session at a time |
+
 ## Project Structure
 
 ```text

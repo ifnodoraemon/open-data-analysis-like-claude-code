@@ -66,6 +66,25 @@ func (l *LLMClient) initAnthropic() {
 	l.anthropicClient = anthropic.NewClient(config.Cfg.LLMAPIKey, opts...)
 }
 
+// SimpleChatFunc 返回一个简单的聊天函数，适配 data.LLMChatFunc 签名。
+// 用于语义预分析等不需要 tool calling 的场景。
+func (l *LLMClient) SimpleChatFunc() func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	return func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+		messages := []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: userPrompt},
+		}
+		resp, err := l.ChatWithTools(ctx, messages, nil)
+		if err != nil {
+			return "", err
+		}
+		if len(resp.Choices) == 0 {
+			return "", fmt.Errorf("LLM 返回空响应")
+		}
+		return resp.Choices[0].Message.Content, nil
+	}
+}
+
 // ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑
 func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
 	var resp *openai.ChatCompletionResponse
@@ -297,15 +316,19 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 
 	var textParts []string
 	if strings.TrimSpace(resp.OutputText) != "" {
+		// 如果有聚合好的文本，则直接使用，避免和 message 分块重复
 		textParts = append(textParts, resp.OutputText)
 	}
 
 	for _, item := range resp.Output {
 		switch item.Type {
 		case "message":
-			for _, content := range item.Content {
-				if strings.TrimSpace(content.Text) != "" {
-					textParts = append(textParts, content.Text)
+			// 如果 OutputText 为空，才从零散的 message 块聚合文本
+			if strings.TrimSpace(resp.OutputText) == "" {
+				for _, content := range item.Content {
+					if strings.TrimSpace(content.Text) != "" {
+						textParts = append(textParts, content.Text)
+					}
 				}
 			}
 		case "function_call":

@@ -32,6 +32,11 @@ type Config struct {
 	DefaultUserPassword  string
 	DefaultWorkspaceID   string
 	DefaultWorkspaceName string
+
+	// 生命周期管理
+	SessionTTLHours    int    // 空闲 session 自动清理阈值（小时），0 = 不自动清理
+	TraceRetentionDays int    // LLM debug trace 保留天数，0 = 永久保留
+	TempCleanupOnStart bool   // 启动时清理 TempDir
 }
 
 var Cfg *Config
@@ -77,6 +82,10 @@ func Load() {
 		DefaultUserPassword:  getEnv("DEFAULT_USER_PASSWORD", ""),
 		DefaultWorkspaceID:   getEnv("DEFAULT_WORKSPACE_ID", ""),
 		DefaultWorkspaceName: getEnv("DEFAULT_WORKSPACE_NAME", ""),
+
+		SessionTTLHours:    getEnvInt("SESSION_TTL_HOURS", 0),
+		TraceRetentionDays: getEnvInt("TRACE_RETENTION_DAYS", 0),
+		TempCleanupOnStart: getEnvBool("TEMP_CLEANUP_ON_START", false),
 	}
 
 	if Cfg.LLMAPIKey == "" {
@@ -106,4 +115,23 @@ func getEnvBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func getEnvInt(key string, fallback int) int {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	result := 0
+	for _, ch := range trimmed {
+		if ch < '0' || ch > '9' {
+			return fallback
+		}
+		result = result*10 + int(ch-'0')
+	}
+	return result
 }

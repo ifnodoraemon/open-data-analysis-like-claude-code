@@ -57,6 +57,12 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		return nil, err
 	}
 
+	// 当 LLM 配置可用时，将语义预分析器注入 Ingester，导入文件后自动触发
+	if config.Cfg != nil && config.Cfg.LLMAPIKey != "" {
+		llmClient := agent.NewLLMClient()
+		ingester.SemanticEnricher = llmClient.SimpleChatFunc()
+	}
+
 	memory := agent.NewWorkingMemory()
 	subgoals := agent.NewSubgoalManager()
 
@@ -349,13 +355,20 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 	s.ReportState.NeedsFinalize = false
 	s.ReportState.Blocks = make([]tools.ReportBlock, 0, len(snapshot.Blocks))
 	for _, block := range snapshot.Blocks {
-		s.ReportState.Blocks = append(s.ReportState.Blocks, tools.ReportBlock{
+		rb := tools.ReportBlock{
 			ID:      block.ID,
 			Kind:    block.Kind,
 			Title:   block.Title,
 			Content: block.Content,
 			ChartID: block.ChartID,
-		})
+		}
+		if len(block.Sources) > 0 {
+			var sources []tools.EvidenceRef
+			if err := json.Unmarshal(block.Sources, &sources); err == nil {
+				rb.Sources = sources
+			}
+		}
+		s.ReportState.Blocks = append(s.ReportState.Blocks, rb)
 	}
 	s.ReportState.Charts = make([]tools.ChartData, 0, len(snapshot.Charts))
 	for _, chart := range snapshot.Charts {

@@ -13,17 +13,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ifnodoraemon/openDataAnalysis/config"
-	"github.com/sashabaranov/go-openai"
 	"github.com/xuri/excelize/v2"
 	_ "modernc.org/sqlite"
 )
 
 // Ingester 数据导入引擎: Excel/CSV → SQLite
 type Ingester struct {
-	CacheDir string
-	db       *sql.DB
-	dbPath   string
+	CacheDir         string
+	db               *sql.DB
+	dbPath           string
+	SemanticEnricher LLMChatFunc // 可选：导入时自动触发 LLM 语义分析
 }
 
 // NewIngester 创建导入引擎
@@ -223,8 +222,11 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		rowCount += len(batch)
 	}
 
-	// 自动生成系统统计和索引
-	_ = ing.GenerateStatsAndIndexes(tableName)
+	// 自动生成确定性 schema metadata 和索引（不依赖 LLM）
+	_ = ing.GenerateSchemaMetadata(tableName)
+
+	// 如果配置了 LLM enricher，自动触发语义分析（失败不阻塞导入）
+	ing.tryEnrichAfterImport(tableName)
 
 	return rowCount, colCount, nil
 }
@@ -344,8 +346,11 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 		rowCount += len(batch)
 	}
 
-	// 自动生成系统统计和索引
-	_ = ing.GenerateStatsAndIndexes(tableName)
+	// 自动生成确定性 schema metadata 和索引（不依赖 LLM）
+	_ = ing.GenerateSchemaMetadata(tableName)
+
+	// 如果配置了 LLM enricher，自动触发语义分析（失败不阻塞导入）
+	ing.tryEnrichAfterImport(tableName)
 
 	return rowCount, colCount, nil
 }
@@ -525,8 +530,38 @@ func sanitizeColumnName(name string) string {
 	return strings.ToLower(name)
 }
 
-// GenerateStatsAndIndexes 针对表生成统计信息并按基数自动创建索引
-func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
+// ensureMetadataTable 确保 _oda_table_metadata 表存在，使用新的分层结构
+func (ing *Ingester) ensureMetadataTable() {
+	if ing.db == nil {
+		return
+	}
+	_, _ = ing.db.Exec(`
+		CREATE TABLE IF NOT EXISTS _oda_table_metadata (
+			table_name TEXT PRIMARY KEY,
+			schema_json TEXT,
+			semantic_json TEXT,
+			relations_json TEXT,
+			schema_ready BOOLEAN DEFAULT 0,
+			semantic_ready BOOLEAN DEFAULT 0,
+			relations_verified BOOLEAN DEFAULT 0,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	// 迁移旧表结构：如果旧表缺少新列则添加
+	for _, col := range []struct{ name, def string }{
+		{"semantic_json", "TEXT"},
+		{"relations_json", "TEXT"},
+		{"schema_ready", "BOOLEAN DEFAULT 0"},
+		{"semantic_ready", "BOOLEAN DEFAULT 0"},
+		{"relations_verified", "BOOLEAN DEFAULT 0"},
+	} {
+		_, _ = ing.db.Exec(fmt.Sprintf("ALTER TABLE _oda_table_metadata ADD COLUMN %s %s", col.name, col.def))
+	}
+}
+
+// GenerateSchemaMetadata 针对表生成确定性的 schema metadata 和索引。
+// 此函数不依赖 LLM，始终可以成功完成。
+func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 	if ing.db == nil {
 		return fmt.Errorf("数据库未初始化")
 	}
@@ -537,80 +572,40 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 		fmt.Printf("[Warning] Failed to analyze table %s: %v\n", tableName, err)
 	}
 
-	// 2. 根据 `ExtractSchema` 或自定义逻辑，给具有适当基数特性的列添加索引
+	// 2. 提取确定性 schema
 	schema, err := ExtractSchema(ing.db, tableName)
 	if err != nil {
 		return fmt.Errorf("提取概要失败: %w", err)
 	}
 
-	// 2.1 获取目前环境中的其他表名供大模型做 Join 探测
-	var activeTables []string
-	tableRows, _ := ing.db.Query(`SELECT table_name FROM _oda_table_metadata`)
-	if tableRows != nil {
-		for tableRows.Next() {
-			var tName string
-			if err := tableRows.Scan(&tName); err == nil {
-				if tName != schema.TableName {
-					activeTables = append(activeTables, tName)
-				}
-			}
-		}
-		tableRows.Close()
+	// 3. 持久化确定性 schema 到 metadata 表，同时清除旧的 semantic 状态
+	//    （schema 变了意味着旧的 LLM 分析已失效）
+	ing.ensureMetadataTable()
+	schemaBytes, _ := json.Marshal(schema)
+	_, err = ing.db.Exec(
+		`INSERT INTO _oda_table_metadata (table_name, schema_json, schema_ready, semantic_json, relations_json, semantic_ready, relations_verified, updated_at) 
+		 VALUES (?, ?, 1, NULL, NULL, 0, 0, CURRENT_TIMESTAMP)
+		 ON CONFLICT(table_name) DO UPDATE SET 
+		   schema_json=excluded.schema_json, 
+		   schema_ready=1, 
+		   semantic_json=NULL, 
+		   relations_json=NULL, 
+		   semantic_ready=0, 
+		   relations_verified=0, 
+		   updated_at=excluded.updated_at`,
+		tableName, string(schemaBytes),
+	)
+	if err != nil {
+		fmt.Printf("[Warning] Failed to save schema metadata for %s: %v\n", tableName, err)
 	}
 
-	// 2.2 小样本语义大模型预分析 (Item 10)
-	if config.Cfg == nil || config.Cfg.LLMAPIKey == "" {
-		return fmt.Errorf("系统未配置 LLMAPIKey，无法执行小样本语义预分析")
-	}
-
-	client := openai.NewClient(config.Cfg.LLMAPIKey) // 或其它途径初始化，此处假定能全局读到配置
-	if config.Cfg.LLMBaseURL != "" {
-		cfg := openai.DefaultConfig(config.Cfg.LLMAPIKey)
-		cfg.BaseURL = config.Cfg.LLMBaseURL
-		client = openai.NewClientWithConfig(cfg)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	profile, metaErr := AnalyzeTableSemantics(ctx, client, schema, activeTables)
-	if metaErr != nil {
-		return fmt.Errorf("大模型语义分析失败: %w", metaErr)
-	}
-
-	fmt.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s\n", tableName)
-	finalMetadataBytes, _ := json.Marshal(profile)
-
-	// 2.3 将结果保存到内置元数据表
-	_, _ = ing.db.Exec(`
-		CREATE TABLE IF NOT EXISTS _oda_table_metadata (
-			table_name TEXT PRIMARY KEY,
-			schema_json TEXT,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-
-	if len(finalMetadataBytes) > 0 {
-		_, err = ing.db.Exec(
-			`INSERT INTO _oda_table_metadata (table_name, schema_json, updated_at) 
-			 VALUES (?, ?, CURRENT_TIMESTAMP)
-			 ON CONFLICT(table_name) DO UPDATE SET schema_json=excluded.schema_json, updated_at=excluded.updated_at`,
-			tableName, string(finalMetadataBytes),
-		)
-		if err != nil {
-			fmt.Printf("[Warning] Failed to save schema metadata for %s: %v\n", tableName, err)
-		}
-	}
-
-	// 3. 构建索引尝试
+	// 4. 构建索引
 	for _, col := range schema.Columns {
-		// 如果唯一值数量 > 1 并且非空，且唯一值占比小于 20%（说明有大量重复的类别）
-		// 或者列名为常见 id (如 user_id, org_id)，自动建立索引
-		isNominal := float64(col.UniqueCount)/float64(schema.RowCount) < 0.20 && col.UniqueCount > 1
+		isNominal := schema.RowCount > 0 && float64(col.UniqueCount)/float64(schema.RowCount) < 0.20 && col.UniqueCount > 1
 		isID := strings.HasSuffix(strings.ToLower(col.Name), "_id") || strings.ToLower(col.Name) == "id"
 
 		if isNominal || isID {
 			idxName := fmt.Sprintf("idx_%s_%s", sanitizeTableName(tableName), sanitizeColumnName(col.Name))
-			// 因为 SQLite 的标识符长度有限但此处通常够用，直接创建
 			createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (\"%s\")", idxName, tableName, col.Name)
 			_, err := ing.db.Exec(createIdxSQL)
 			if err != nil {
@@ -622,15 +617,249 @@ func (ing *Ingester) GenerateStatsAndIndexes(tableName string) error {
 	return nil
 }
 
-// GetTableMetadata 从内置表读取预先提取的 Schema 返回 JSON
+// tryEnrichAfterImport 导入后异步尝试 LLM 语义分析。
+// 在后台 goroutine 中执行，不阻塞导入流程。
+// 如果 SemanticEnricher 未配置或分析失败，只记录 warning。
+func (ing *Ingester) tryEnrichAfterImport(tableName string) {
+	if ing.SemanticEnricher == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := ing.EnrichSemanticProfile(ctx, tableName, ing.SemanticEnricher); err != nil {
+			fmt.Printf("[Warning] 导入后语义分析失败 (table=%s): %v\n", tableName, err)
+		}
+	}()
+}
+
+// EnrichSemanticProfile 利用 LLM 对表做语义预分析，是可选的增量增强步骤。
+// chatFn 由调用方提供，通常包装 agent.LLMClient。
+// 此函数失败不影响已有的确定性 schema metadata。
+func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string, chatFn LLMChatFunc) error {
+	if ing.db == nil {
+		return fmt.Errorf("数据库未初始化")
+	}
+
+	// 1. 读取已有的确定性 schema_json 作为乐观锁版本
+	var schemaStr string
+	err := ing.db.QueryRow(`SELECT schema_json FROM _oda_table_metadata WHERE table_name = ?`, tableName).Scan(&schemaStr)
+	if err != nil {
+		return fmt.Errorf("读取 schema 失败: %w", err)
+	}
+	var schema *SchemaInfo
+	if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
+		return fmt.Errorf("解析 schema 失败: %w", err)
+	}
+
+	// 2. 获取环境中的其他表名供 Join 探测
+	ing.ensureMetadataTable()
+	var activeTables []string
+	tableRows, _ := ing.db.Query(`SELECT table_name FROM _oda_table_metadata WHERE table_name != ?`, tableName)
+	if tableRows != nil {
+		for tableRows.Next() {
+			var tName string
+			if tableRows.Scan(&tName) == nil {
+				activeTables = append(activeTables, tName)
+			}
+		}
+		tableRows.Close()
+	}
+
+	// 3. 调用 LLM 分析
+	profile, err := AnalyzeTableSemantics(ctx, chatFn, schema, activeTables)
+	if err != nil {
+		return fmt.Errorf("LLM 语义分析失败: %w", err)
+	}
+
+	fmt.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s\n", tableName)
+
+	// 4. 校验 relation hints
+	// 尝试获取目标表的 schema 用于验证
+	targetSchemas := make(map[string]*SchemaInfo, len(activeTables))
+	for _, at := range activeTables {
+		if ts, err := ExtractSchema(ing.db, at); err == nil {
+			targetSchemas[strings.ToLower(at)] = ts
+		}
+	}
+	verifiedRelations := ValidateRelationHints(profile.Relations, schema, activeTables, targetSchemas)
+
+	// 5. 用校验过的 relations 替换 profile 中的原始 relations，再序列化
+	//    确保 semantic_json 中不泄漏未校验的 relation hints
+	profile.Relations = verifiedRelations
+	semanticBytes, _ := json.Marshal(profile)
+	relationsBytes, _ := json.Marshal(verifiedRelations)
+
+	// 使用乐观锁防止覆盖：只在 schema_json 没变时更新
+	result, err := ing.db.Exec(
+		`UPDATE _oda_table_metadata SET 
+		   semantic_json = ?, semantic_ready = 1,
+		   relations_json = ?, relations_verified = ?,
+		   updated_at = CURRENT_TIMESTAMP
+		 WHERE table_name = ? AND schema_json = ?`,
+		string(semanticBytes),
+		string(relationsBytes),
+		len(verifiedRelations) > 0,
+		tableName,
+		schemaStr,
+	)
+	if err != nil {
+		return fmt.Errorf("保存语义分析结果失败: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return fmt.Errorf("语义分析被丢弃: 在 LLM 调用期间表的 schema 已发生改变 (可能已重导入)")
+	}
+
+	return nil
+}
+
+// GetActiveTables 获取当前 metadata 中记录的所有表名
+func (ing *Ingester) GetActiveTables() []string {
+	if ing.db == nil {
+		return nil
+	}
+	ing.ensureMetadataTable()
+	var tables []string
+	rows, err := ing.db.Query(`SELECT table_name FROM _oda_table_metadata`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			tables = append(tables, name)
+		}
+	}
+	return tables
+}
+
+// TableMetadata 表的完整 metadata 视图
+type TableMetadata struct {
+	SchemaJSON        string `json:"schema_json,omitempty"`
+	SemanticJSON      string `json:"semantic_json,omitempty"`
+	RelationsJSON     string `json:"relations_json,omitempty"`
+	SchemaReady       bool   `json:"schema_ready"`
+	SemanticReady     bool   `json:"semantic_ready"`
+	RelationsVerified bool   `json:"relations_verified"`
+}
+
+// GetTableMetadata 从内置表读取已持久化的 metadata
 func (ing *Ingester) GetTableMetadata(tableName string) (string, error) {
 	if ing.db == nil {
 		return "", fmt.Errorf("数据库未初始化")
 	}
-	var schemaJSON string
-	err := ing.db.QueryRow(`SELECT schema_json FROM _oda_table_metadata WHERE table_name = ?`, tableName).Scan(&schemaJSON)
+	ing.ensureMetadataTable()
+
+	var meta TableMetadata
+	var schemaJSON, semanticJSON, relationsJSON sql.NullString
+	err := ing.db.QueryRow(
+		`SELECT schema_json, semantic_json, relations_json, schema_ready, semantic_ready, relations_verified 
+		 FROM _oda_table_metadata WHERE table_name = ?`, tableName,
+	).Scan(&schemaJSON, &semanticJSON, &relationsJSON, &meta.SchemaReady, &meta.SemanticReady, &meta.RelationsVerified)
 	if err != nil {
 		return "", err
 	}
-	return schemaJSON, nil
+
+	// 始终返回 schema_json 作为基础（包含 row_count、column types 等确定性字段）
+	// 如果也有 semantic_json，合并到结果中而不是替代
+	if schemaJSON.Valid && strings.TrimSpace(schemaJSON.String) != "" {
+		if semanticJSON.Valid && strings.TrimSpace(semanticJSON.String) != "" {
+			// 深合并：以 schema 为基础，把 semantic 字段追加进去
+			var schemaMap, semanticMap map[string]interface{}
+			if json.Unmarshal([]byte(schemaJSON.String), &schemaMap) == nil &&
+				json.Unmarshal([]byte(semanticJSON.String), &semanticMap) == nil {
+				
+				// 1. 合并 columns 数组内的新字段
+				if semColsRaw, ok := semanticMap["columns"].([]interface{}); ok {
+					if schColsRaw, ok := schemaMap["columns"].([]interface{}); ok {
+						// 提取 semantic 列字典
+						semColMap := make(map[string]map[string]interface{})
+						for _, colRaw := range semColsRaw {
+							if colMap, ok := colRaw.(map[string]interface{}); ok {
+								if name, ok := colMap["name"].(string); ok {
+									semColMap[name] = colMap
+								}
+							}
+						}
+						// 遍历 schema 列注入
+						for _, colRaw := range schColsRaw {
+							if colMap, ok := colRaw.(map[string]interface{}); ok {
+								if name, ok := colMap["name"].(string); ok {
+									if semCol, exists := semColMap[name]; exists {
+										for k, v := range semCol {
+											// 如果 schema 原本没有这个字段，就填充语义信息
+											if _, ok := colMap[k]; !ok {
+												colMap[k] = v
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+
+				// 2. 合并顶层其他字段
+				for k, v := range semanticMap {
+					if k == "columns" {
+						continue // columns 已处理
+					}
+					if _, exists := schemaMap[k]; !exists {
+						schemaMap[k] = v
+					}
+				}
+				merged, err := json.Marshal(schemaMap)
+				if err == nil {
+					return string(merged), nil
+				}
+			}
+		}
+		return schemaJSON.String, nil
+	}
+	if semanticJSON.Valid {
+		return semanticJSON.String, nil
+	}
+	return "", nil
+}
+
+// GetFullTableMetadata 返回完整的表 metadata 结构
+func (ing *Ingester) GetFullTableMetadata(tableName string) (*TableMetadata, error) {
+	if ing.db == nil {
+		return nil, fmt.Errorf("数据库未初始化")
+	}
+	ing.ensureMetadataTable()
+
+	var meta TableMetadata
+	var schemaJSON, semanticJSON, relationsJSON sql.NullString
+	err := ing.db.QueryRow(
+		`SELECT schema_json, semantic_json, relations_json, schema_ready, semantic_ready, relations_verified 
+		 FROM _oda_table_metadata WHERE table_name = ?`, tableName,
+	).Scan(&schemaJSON, &semanticJSON, &relationsJSON, &meta.SchemaReady, &meta.SemanticReady, &meta.RelationsVerified)
+	if err != nil {
+		return nil, err
+	}
+	if schemaJSON.Valid {
+		meta.SchemaJSON = schemaJSON.String
+	}
+	if semanticJSON.Valid {
+		meta.SemanticJSON = semanticJSON.String
+	}
+	if relationsJSON.Valid {
+		meta.RelationsJSON = relationsJSON.String
+	}
+	return &meta, nil
+}
+
+// GetMetadataReadiness 返回表 metadata 的各层就绪状态
+func (ing *Ingester) GetMetadataReadiness(tableName string) (schemaReady, semanticReady, relationsVerified bool) {
+	if ing.db == nil {
+		return false, false, false
+	}
+	ing.ensureMetadataTable()
+	_ = ing.db.QueryRow(
+		`SELECT schema_ready, semantic_ready, relations_verified FROM _oda_table_metadata WHERE table_name = ?`,
+		tableName,
+	).Scan(&schemaReady, &semanticReady, &relationsVerified)
+	return
 }

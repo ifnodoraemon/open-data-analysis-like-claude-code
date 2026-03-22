@@ -17,11 +17,14 @@ import (
 const sessionStopTimeout = 10 * time.Second
 
 type Manager struct {
-	cacheRoot   string
-	fileService *service.FileService
-	sessionRepo repository.SessionRepository
-	sessions    map[string]*Session
-	mu          sync.Mutex
+	cacheRoot      string
+	fileService    *service.FileService
+	sessionRepo    repository.SessionRepository
+	sessions       map[string]*Session
+	mu             sync.Mutex
+	// FullDeleteFunc 是全链路删除函数，由 handler.Initialize 设置。
+	// 如果为 nil，则退化为 Session.Destroy + sessionRepo.Delete。
+	FullDeleteFunc func(ctx context.Context, sessionID string) error
 }
 
 func NewManager(cacheRoot string, fileService *service.FileService) *Manager {
@@ -36,6 +39,13 @@ func (m *Manager) SetSessionRepository(repo repository.SessionRepository) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessionRepo = repo
+}
+
+// SetFullDeleteFunc 设置全链路删除回调，用于 TTL 入口的全呼到。
+func (m *Manager) SetFullDeleteFunc(fn func(ctx context.Context, sessionID string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.FullDeleteFunc = fn
 }
 
 func (m *Manager) GetOrCreate(sessionID, workspaceID, userID string) (*Session, bool, error) {
