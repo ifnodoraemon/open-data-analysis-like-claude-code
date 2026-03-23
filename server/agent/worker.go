@@ -330,15 +330,9 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	llmClient := NewLLMClient()
-	messages := []openai.ChatCompletionMessage{
-		{
-			Role:    openai.ChatMessageRoleSystem,
-			Content: childPrompt,
-		},
-		{
-			Role:    openai.ChatMessageRoleUser,
-			Content: payload.TaskInstruction,
-		},
+	bundle := &PromptBundle{
+		Policy: childPrompt,
+		Task:   payload.TaskInstruction,
 	}
 	oaiTools := subReg.GetOpenAITools()
 	trace := make([]delegateTraceItem, 0, 12)
@@ -366,12 +360,20 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			return "", childCtx.Err()
 		}
 
-		resp, err := llmClient.ChatWithTools(childCtx, messages, oaiTools)
+		resp, err := llmClient.ChatWithTools(childCtx, bundle, oaiTools)
 		if err == nil {
 			// 累计 token 消耗，并触发上下文压缩
 			totalPromptTokens += resp.Usage.PromptTokens
 			totalCompletionTokens += resp.Usage.CompletionTokens
-			messages = compactWorkerMessages(messages, resp.Usage.PromptTokens)
+
+			if bundle.Task != "" {
+				bundle.History = append(bundle.History, ConversationItem{
+					Role:    openai.ChatMessageRoleUser,
+					Content: bundle.Task,
+				})
+				bundle.Task = ""
+			}
+			compactWorkerBundle(bundle, resp.Usage.PromptTokens)
 		}
 		if err != nil {
 			if t.Subgoals != nil && payload.GoalID != "" {
@@ -427,7 +429,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			continue
 		}
 
-		messages = append(messages, compactAssistantMessage(choice.Message))
+		bundle.History = append(bundle.History, compactAssistantMessage(choice.Message))
 		for _, toolCall := range choice.Message.ToolCalls {
 			trace = append(trace, delegateTraceItem{
 				Kind:    "tool_call",
@@ -468,7 +470,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				if persistence != nil && childRunID != "" {
 					_ = persistence.AppendChildEvent(childCtx, childRunID, resultEv)
 				}
-				messages = append(messages, openai.ChatCompletionMessage{
+				bundle.History = append(bundle.History, ConversationItem{
 					Role:       openai.ChatMessageRoleTool,
 					Content:    delegateChildToolFailure(toolCall.Function.Name, execErr.Error()),
 					ToolCallID: toolCall.ID,
@@ -491,7 +493,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			if persistence != nil && childRunID != "" {
 				_ = persistence.AppendChildEvent(childCtx, childRunID, resultEv)
 			}
-			messages = append(messages, openai.ChatCompletionMessage{
+			bundle.History = append(bundle.History, ConversationItem{
 				Role:       openai.ChatMessageRoleTool,
 				Content:    result,
 				ToolCallID: toolCall.ID,

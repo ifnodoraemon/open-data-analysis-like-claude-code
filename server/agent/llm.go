@@ -72,11 +72,11 @@ func (l *LLMClient) initAnthropic() {
 // 用于语义预分析等不需要 tool calling 的场景。
 func (l *LLMClient) SimpleChatFunc() func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	return func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
-		messages := []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
-			{Role: openai.ChatMessageRoleUser, Content: userPrompt},
+		bundle := &PromptBundle{
+			Policy: systemPrompt,
+			Task:   userPrompt,
 		}
-		resp, err := l.ChatWithTools(ctx, messages, nil)
+		resp, err := l.ChatWithTools(ctx, bundle, nil)
 		if err != nil {
 			return "", err
 		}
@@ -122,7 +122,7 @@ func isRetryableLLMError(err error) bool {
 }
 
 // ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑（指数退避，区分可重试错误）
-func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
 	var resp *openai.ChatCompletionResponse
 	var err error
 
@@ -136,9 +136,9 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCom
 
 		switch l.provider {
 		case "anthropic":
-			resp, err = l.chatAnthropic(ctx, messages, tools)
+			resp, err = l.chatAnthropic(ctx, bundle, tools)
 		default:
-			resp, err = l.chatOpenAI(ctx, messages, tools)
+			resp, err = l.chatOpenAI(ctx, bundle, tools)
 		}
 
 		if err == nil {
@@ -164,8 +164,8 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, messages []openai.ChatCom
 }
 
 // chatOpenAI OpenAI 格式调用
-func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
-	reqBody, err := l.buildResponsesRequest(messages, tools)
+func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+	reqBody, err := l.buildResponsesRequest(bundle, tools)
 	if err != nil {
 		return nil, err
 	}
@@ -185,10 +185,10 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, messages []openai.ChatComple
 		"provider":          l.provider,
 		"model":             l.model,
 		"endpoint":          endpoint,
-		"message_count":     len(messages),
+		"message_count":     len(bundle.History),
 		"tool_count":        len(tools),
 		"tools":             summarizeTools(tools),
-		"user_preview":      clipText(lastUserMessage(messages), 240),
+		"user_preview":      clipText(lastUserMessage(bundle.History), 240),
 		"instruction_chars": len([]rune(reqBody.Instructions)),
 		"request_bytes":     len(reqBytes),
 		"request_sha256":    blobSHA256(reqBytes),
@@ -293,19 +293,24 @@ type responsesOutputContent struct {
 	Text string `json:"text"`
 }
 
-func (l *LLMClient) buildResponsesRequest(messages []openai.ChatCompletionMessage, tools []openai.Tool) (*responsesAPIRequest, error) {
+func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.Tool) (*responsesAPIRequest, error) {
 	req := &responsesAPIRequest{
 		Model: l.model,
 	}
 
-	for _, msg := range messages {
+	if bundle.Policy != "" {
+		req.Instructions = bundle.Policy
+	}
+
+	for _, block := range bundle.RuntimeContext {
+		req.Input = append(req.Input, responsesInput{
+			"role":    "user",
+			"content": block.Content,
+		})
+	}
+
+	for _, msg := range bundle.History {
 		switch msg.Role {
-		case openai.ChatMessageRoleSystem:
-			if req.Instructions == "" {
-				req.Instructions = msg.Content
-			} else if strings.TrimSpace(msg.Content) != "" {
-				req.Instructions += "\n\n" + msg.Content
-			}
 		case openai.ChatMessageRoleUser:
 			req.Input = append(req.Input, responsesInput{
 				"role":    "user",
@@ -333,6 +338,13 @@ func (l *LLMClient) buildResponsesRequest(messages []openai.ChatCompletionMessag
 				"output":  msg.Content,
 			})
 		}
+	}
+
+	if bundle.Task != "" {
+		req.Input = append(req.Input, responsesInput{
+			"role":    "user",
+			"content": bundle.Task,
+		})
 	}
 
 	for _, tool := range tools {
@@ -434,7 +446,7 @@ func firstAnthropicText(content []anthropic.MessageContent) string {
 	return ""
 }
 
-func lastUserMessage(messages []openai.ChatCompletionMessage) string {
+func lastUserMessage(messages []ConversationItem) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == openai.ChatMessageRoleUser {
 			return messages[i].Content
@@ -484,37 +496,38 @@ func anthropicToolNames(content []anthropic.MessageContent) []string {
 }
 
 // chatAnthropic Anthropic 格式调用，转换为统一的 OpenAI 格式返回
-func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
 	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
 
-	// 转换 messages: OpenAI → Anthropic 格式
-	var systemPrompt string
+	systemPrompt := bundle.Policy
+
 	var anthropicMsgs []anthropic.Message
+	var currentUserContent []anthropic.MessageContent
 
-	for _, msg := range messages {
-		switch msg.Role {
-		case openai.ChatMessageRoleSystem:
-			// 修复 #14：合并所有 system 消息（含上下文压缩后注入的历史摘要），与 buildResponsesRequest 保持一致
-			if systemPrompt == "" {
-				systemPrompt = msg.Content
-			} else if strings.TrimSpace(msg.Content) != "" {
-				systemPrompt += "\n\n" + msg.Content
-			}
-
-		case openai.ChatMessageRoleUser:
+	flushUserContent := func() {
+		if len(currentUserContent) > 0 {
 			anthropicMsgs = append(anthropicMsgs, anthropic.Message{
-				Role: anthropic.RoleUser,
-				Content: []anthropic.MessageContent{
-					anthropic.NewTextMessageContent(msg.Content),
-				},
+				Role:    anthropic.RoleUser,
+				Content: currentUserContent,
 			})
+			currentUserContent = nil
+		}
+	}
 
+	for _, block := range bundle.RuntimeContext {
+		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(block.Content))
+	}
+
+	for _, msg := range bundle.History {
+		switch msg.Role {
+		case openai.ChatMessageRoleUser:
+			currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(msg.Content))
 		case openai.ChatMessageRoleAssistant:
+			flushUserContent()
 			var content []anthropic.MessageContent
 			if msg.Content != "" {
 				content = append(content, anthropic.NewTextMessageContent(msg.Content))
 			}
-			// 转换 tool_calls
 			for _, tc := range msg.ToolCalls {
 				inputRaw := json.RawMessage(tc.Function.Arguments)
 				content = append(content, anthropic.NewToolUseMessageContent(tc.ID, tc.Function.Name, inputRaw))
@@ -525,16 +538,15 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCom
 					Content: content,
 				})
 			}
-
 		case openai.ChatMessageRoleTool:
-			anthropicMsgs = append(anthropicMsgs, anthropic.Message{
-				Role: anthropic.RoleUser,
-				Content: []anthropic.MessageContent{
-					anthropic.NewToolResultMessageContent(msg.ToolCallID, msg.Content, false),
-				},
-			})
+			currentUserContent = append(currentUserContent, anthropic.NewToolResultMessageContent(msg.ToolCallID, msg.Content, false))
 		}
 	}
+
+	if bundle.Task != "" {
+		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(bundle.Task))
+	}
+	flushUserContent()
 
 	// 转换 tools: OpenAI → Anthropic 格式
 	var anthropicTools []anthropic.ToolDefinition
@@ -575,10 +587,10 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, messages []openai.ChatCom
 			"provider":          l.provider,
 			"model":             l.model,
 			"endpoint":          config.Cfg.LLMAPIEndpoint,
-			"message_count":     len(messages),
+			"message_count":     len(bundle.History),
 			"tool_count":        len(tools),
 			"tools":             summarizeTools(tools),
-			"user_preview":      clipText(lastUserMessage(messages), 240),
+			"user_preview":      clipText(lastUserMessage(bundle.History), 240),
 			"instruction_chars": len([]rune(systemPrompt)),
 			"request_bytes":     len(reqBytes),
 			"request_sha256":    blobSHA256(reqBytes),

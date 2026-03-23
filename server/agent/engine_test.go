@@ -243,26 +243,24 @@ func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {
 	t.Parallel()
 
 	engine := &Engine{
-		systemPrompt: "system",
-		messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: "system"},
-		},
+		policy: "system",
+		history: []ConversationItem{},
 	}
 
 	for i := 0; i < 16; i++ {
-		engine.messages = append(engine.messages,
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("a", 40000)},
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: "ok"},
+		engine.history = append(engine.history,
+			ConversationItem{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("a", 40000)},
+			ConversationItem{Role: openai.ChatMessageRoleAssistant, Content: "ok"},
 		)
 	}
 
 	engine.compactMessagesLocked(contextCompactTriggerTokens + 1)
 
-	if len(engine.messages) >= 33 {
-		t.Fatalf("expected messages to be compacted, got %d", len(engine.messages))
+	if len(engine.history) >= 33 {
+		t.Fatalf("expected messages to be compacted, got %d", len(engine.history))
 	}
-	if !isHistoryDigestMessage(engine.messages[1]) {
-		t.Fatalf("expected digest message at position 1")
+	if engine.contextDigest == "" {
+		t.Fatalf("expected digest message in contextDigest")
 	}
 }
 
@@ -270,18 +268,17 @@ func TestCompactMessagesLockedSkipsWithoutMeasuredTokens(t *testing.T) {
 	t.Parallel()
 
 	engine := &Engine{
-		systemPrompt: "system",
-		messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: "system"},
+		policy: "system",
+		history: []ConversationItem{
 			{Role: openai.ChatMessageRoleUser, Content: "user"},
 			{Role: openai.ChatMessageRoleAssistant, Content: "assistant"},
 			{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("x", 1000)},
 		},
 	}
 
-	before := len(engine.messages)
+	before := len(engine.history)
 	engine.compactMessagesLocked(0)
-	if len(engine.messages) != before {
+	if len(engine.history) != before {
 		t.Fatalf("expected no compaction without measured tokens")
 	}
 }

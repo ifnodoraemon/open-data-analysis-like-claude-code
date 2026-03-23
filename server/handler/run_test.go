@@ -60,8 +60,8 @@ func TestRenderReportHTMLFromSnapshotRegeneratesCurrentTemplate(t *testing.T) {
 	if !ok {
 		t.Fatal("expected snapshot to be rendered")
 	}
-	if !strings.Contains(html, `<h2>1. 概览</h2>`) {
-		t.Fatalf("expected regenerated html to normalize prefixed titles, got: %s", html)
+	if !strings.Contains(html, `<h2>一、概览</h2>`) {
+		t.Fatalf("expected regenerated html to retain original prefixed titles, got: %s", html)
 	}
 	if !strings.Contains(html, `document.querySelectorAll('.chart-box[data-chart-id="chart_sales"]')`) {
 		t.Fatalf("expected regenerated html to use chart-box-only selector, got: %s", html)

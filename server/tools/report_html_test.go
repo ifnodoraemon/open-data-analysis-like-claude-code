@@ -81,11 +81,11 @@ func TestRenderReportHTMLSupportsCustomSectionKinds(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, "1. 主要风险") {
-		t.Fatalf("expected custom risks section to render with numbered heading")
+	if !strings.Contains(html, "<h2>主要风险</h2>") {
+		t.Fatalf("expected custom risks section to render with heading")
 	}
-	if !strings.Contains(html, "2. 分析方法") {
-		t.Fatalf("expected custom methodology section to render with numbered heading")
+	if !strings.Contains(html, "<h2>分析方法</h2>") {
+		t.Fatalf("expected custom methodology section to render with heading")
 	}
 }
 
@@ -100,23 +100,23 @@ func TestRenderReportHTMLNormalizesPrefixedSectionTitles(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, `<li><a href="#section-1">数据概览</a></li>`) {
-		t.Fatalf("expected toc title to strip ordinal prefix, got: %s", html)
+	if !strings.Contains(html, `<li><a href="#section-1">一、数据概览</a></li>`) {
+		t.Fatalf("expected toc title to retain original prefix, got: %s", html)
 	}
-	if !strings.Contains(html, `<li><a href="#section-2">各维度分布</a></li>`) {
-		t.Fatalf("expected numeric space prefix to be stripped, got: %s", html)
+	if !strings.Contains(html, `<li><a href="#section-2">02 各维度分布</a></li>`) {
+		t.Fatalf("expected toc title numeric space prefix to remain, got: %s", html)
 	}
-	if !strings.Contains(html, `<li><a href="#section-3">趋势变化</a></li>`) {
-		t.Fatalf("expected chapter prefix to be stripped, got: %s", html)
+	if !strings.Contains(html, `<li><a href="#section-3">第3章 趋势变化</a></li>`) {
+		t.Fatalf("expected chapter prefix to remain, got: %s", html)
 	}
-	if !strings.Contains(html, `<h2>1. 数据概览</h2>`) {
-		t.Fatalf("expected heading to keep single generated ordinal, got: %s", html)
+	if !strings.Contains(html, `<h2>一、数据概览</h2>`) {
+		t.Fatalf("expected heading to match original title, got: %s", html)
 	}
-	if !strings.Contains(html, `<h2>2. 各维度分布</h2>`) {
-		t.Fatalf("expected heading to normalize prefixed title, got: %s", html)
+	if !strings.Contains(html, `<h2>02 各维度分布</h2>`) {
+		t.Fatalf("expected heading to match original title, got: %s", html)
 	}
-	if !strings.Contains(html, `<h2>3. 趋势变化</h2>`) {
-		t.Fatalf("expected heading to normalize chapter title, got: %s", html)
+	if !strings.Contains(html, `<h2>第3章 趋势变化</h2>`) {
+		t.Fatalf("expected heading to match original title, got: %s", html)
 	}
 }
 

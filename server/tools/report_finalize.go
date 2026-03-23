@@ -39,9 +39,6 @@ func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params rep
 	}
 
 	params.Author = strings.TrimSpace(params.Author)
-	if params.Author == "" {
-		params.Author = "AI 数据分析师"
-	}
 
 	if subgoals != nil {
 		canFinalize, blockers := subgoals.CanFinalize()

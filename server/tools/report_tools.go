@@ -154,7 +154,7 @@ func (t *FinalizeReportTool) Parameters() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"report_title": {"type": "string", "description": "报告标题"},
-			"author": {"type": "string", "description": "作者/分析师名称", "default": "AI 数据分析师"}
+			"author": {"type": "string", "description": "作者/分析师名称"}
 		},
 		"required": ["report_title"]
 	}`)

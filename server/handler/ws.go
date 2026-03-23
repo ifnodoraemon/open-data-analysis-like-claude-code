@@ -691,7 +691,7 @@ func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
 		HideTOC:         state.Layout.HideTOC,
 	}
 	if snapshot.Title == "" {
-		snapshot.Title = tools.ResolveReportTitleFromState(state, "数据分析报告")
+		snapshot.Title = tools.ResolveReportTitleFromState(state)
 	}
 	snapshot.Blocks = make([]domain.ReportSnapshotBlock, 0, len(state.Blocks))
 	for _, block := range state.Blocks {

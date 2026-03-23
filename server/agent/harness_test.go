@@ -101,94 +101,92 @@ func TestRetryableToolExecAbortsOnCancelledContext(t *testing.T) {
 // compactWorkerMessages 测试
 // ——————————————————————————————————————————————
 
-func TestCompactWorkerMessagesNoOpBelowThreshold(t *testing.T) {
+func TestCompactWorkerBundleNoOpBelowThreshold(t *testing.T) {
 	t.Parallel()
 
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: "system"},
-		{Role: openai.ChatMessageRoleUser, Content: "user task"},
-		{Role: openai.ChatMessageRoleAssistant, Content: "ok"},
+	bundle := &PromptBundle{
+		Policy: "system",
+		Task:   "user task",
+		History: []ConversationItem{
+			{Role: openai.ChatMessageRoleAssistant, Content: "ok"},
+		},
 	}
-	result := compactWorkerMessages(messages, contextCompactTriggerTokens-1)
-	if len(result) != len(messages) {
-		t.Fatalf("expected no compaction below threshold, got %d messages", len(result))
+	compactWorkerBundle(bundle, contextCompactTriggerTokens-1)
+	if len(bundle.History) != 1 {
+		t.Fatalf("expected no compaction below threshold, got %d messages in history", len(bundle.History))
 	}
 }
 
-func TestCompactWorkerMessagesNoOpShortHistory(t *testing.T) {
+func TestCompactWorkerBundleNoOpShortHistory(t *testing.T) {
 	t.Parallel()
 
-	// 不够触发压缩的消息数量
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: "system"},
-		{Role: openai.ChatMessageRoleUser, Content: "user task"},
+	bundle := &PromptBundle{
+		Policy: "system",
+		Task:   "user task",
+		History: []ConversationItem{},
 	}
-	result := compactWorkerMessages(messages, contextCompactTriggerTokens+1)
-	if len(result) != 2 {
-		t.Fatalf("expected 2-message slice to be untouched, got %d", len(result))
+	compactWorkerBundle(bundle, contextCompactTriggerTokens+1)
+	if len(bundle.History) != 0 {
+		t.Fatalf("expected empty history to be untouched, got %d", len(bundle.History))
 	}
 }
 
-func TestCompactWorkerMessagesCompactsLongHistory(t *testing.T) {
+func TestCompactWorkerBundleCompactsLongHistory(t *testing.T) {
 	t.Parallel()
 
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: "system"},
-		{Role: openai.ChatMessageRoleUser, Content: "user task instruction"},
+	bundle := &PromptBundle{
+		Policy: "system",
+		Task:   "user task instruction",
+		History: []ConversationItem{},
 	}
-	// 添加 20 条历史消息（超过 recentContextWindow）
 	for i := 0; i < 20; i++ {
-		messages = append(messages,
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: strings.Repeat("a", 200)},
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleTool, Content: "tool result"},
+		bundle.History = append(bundle.History,
+			ConversationItem{Role: openai.ChatMessageRoleAssistant, Content: strings.Repeat("a", 200)},
+			ConversationItem{Role: openai.ChatMessageRoleTool, Content: "tool result"},
 		)
 	}
+	originalLen := len(bundle.History)
 
-	result := compactWorkerMessages(messages, contextCompactTriggerTokens+1)
+	compactWorkerBundle(bundle, contextCompactTriggerTokens+1)
 
-	// 压缩后数量应减少
-	if len(result) >= len(messages) {
-		t.Fatalf("expected messages to be compacted, got %d (original %d)", len(result), len(messages))
+	if len(bundle.History) >= originalLen {
+		t.Fatalf("expected history to be compacted, got %d (original %d)", len(bundle.History), originalLen)
 	}
-	// messages[0] 必须是 system
-	if result[0].Role != openai.ChatMessageRoleSystem {
-		t.Fatal("expected system prompt at position 0")
-	}
-	// messages[1] 必须是 user task（始终保留）
-	if result[1].Role != openai.ChatMessageRoleUser || result[1].Content != "user task instruction" {
-		t.Fatalf("expected user task at position 1, got role=%s content=%q", result[1].Role, result[1].Content)
-	}
-	// messages[2] 应是历史摘要
-	if !isHistoryDigestMessage(result[2]) {
-		t.Fatal("expected history digest at position 2")
+	if len(bundle.RuntimeContext) == 0 || bundle.RuntimeContext[0].Name != "digest" {
+		t.Fatalf("expected history digest in runtime context")
 	}
 }
 
-func TestCompactWorkerMessagesPreservesExistingDigest(t *testing.T) {
+func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
 	t.Parallel()
 
 	existDigest := historyDigestPrefix + "\n- 用户: 早期任务\n- 工具结果: ok"
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: "system"},
-		{Role: openai.ChatMessageRoleUser, Content: "user task"},
-		{Role: openai.ChatMessageRoleSystem, Content: existDigest},
+	bundle := &PromptBundle{
+		Policy: "system",
+		Task:   "user task",
+		RuntimeContext: []RuntimeContextBlock{
+			{Name: "digest", Content: existDigest},
+		},
+		History: []ConversationItem{},
 	}
-	// 加足够多的历史消息
 	for i := 0; i < 15; i++ {
-		messages = append(messages,
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: "assistant turn"},
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleTool, Content: "tool result"},
+		bundle.History = append(bundle.History,
+			ConversationItem{Role: openai.ChatMessageRoleAssistant, Content: "assistant turn"},
+			ConversationItem{Role: openai.ChatMessageRoleTool, Content: "tool result"},
 		)
 	}
+	originalLen := len(bundle.History)
 
-	result := compactWorkerMessages(messages, contextCompactTriggerTokens+1)
+	compactWorkerBundle(bundle, contextCompactTriggerTokens+1)
 
-	if len(result) >= len(messages) {
-		t.Fatalf("expected compaction with existing digest, got %d", len(result))
+	if len(bundle.History) >= originalLen {
+		t.Fatalf("expected compaction with existing digest, got %d", len(bundle.History))
 	}
-	// 摘要中应包含旧摘要内容的延续
-	if !isHistoryDigestMessage(result[2]) {
-		t.Fatal("expected digest at position 2")
+	if len(bundle.RuntimeContext) == 0 {
+		t.Fatal("expected digest block")
+	}
+	if !strings.Contains(bundle.RuntimeContext[0].Content, "早期任务") {
+		t.Fatalf("expected new digest to preserve previous content")
 	}
 }
 

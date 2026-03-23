@@ -14,11 +14,11 @@ import (
 	htmlnode "golang.org/x/net/html"
 )
 
-func ResolveReportTitleFromState(state *ReportState, fallback string) string {
+func ResolveReportTitleFromState(state *ReportState) string {
 	if state == nil {
-		return fallback
+		return ""
 	}
-	return resolveReportTitleFromBlocks(state.Blocks, fallback)
+	return state.FinalTitle
 }
 
 // RenderReportHTML 生成完整的研报 HTML（含 ECharts 图表支持）
@@ -27,11 +27,11 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		state = &ReportState{}
 	}
 	blocks := state.Blocks
-	if title == "" {
-		title = ResolveReportTitleFromState(state, "数据分析报告")
+	if title == "" && state != nil {
+		title = state.FinalTitle
 	}
-	if author == "" {
-		author = "AI 数据分析师"
+	if author == "" && state != nil {
+		author = state.FinalAuthor
 	}
 	title = strings.TrimSpace(title)
 	author = strings.TrimSpace(author)
@@ -50,7 +50,10 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 			continue
 		}
 		chapterNum++
-		tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, blockDisplayTitle(block, chapterNum)))
+		displayTitle := blockDisplayTitle(block)
+		if displayTitle != "" {
+			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, displayTitle))
+		}
 		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts))
 	}
 
@@ -493,14 +496,7 @@ func renderCustomShell(shell string, data reportShellData) string {
 	return rendered
 }
 
-func resolveReportTitleFromBlocks(blocks []ReportBlock, fallback string) string {
-	for _, block := range blocks {
-		if isTitleBlock(block) && strings.TrimSpace(block.Title) != "" {
-			return block.Title
-		}
-	}
-	return fallback
-}
+ 
 
 func collectReferencedCharts(blocks []ReportBlock) map[string]struct{} {
 	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
@@ -522,51 +518,10 @@ func isTitleBlock(block ReportBlock) bool {
 	return strings.EqualFold(strings.TrimSpace(block.Kind), "title")
 }
 
-var titleOrdinalPrefixPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`^\s*第\s*[0-9一二三四五六七八九十百千万零两]+\s*[章节部分篇]\s*[:：、.\-]?\s*`),
-	regexp.MustCompile(`^\s*[（(]\s*[0-9一二三四五六七八九十百千万零两]+\s*[)）]\s*`),
-	regexp.MustCompile(`^\s*[0-9]{1,2}(?:\.[0-9]{1,2})?\s*[.、:：\-]\s*`),
-	regexp.MustCompile(`^\s*[一二三四五六七八九十百千万零两]{1,3}\s*[.、:：\-]\s*`),
-	regexp.MustCompile(`^\s*[0-9]{1,2}\s+`),
-}
+ 
 
-func normalizeBlockDisplayTitle(title string) string {
-	normalized := strings.TrimSpace(title)
-	if normalized == "" {
-		return ""
-	}
-
-	for range 4 {
-		changed := false
-		for _, pattern := range titleOrdinalPrefixPatterns {
-			next := strings.TrimSpace(pattern.ReplaceAllString(normalized, ""))
-			if next != "" && next != normalized {
-				normalized = next
-				changed = true
-				break
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-	return normalized
-}
-
-func blockDisplayTitle(block ReportBlock, chapterNum int) string {
-	title := strings.TrimSpace(block.Title)
-	if title != "" {
-		return normalizeBlockDisplayTitle(title)
-	}
-	switch strings.ToLower(strings.TrimSpace(block.Kind)) {
-	case "chart":
-		if block.ChartID != "" {
-			return fmt.Sprintf("图表 %s", block.ChartID)
-		}
-	case "html":
-		return fmt.Sprintf("HTML Block %d", chapterNum)
-	}
-	return fmt.Sprintf("Block %d", chapterNum)
+func blockDisplayTitle(block ReportBlock) string {
+	return strings.TrimSpace(block.Title)
 }
 
 type reportBlockRenderer func(ReportBlock, int, []ChartData) string
@@ -588,16 +543,18 @@ func renderReportBlockHTML(block ReportBlock, chapterNum int, charts []ChartData
 
 func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
 	preset := inferMarkdownBlockPreset(block)
-	title := blockDisplayTitle(block, chapterNum)
-	heading := fmt.Sprintf("%d. %s", chapterNum, title)
-	if preset.rawTitle {
-		heading = title
+	title := blockDisplayTitle(block)
+
+	var headingHTML string
+	if title != "" {
+		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
 	}
+
 	return fmt.Sprintf(`
 		<div class="%s" id="section-%d" data-block-id="%s" data-block-kind="%s">
-			<h2>%s</h2>
+			%s
 			<div class="%s">%s</div>
-		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(strings.ToLower(strings.TrimSpace(block.Kind))), escapeHTMLText(heading), escapeHTMLAttr(preset.bodyClass), processContent(block.Content, charts))
+		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(strings.ToLower(strings.TrimSpace(block.Kind))), headingHTML, escapeHTMLAttr(preset.bodyClass), processContent(block.Content, charts))
 }
 
 func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
@@ -625,25 +582,33 @@ func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
 }
 
 func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData) string {
-	title := blockDisplayTitle(block, chapterNum)
+	title := blockDisplayTitle(block)
+	var headingHTML string
+	if title != "" {
+		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
+	}
 	return fmt.Sprintf(`
 		<div class="section html-block" id="section-%d" data-block-id="%s" data-block-kind="html">
-			<h2>%d. %s</h2>
+			%s
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), chapterNum, escapeHTMLText(title), sanitizeHTMLFragment(block.Content))
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), headingHTML, sanitizeHTMLFragment(block.Content))
 }
 
 func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
-	title := blockDisplayTitle(block, chapterNum)
+	title := blockDisplayTitle(block)
 	content := fmt.Sprintf("{{chart:%s}}", block.ChartID)
 	if strings.TrimSpace(block.Content) != "" {
 		content += "\n\n" + block.Content
 	}
+	var headingHTML string
+	if title != "" {
+		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
+	}
 	return fmt.Sprintf(`
 		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart">
-			<h2>%d. %s</h2>
+			%s
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), chapterNum, escapeHTMLText(title), processContent(content, charts))
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), headingHTML, processContent(content, charts))
 }
 
 // processContent 处理内容：Markdown 转 HTML + 替换图表占位符
@@ -667,7 +632,7 @@ func processContent(content string, charts []ChartData) string {
 				return fmt.Sprintf(`<div id="%s" data-chart-id="%s" class="chart-box" style="height:%s;"></div>`, escapeHTMLAttr(containerID), escapeHTMLAttr(ch.ID), escapeHTMLAttr(height))
 			}
 		}
-		return fmt.Sprintf(`<div class="chart-box" style="height:400px;"></div><p>图表 %s 未找到</p>`, escapeHTMLText(chartID))
+		return ""
 	})
 
 	return html

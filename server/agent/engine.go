@@ -15,11 +15,12 @@ import (
 
 // Engine Agent 主循环引擎
 type Engine struct {
-	llm          *LLMClient
-	registry     *tools.Registry
-	messages     []openai.ChatCompletionMessage
-	systemPrompt string
-	mu           sync.Mutex
+	llm           *LLMClient
+	registry      *tools.Registry
+	policy        string
+	history       []ConversationItem
+	contextDigest string
+	mu            sync.Mutex
 }
 
 const (
@@ -80,48 +81,45 @@ func retryableToolExec(ctx context.Context, registry *tools.Registry, toolName s
 	return result, execErr
 }
 
-// compactWorkerMessages 对子代理消息历史做上下文压缩。
-// 始终保留 messages[0]（system prompt）和 messages[1]（用户任务指令），
-// 对 messages[2:] 中超出最近窗口的部分注入摘要并裁剪。
-func compactWorkerMessages(messages []openai.ChatCompletionMessage, promptTokens int) []openai.ChatCompletionMessage {
-	// 至少需要 system + user_task + 1 条历史才值得压缩
-	if len(messages) <= 2 {
-		return messages
+// compactWorkerBundle 对子代理消息历史做上下文压缩。
+func compactWorkerBundle(bundle *PromptBundle, promptTokens int) {
+	if len(bundle.History) <= 1 {
+		return
 	}
 	if promptTokens <= 0 || promptTokens <= contextCompactTriggerTokens {
-		return messages
+		return
 	}
 
-	// historyStart 为可压缩历史的起始索引（跳过 system + user_task）
-	historyStart := 2
+	recentStart := len(bundle.History) - recentContextWindow
+	if recentStart <= 0 {
+		return
+	}
+
 	existingDigest := ""
-	if len(messages) > 2 && isHistoryDigestMessage(messages[2]) {
-		existingDigest = strings.TrimSpace(strings.TrimPrefix(messages[2].Content, historyDigestPrefix))
-		historyStart = 3
+	for _, ctx := range bundle.RuntimeContext {
+		if ctx.Name == "digest" {
+			existingDigest = ctx.Content
+		}
 	}
 
-	if len(messages)-historyStart <= recentContextWindow {
-		return messages
-	}
-
-	recentStart := len(messages) - recentContextWindow
-	if recentStart < historyStart {
-		recentStart = historyStart
-	}
-
-	digest := buildHistoryDigest(existingDigest, messages[historyStart:recentStart])
+	digest := buildHistoryDigest(existingDigest, bundle.History[:recentStart])
 	if digest == "" {
-		return messages
+		return
 	}
 
-	compacted := make([]openai.ChatCompletionMessage, 0, recentContextWindow+3)
-	compacted = append(compacted, messages[0], messages[1])
-	compacted = append(compacted, openai.ChatCompletionMessage{
-		Role:    openai.ChatMessageRoleSystem,
-		Content: digest,
-	})
-	compacted = append(compacted, messages[recentStart:]...)
-	return compacted
+	found := false
+	for i := range bundle.RuntimeContext {
+		if bundle.RuntimeContext[i].Name == "digest" {
+			bundle.RuntimeContext[i].Content = digest
+			found = true
+			break
+		}
+	}
+	if !found {
+		bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{Name: "digest", Content: digest})
+	}
+
+	bundle.History = bundle.History[recentStart:]
 }
 
 // NewEngine 创建 Agent 引擎（支持多轮对话）
@@ -130,38 +128,24 @@ func NewEngine(registry *tools.Registry, systemPrompt string) *Engine {
 		systemPrompt = BuildPlannerPrompt(registry)
 	}
 	return &Engine{
-		llm:          NewLLMClient(),
-		registry:     registry,
-		systemPrompt: systemPrompt,
-		messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-		},
+		llm:      NewLLMClient(),
+		registry: registry,
+		policy:   systemPrompt,
 	}
 }
 
 func (e *Engine) ResetMessages() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.messages = []openai.ChatCompletionMessage{
-		{
-			Role:    openai.ChatMessageRoleSystem,
-			Content: e.systemPrompt,
-		},
-	}
-}
-
-func isHistoryDigestMessage(msg openai.ChatCompletionMessage) bool {
-	return msg.Role == openai.ChatMessageRoleSystem && strings.HasPrefix(strings.TrimSpace(msg.Content), historyDigestPrefix)
+	e.history = nil
+	e.contextDigest = ""
 }
 
 // summarizeMessageForDigest 为历史摘要提取每条消息的最有价值片段。
 // - tool result：优先使用 ui_summary/message 等语义字段（由 digestSummary 提取），不截断
 // - assistant thinking：取末段结论（结论往往在末尾），而非首部截断
 // - user / tool_call：取末段，400 字上限
-func summarizeMessageForDigest(msg openai.ChatCompletionMessage) string {
+func summarizeMessageForDigest(msg ConversationItem) string {
 	switch msg.Role {
 	case openai.ChatMessageRoleUser:
 		if text := digestSummary(msg.Content, 400); text != "" {
@@ -284,7 +268,7 @@ func formatSummaryField(key string, value interface{}) string {
 	}
 }
 
-func buildHistoryDigest(existing string, messages []openai.ChatCompletionMessage) string {
+func buildHistoryDigest(existing string, messages []ConversationItem) string {
 	// 收集本轮新增的 bullet 条目（不含已有 digest 文本）
 	bullets := make([]string, 0, len(messages))
 	for _, msg := range messages {
@@ -313,39 +297,25 @@ func buildHistoryDigest(existing string, messages []openai.ChatCompletionMessage
 }
 
 func (e *Engine) compactMessagesLocked(promptTokens int) {
-	if len(e.messages) <= 2 {
+	if len(e.history) <= 1 {
 		return
 	}
 	if promptTokens <= 0 || promptTokens <= contextCompactTriggerTokens {
 		return
 	}
 
-	base := e.messages[0]
-	start := 1
-	existingDigest := ""
-	if len(e.messages) > 1 && isHistoryDigestMessage(e.messages[1]) {
-		existingDigest = strings.TrimSpace(strings.TrimPrefix(e.messages[1].Content, historyDigestPrefix))
-		start = 2
-	}
-	if len(e.messages)-start <= recentContextWindow {
+	recentStart := len(e.history) - recentContextWindow
+	if recentStart <= 0 {
 		return
 	}
 
-	recentStart := len(e.messages) - recentContextWindow
-	if recentStart < start {
-		recentStart = start
-	}
-	digest := buildHistoryDigest(existingDigest, e.messages[start:recentStart])
+	digest := buildHistoryDigest(e.contextDigest, e.history[:recentStart])
 	if digest == "" {
 		return
 	}
 
-	trimmed := []openai.ChatCompletionMessage{base, {
-		Role:    openai.ChatMessageRoleSystem,
-		Content: digest,
-	}}
-	trimmed = append(trimmed, e.messages[recentStart:]...)
-	e.messages = trimmed
+	e.contextDigest = digest
+	e.history = e.history[recentStart:]
 }
 
 func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
@@ -412,17 +382,10 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 	specialHandlers := e.specialToolHandlers()
 
 	e.mu.Lock()
-	// 仅当有实际用户输入时才追加 user 消息；
-	// userInput=="" 说明是从 user_request_input 挂起后恢复，跳过追加避免注入空消息。
-	if userInput != "" {
-		e.messages = append(e.messages, openai.ChatCompletionMessage{
-			Role:    openai.ChatMessageRoleUser,
-			Content: userInput,
-		})
-	}
-
 	oaiTools := e.registry.GetOpenAITools()
 	e.mu.Unlock()
+
+	userTask := userInput
 
 	for i := 1; ; i++ {
 		select {
@@ -435,17 +398,34 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		// 通知前端: 正在思考
 		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i)}})
 
-		// 调用 LLM
 		e.mu.Lock()
-		messages := append([]openai.ChatCompletionMessage(nil), e.messages...)
+		bundle := &PromptBundle{
+			Policy: e.policy,
+			Task:   userTask,
+		}
+		if e.contextDigest != "" {
+			bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{
+				Name:    "digest",
+				Content: historyDigestPrefix + "\n" + e.contextDigest,
+			})
+		}
+		bundle.History = append([]ConversationItem(nil), e.history...)
 		e.mu.Unlock()
 
-		resp, err := e.llm.ChatWithTools(ctx, messages, oaiTools)
+		resp, err := e.llm.ChatWithTools(ctx, bundle, oaiTools)
 		if err != nil {
 			emit(WSEvent{Type: EventError, Data: ErrorData{Message: err.Error()}})
 			return
 		}
+
 		e.mu.Lock()
+		if userTask != "" {
+			e.history = append(e.history, ConversationItem{
+				Role:    openai.ChatMessageRoleUser,
+				Content: userTask,
+			})
+			userTask = ""
+		}
 		e.compactMessagesLocked(resp.Usage.PromptTokens)
 		e.mu.Unlock()
 
@@ -464,7 +444,10 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 			} else {
 				// 有文本 + 无工具调用 → 最终回复
 				e.mu.Lock()
-				e.messages = append(e.messages, choice.Message)
+				e.history = append(e.history, ConversationItem{
+					Role:    openai.ChatMessageRoleAssistant,
+					Content: choice.Message.Content,
+				})
 				e.mu.Unlock()
 				emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
 				return
@@ -474,7 +457,10 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		// 如果 finish_reason 是 stop 且没有工具调用，结束
 		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
 			e.mu.Lock()
-			e.messages = append(e.messages, choice.Message)
+			e.history = append(e.history, ConversationItem{
+				Role:    openai.ChatMessageRoleAssistant,
+				Content: choice.Message.Content,
+			})
 			e.mu.Unlock()
 			emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
 			return
@@ -484,7 +470,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		if len(choice.Message.ToolCalls) > 0 {
 			// 将 assistant 消息加入历史
 			e.mu.Lock()
-			e.messages = append(e.messages, compactAssistantMessage(choice.Message))
+			e.history = append(e.history, compactAssistantMessage(choice.Message))
 			e.mu.Unlock()
 
 			for _, toolCall := range choice.Message.ToolCalls {
@@ -574,7 +560,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 
 				// 将工具结果加入消息历史
 				e.mu.Lock()
-				e.messages = append(e.messages, openai.ChatCompletionMessage{
+				e.history = append(e.history, ConversationItem{
 					Role:       openai.ChatMessageRoleTool,
 					Content:    compactToolResult(toolCall.Function.Name, result),
 					ToolCallID: toolCall.ID,
@@ -600,19 +586,19 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-func compactAssistantMessage(message openai.ChatCompletionMessage) openai.ChatCompletionMessage {
-	if len(message.ToolCalls) == 0 {
-		return message
+func compactAssistantMessage(message openai.ChatCompletionMessage) ConversationItem {
+	item := ConversationItem{
+		Role:    message.Role,
+		Content: message.Content,
 	}
-
-	compacted := message
-	compacted.ToolCalls = make([]openai.ToolCall, 0, len(message.ToolCalls))
-	for _, toolCall := range message.ToolCalls {
-		next := toolCall
-		next.Function.Arguments = compactToolArguments(toolCall.Function.Name, toolCall.Function.Arguments)
-		compacted.ToolCalls = append(compacted.ToolCalls, next)
+	if len(message.ToolCalls) > 0 {
+		for _, toolCall := range message.ToolCalls {
+			next := toolCall
+			next.Function.Arguments = compactToolArguments(toolCall.Function.Name, toolCall.Function.Arguments)
+			item.ToolCalls = append(item.ToolCalls, next)
+		}
 	}
-	return compacted
+	return item
 }
 
 func compactToolArguments(toolName, raw string) string {
@@ -835,8 +821,8 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	defer e.mu.Unlock()
 
 	var toolCallID string
-	for i := len(e.messages) - 1; i >= 0; i-- {
-		msg := e.messages[i]
+	for i := len(e.history) - 1; i >= 0; i-- {
+		msg := e.history[i]
 		if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
 				if tc.Function.Name == "user_request_input" {
@@ -854,11 +840,10 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 		return fmt.Errorf("没有找到正在等待的用户确认 (user_request_input) 工具调用")
 	}
 
-	e.messages = append(e.messages, openai.ChatCompletionMessage{
+	e.history = append(e.history, ConversationItem{
 		Role:       openai.ChatMessageRoleTool,
 		Content:    userResponse,
 		ToolCallID: toolCallID,
-		Name:       "user_request_input",
 	})
 
 	return nil

@@ -487,7 +487,7 @@ func TestFinalizeReportRejectsInvalidReportState(t *testing.T) {
 	}
 }
 
-func TestFinalizeReportRejectsDuplicateBlockHeadingAndMissingChartCaption(t *testing.T) {
+func TestFinalizeReportAllowsDuplicateBlockHeadingAndMissingChartCaption(t *testing.T) {
 	t.Parallel()
 
 	tool := &FinalizeReportTool{
@@ -504,26 +504,14 @@ func TestFinalizeReportRejectsDuplicateBlockHeadingAndMissingChartCaption(t *tes
 
 	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
 	if err != nil {
-		t.Fatalf("expected structured tool failure instead of error, got %v", err)
+		t.Fatalf("expected finalize to succeed, got %v", err)
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
-		t.Fatalf("expected finalize failure json payload: %v", err)
+		t.Fatalf("expected json payload: %v", err)
 	}
-	issues, ok := payload["finalize_issues"].([]interface{})
-	if !ok {
-		t.Fatalf("expected finalize_issues in payload: %#v", payload)
-	}
-	joined := make([]string, 0, len(issues))
-	for _, issue := range issues {
-		joined = append(joined, issue.(string))
-	}
-	issueText := strings.Join(joined, ",")
-	if !strings.Contains(issueText, "duplicate_block_heading:overview") {
-		t.Fatalf("expected duplicate block heading issue, got %#v", issues)
-	}
-	if !strings.Contains(issueText, "chart_block_missing_caption:sales_chart") {
-		t.Fatalf("expected chart block caption issue, got %#v", issues)
+	if payload["ok"] != true {
+		t.Fatalf("expected finalize to succeed, got %#v", payload)
 	}
 }
 

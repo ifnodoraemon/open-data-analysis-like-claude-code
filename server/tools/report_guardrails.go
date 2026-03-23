@@ -101,14 +101,6 @@ func reportFinalizeIssues(state *ReportState) []string {
 	if len(state.Blocks) == 0 {
 		issues = append(issues, "report_has_no_blocks")
 	}
-	for _, block := range state.Blocks {
-		if hasDuplicateLeadingHeading(block) {
-			issues = append(issues, "duplicate_block_heading:"+block.ID)
-		}
-		if strings.EqualFold(strings.TrimSpace(block.Kind), "chart") && strings.TrimSpace(block.ChartID) != "" && strings.TrimSpace(block.Content) == "" {
-			issues = append(issues, "chart_block_missing_caption:"+block.ID)
-		}
-	}
 
 	var missingCharts []string
 	for chartID := range refCounts {
