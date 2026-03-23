@@ -14,6 +14,12 @@ import (
 	htmlnode "golang.org/x/net/html"
 )
 
+var (
+	htmlHeadingRegexp = regexp.MustCompile(`(?i)<h[1-6][^>]*>(.*?)</h[1-6]>`)
+	htmlTagsRegexp    = regexp.MustCompile(`<[^>]*>`)
+	mdHeadingRegexp   = regexp.MustCompile(`(?m)^(?:#{1,6})\s+(.+)$`)
+)
+
 func ResolveReportTitleFromState(state *ReportState) string {
 	if state == nil {
 		return ""
@@ -52,28 +58,18 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		chapterNum++
 		displayTitle := blockDisplayTitle(block)
 		if displayTitle == "" && block.Content != "" {
-			lines := strings.Split(block.Content, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") {
-					displayTitle = strings.TrimSpace(strings.TrimLeft(line, "#"))
-					break
-				}
-				lowerLine := strings.ToLower(line)
-				if strings.Contains(lowerLine, "<h") && strings.Contains(lowerLine, "</h") {
-					start := strings.Index(line, ">")
-					end := strings.Index(lowerLine, "</h")
-					if start != -1 && end != -1 && start < end {
-						tagContent := line[start+1 : end]
-						// strip simple nested tags if any
-						tagContent = strings.ReplaceAll(tagContent, "<b>", "")
-						tagContent = strings.ReplaceAll(tagContent, "</b>", "")
-						tagContent = strings.ReplaceAll(tagContent, "<strong>", "")
-						tagContent = strings.ReplaceAll(tagContent, "</strong>", "")
-						displayTitle = strings.TrimSpace(tagContent)
-						break
-					}
-				}
+			htmlLoc := htmlHeadingRegexp.FindStringIndex(block.Content)
+			mdLoc := mdHeadingRegexp.FindStringIndex(block.Content)
+
+			var firstMatch []string
+			if htmlLoc != nil && (mdLoc == nil || htmlLoc[0] < mdLoc[0]) {
+				firstMatch = htmlHeadingRegexp.FindStringSubmatch(block.Content)
+			} else if mdLoc != nil {
+				firstMatch = mdHeadingRegexp.FindStringSubmatch(block.Content)
+			}
+
+			if len(firstMatch) > 1 {
+				displayTitle = strings.TrimSpace(htmlTagsRegexp.ReplaceAllString(firstMatch[1], ""))
 			}
 		}
 		if displayTitle != "" {

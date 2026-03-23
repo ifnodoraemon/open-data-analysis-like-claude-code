@@ -237,7 +237,24 @@ func TestRenderReportHTMLSanitizesUnsafeHTML(t *testing.T) {
 		t.Fatalf("expected safe link to remain, got: %s", html)
 	}
 	if !strings.Contains(html, "&lt;img src=x onerror=alert(1)&gt;") {
-		t.Fatalf("expected title to be escaped, got: %s", html)
+		t.Fatalf("expected title to render, got %s", html)
+	}
+}
+
+func TestRenderReportHTMLExtractsBlockTitle(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试提取", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "b1", Kind: "markdown", Title: "", Content: "一些前缀文字\n## 纯 Markdown 标题 \n正文"},
+			{ID: "b2", Kind: "html", Title: "", Content: `<h3 id="custom">嵌套 <span style="color:red">HTML</span> 标题</h3>内容`},
+		},
+	})
+	if !strings.Contains(html, `<li><a href="#section-1">纯 Markdown 标题</a></li>`) {
+		t.Fatalf("expected md title to be extracted, got: %s", html)
+	}
+	if !strings.Contains(html, `<li><a href="#section-2">嵌套 HTML 标题</a></li>`) {
+		t.Fatalf("expected html title to be extracted and tags stripped, got: %s", html)
 	}
 }
 

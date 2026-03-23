@@ -60,3 +60,28 @@ func TestConvertAnthropicResponseMapsUsage(t *testing.T) {
 		t.Fatalf("expected total tokens 133, got %d", resp.Usage.TotalTokens)
 	}
 }
+
+func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
+	t.Parallel()
+
+	client := &LLMClient{model: "gpt-4o"}
+	bundle := &PromptBundle{
+		RuntimeContext: []RuntimeContextBlock{
+			{Name: "active_subgoals", Content: "[g1] test_goal (pending)"},
+		},
+	}
+	
+	req, err := client.buildResponsesRequest(bundle, nil)
+	if err != nil {
+		t.Fatalf("expected no error building request: %v", err)
+	}
+	
+	if len(req.Input) != 1 {
+		t.Fatalf("expected 1 input, got %d", len(req.Input))
+	}
+	expected := "[active_subgoals]\n[g1] test_goal (pending)"
+	contentStr := req.Input[0]["content"].(string)
+	if contentStr != expected {
+		t.Fatalf("expected explicitly prefixed runtime core, got %q", contentStr)
+	}
+}
