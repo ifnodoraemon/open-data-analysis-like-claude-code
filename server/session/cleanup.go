@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,7 +50,8 @@ func (m *Manager) CleanupExpiredSessions(ttlHours int) int {
 				m.mu.Unlock()
 				continue
 			}
-			delete(m.sessions, id)
+			// 注意：此处不立即 delete，待清理操作成功后再从 map 中移除，
+			// 避免 FullDeleteFunc 失败时内存已清、DB 尚存导致数据不一致。
 		}
 		m.mu.Unlock()
 
@@ -57,23 +59,30 @@ func (m *Manager) CleanupExpiredSessions(ttlHours int) int {
 			continue
 		}
 
-		// 第三步：执行清理
+		// 第三步：执行清理（成功后才从 map 中删除）
+		var cleanErr error
 		if m.FullDeleteFunc != nil {
 			// 全链路删除：停止运行 + 删除文件记录 + 删除存储对象 + 删除数据库行
-			if err := m.FullDeleteFunc(context.Background(), id); err != nil {
-				log.Printf("cleanup session %s full-delete error: %v", id, err)
-				continue
+			cleanErr = m.FullDeleteFunc(context.Background(), id)
+			if cleanErr != nil {
+				log.Printf("cleanup session %s full-delete error: %v", id, cleanErr)
 			}
 		} else {
 			// 退化路径：销毁本地 SQLite 缓存
-			if err := sess.Destroy(); err != nil {
-				log.Printf("cleanup session %s destroy error: %v", id, err)
-				continue
-			}
-			if m.sessionRepo != nil {
+			cleanErr = sess.Destroy()
+			if cleanErr != nil {
+				log.Printf("cleanup session %s destroy error: %v", id, cleanErr)
+			} else if m.sessionRepo != nil {
 				_ = m.sessionRepo.Delete(context.Background(), id)
 			}
 		}
+		if cleanErr != nil {
+			continue
+		}
+		// 清理成功后才从内存 map 中移除，保证内存与 DB 一致性
+		m.mu.Lock()
+		delete(m.sessions, id)
+		m.mu.Unlock()
 		cleaned++
 	}
 	return cleaned
@@ -189,10 +198,10 @@ func (m *Manager) StartPeriodicCleanup(sessionTTLHours, traceRetentionDays int, 
 
 	var parts []string
 	if sessionTTLHours > 0 {
-		parts = append(parts, "session_ttl="+itoa(sessionTTLHours)+"h")
+		parts = append(parts, "session_ttl="+strconv.Itoa(sessionTTLHours)+"h")
 	}
 	if traceRetentionDays > 0 {
-		parts = append(parts, "trace_retention="+itoa(traceRetentionDays)+"d")
+		parts = append(parts, "trace_retention="+strconv.Itoa(traceRetentionDays)+"d")
 	}
 	log.Printf("cleanup: periodic cleanup started (%s)", strings.Join(parts, ", "))
 }
@@ -214,18 +223,4 @@ func cleanupStaleTemp(tempDir string, maxAge time.Duration) {
 	}
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	buf := make([]byte, 0, 10)
-	for n > 0 {
-		buf = append(buf, byte('0'+n%10))
-		n /= 10
-	}
-	// reverse
-	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
-		buf[i], buf[j] = buf[j], buf[i]
-	}
-	return string(buf)
-}
+

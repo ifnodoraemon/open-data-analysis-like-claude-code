@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -13,6 +14,17 @@ import (
 	"github.com/ifnodoraemon/openDataAnalysis/repository"
 	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
+
+// dbTimeout 是单次数据库查询的最大等待时间，防止慢 DB 永久阻塞 goroutine（BUG2 修复）。
+const dbTimeout = 10 * time.Second
+
+// dbContext 返回一个带固定超时、与父 ctx 取消无关的衍生 context，
+// 用于 Manager 内部的 DB 查询。使用 context.WithoutCancel 防止请求 cancel
+// 传播到 DB 写操作（如 UpdateLastSeen）。
+func dbContext(parent context.Context) (context.Context, context.CancelFunc) {
+	base := context.WithoutCancel(parent)
+	return context.WithTimeout(base, dbTimeout)
+}
 
 const sessionStopTimeout = 10 * time.Second
 
@@ -48,7 +60,9 @@ func (m *Manager) SetFullDeleteFunc(fn func(ctx context.Context, sessionID strin
 	m.FullDeleteFunc = fn
 }
 
-func (m *Manager) GetOrCreate(sessionID, workspaceID, userID string) (*Session, bool, error) {
+// GetOrCreate 查找或创建 session。
+// ctx 用于限制 DB 查询时长（BUG2 修复），不传播取消语义到写操作。
+func (m *Manager) GetOrCreate(ctx context.Context, sessionID, workspaceID, userID string) (*Session, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -69,7 +83,9 @@ func (m *Manager) GetOrCreate(sessionID, workspaceID, userID string) (*Session, 
 
 	created := true
 	if sessionID != "" && m.sessionRepo != nil {
-		record, err := m.sessionRepo.GetByID(context.Background(), sessionID)
+		qCtx, cancel := dbContext(ctx)
+		record, err := m.sessionRepo.GetByID(qCtx, sessionID)
+		cancel()
 		if err == nil {
 			if record.WorkspaceID != workspaceID || record.UserID != userID {
 				return nil, false, fmt.Errorf("无权访问该会话")
@@ -88,7 +104,8 @@ func (m *Manager) GetOrCreate(sessionID, workspaceID, userID string) (*Session, 
 	}
 	if created && m.sessionRepo != nil {
 		now := time.Now()
-		if err := m.sessionRepo.Create(context.Background(), &domain.Session{
+		wCtx, cancel := dbContext(ctx)
+		err := m.sessionRepo.Create(wCtx, &domain.Session{
 			ID:          id,
 			WorkspaceID: workspaceID,
 			UserID:      userID,
@@ -97,18 +114,27 @@ func (m *Manager) GetOrCreate(sessionID, workspaceID, userID string) (*Session, 
 			CreatedAt:   now,
 			UpdatedAt:   now,
 			LastSeenAt:  now,
-		}); err != nil {
+		})
+		cancel()
+		if err != nil {
 			return nil, false, err
 		}
 	}
 	if m.sessionRepo != nil {
-		_ = m.sessionRepo.UpdateLastSeen(context.Background(), id)
+		wCtx, cancel := dbContext(ctx)
+		_ = m.sessionRepo.UpdateLastSeen(wCtx, id)
+		cancel()
 	}
 	m.sessions[id] = sess
 	return sess, created, nil
 }
 
-func (m *Manager) Get(sessionID, workspaceID, userID string) (*Session, error) {
+// Get 返回指定 session（仅内存中存在的，或从 DB 记录重建的空 session）。
+// ctx 用于限制 DB 查询时长（BUG2 修复）。
+// ISSUE10 注意：若 session 不在内存中（例如服务重启后），将从 DB 重建一个空状态 session，
+// WorkingMemory、SubgoalManager、Engine 消息历史均为初始状态，这是设计上的权衡（无法持久化运行时状态）。
+// 调用方应意识到重建的 session 与原始 session 行为不同，勿在无持久化的重建 session 上执行复杂操作。
+func (m *Manager) Get(ctx context.Context, sessionID, workspaceID, userID string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -117,7 +143,9 @@ func (m *Manager) Get(sessionID, workspaceID, userID string) (*Session, error) {
 		if m.sessionRepo == nil {
 			return nil, fmt.Errorf("会话不存在: %s", sessionID)
 		}
-		record, err := m.sessionRepo.GetByID(context.Background(), sessionID)
+		qCtx, cancel := dbContext(ctx)
+		record, err := m.sessionRepo.GetByID(qCtx, sessionID)
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("会话不存在: %s", sessionID)
 		}
@@ -128,6 +156,9 @@ func (m *Manager) Get(sessionID, workspaceID, userID string) (*Session, error) {
 		if err != nil {
 			return nil, err
 		}
+		// ISSUE10 警告：从 DB 重建的 session 运行时状态（Memory/Subgoals/Engine 历史）已重置。
+		// 这在服务重启后属于预期行为，但若在 session 仍活跃时发生则可能导致状态不一致。
+		log.Printf("[warn] session %s not in memory, rebuilt from DB (runtime state reset) workspace=%s", sessionID, workspaceID)
 		m.sessions[sessionID] = sess
 	}
 	if sess.WorkspaceID != workspaceID || sess.UserID != userID {
@@ -135,7 +166,9 @@ func (m *Manager) Get(sessionID, workspaceID, userID string) (*Session, error) {
 	}
 	sess.Touch()
 	if m.sessionRepo != nil {
-		_ = m.sessionRepo.UpdateLastSeen(context.Background(), sessionID)
+		wCtx, cancel := dbContext(ctx)
+		_ = m.sessionRepo.UpdateLastSeen(wCtx, sessionID)
+		cancel()
 	}
 	return sess, nil
 }

@@ -19,7 +19,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity, _ := auth.FromContext(r.Context())
-	sess, err := sessionManager.Get(sessionID, identity.WorkspaceID, identity.UserID)
+	sess, err := sessionManager.Get(r.Context(), sessionID, identity.WorkspaceID, identity.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return

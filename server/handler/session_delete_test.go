@@ -93,7 +93,7 @@ func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	liveSession, _, err := sessionManager.GetOrCreate("s_1", "w_1", "u_1")
+	liveSession, _, err := sessionManager.GetOrCreate(ctx, "s_1", "w_1", "u_1")
 	if err != nil {
 		t.Fatalf("load session: %v", err)
 	}

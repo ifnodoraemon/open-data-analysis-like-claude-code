@@ -51,21 +51,24 @@
             </div>
           </template>
 
-          <!-- 提问用户 (Human in loop) -->
           <template v-else-if="msg.type === 'user_request_input'">
             <div class="msg-icon">🙋</div>
             <div class="msg-body">
               <div class="msg-label ask-user-label">需要您确认</div>
               <div class="msg-content markdown-body ask-user-question" v-html="renderMarkdown(msg.question)"></div>
-              <div v-if="msg.options && msg.options.length > 0" class="ask-options">
+              <div v-if="msg.options && msg.options.length > 0" class="ask-options" :class="{ 'multi-select': msg.allow_multiple }">
                 <button 
                   v-for="(opt, idx) in msg.options" 
                   :key="idx" 
                   class="ask-option-btn"
-                  @click="handleOptionClick(opt)"
+                  :class="{ selected: msg.allow_multiple && multiSelectDrafts[msg.id]?.includes(opt.id || opt.label) }"
+                  @click="handleOptionClick(msg, opt.id || opt.label)"
                 >
-                  {{ opt }}
+                  {{ opt.label || opt.id }}
                 </button>
+              </div>
+              <div v-if="msg.allow_multiple" class="ask-submit">
+                <button class="ask-submit-btn" @click="submitMultiSelect(msg)">确认选择</button>
               </div>
             </div>
           </template>
@@ -155,6 +158,7 @@ const activeRunId = computed(() => store.activeRunId)
 const selectedRun = computed(() => store.getRun(selectedRunId.value))
 const activeRun = computed(() => store.getRun(activeRunId.value))
 const messagesEl = ref(null)
+const multiSelectDrafts = ref({})
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('sh', bash)
@@ -222,9 +226,27 @@ async function handleRunClick(runId) {
   }
 }
 
-function handleOptionClick(opt) {
+function handleOptionClick(msg, optValue) {
+  if (msg.allow_multiple) {
+    if (!multiSelectDrafts.value[msg.id]) {
+      multiSelectDrafts.value[msg.id] = []
+    }
+    const idx = multiSelectDrafts.value[msg.id].indexOf(optValue)
+    if (idx > -1) {
+      multiSelectDrafts.value[msg.id].splice(idx, 1)
+    } else {
+      multiSelectDrafts.value[msg.id].push(optValue)
+    }
+  } else {
+    const { sendMessage } = useWebSocket()
+    sendMessage(optValue)
+  }
+}
+
+function submitMultiSelect(msg) {
   const { sendMessage } = useWebSocket()
-  sendMessage(opt)
+  const selected = multiSelectDrafts.value[msg.id] || []
+  sendMessage(JSON.stringify(selected))
 }
 </script>
 
@@ -457,5 +479,31 @@ function handleOptionClick(opt) {
   background: var(--bg-hover);
   border-color: var(--accent-blue);
   color: var(--accent-blue);
+}
+
+.ask-option-btn.selected {
+  background: var(--accent-blue);
+  color: white;
+  border-color: var(--accent-blue);
+}
+
+.ask-submit {
+  margin-top: 12px;
+}
+
+.ask-submit-btn {
+  background: var(--accent-green);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.ask-submit-btn:hover {
+  opacity: 0.9;
 }
 </style>

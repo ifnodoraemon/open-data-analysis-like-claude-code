@@ -357,7 +357,11 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			}
 			if persistence != nil && childRunID != "" {
 				cancelMsg := "任务被取消"
-				_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusCancelled), &cancelMsg)
+				// 使用独立的 Background context 确保取消后仍能写入 DB
+				bgCtx := context.Background()
+				_ = persistence.UpdateChildRunStatus(bgCtx, childRunID, string(domain.RunStatusCancelled), &cancelMsg)
+				// 补充 ISSUE5 修复：取消时也记录已累计的 token 消耗
+				_ = persistence.UpdateChildRunTokens(bgCtx, childRunID, totalPromptTokens, totalCompletionTokens)
 			}
 			return "", childCtx.Err()
 		}

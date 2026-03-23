@@ -178,6 +178,11 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 				"description": "是否必须确认，为 true 则用户不能跳过。",
 				"default": false
 			},
+			"allow_multiple": {
+				"type": "boolean",
+				"description": "是否允许多选，为 true 时以 JSON 数组返回选项的 ID。",
+				"default": false
+			},
 			"options": {
 				"type": "array",
 				"items": {
@@ -198,25 +203,18 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 
 func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 	var payload struct {
-		Question   string           `json:"question"`
-		Reason     string           `json:"reason"`
-		Scope      string           `json:"scope"`
-		ContextRef string           `json:"context_ref"`
-		Required   bool             `json:"required"`
-		Options    []AskUserOption  `json:"options"`
+		Question      string          `json:"question"`
+		Reason        string          `json:"reason"`
+		Scope         string          `json:"scope"`
+		ContextRef    string          `json:"context_ref"`
+		Required      bool            `json:"required"`
+		AllowMultiple bool            `json:"allow_multiple"`
+		Options       []AskUserOption `json:"options"`
 	}
 	if err := json.Unmarshal(args, &payload); err != nil {
 		return "", fmt.Errorf("invalid arguments: %v", err)
 	}
-	// 构建纯文本 options 用于向后兼容客户端
-	stringOptions := make([]string, 0, len(payload.Options))
-	for _, opt := range payload.Options {
-		if opt.Label != "" {
-			stringOptions = append(stringOptions, opt.Label)
-		} else if opt.ID != "" {
-			stringOptions = append(stringOptions, opt.ID)
-		}
-	}
+
 	return marshalToolPayload(map[string]interface{}{
 		"ok":                  true,
 		"tool":                "user_request_input",
@@ -225,8 +223,8 @@ func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 		"scope":               payload.Scope,
 		"context_ref":         payload.ContextRef,
 		"required":            payload.Required,
-		"options":             stringOptions,
-		"structured_options":  payload.Options,
+		"allow_multiple":      payload.AllowMultiple,
+		"options":             payload.Options,
 		"run_status":          "waiting_user_input",
 		"message":             "已发起用户输入请求，等待用户回复。",
 		"ui_summary":          "已向用户发起输入请求。",

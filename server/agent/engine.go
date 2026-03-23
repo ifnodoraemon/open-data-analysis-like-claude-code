@@ -285,22 +285,31 @@ func formatSummaryField(key string, value interface{}) string {
 }
 
 func buildHistoryDigest(existing string, messages []openai.ChatCompletionMessage) string {
-	lines := make([]string, 0, len(messages)+1)
-	if trimmed := strings.TrimSpace(existing); trimmed != "" {
-		lines = append(lines, trimmed)
-	}
+	// 收集本轮新增的 bullet 条目（不含已有 digest 文本）
+	bullets := make([]string, 0, len(messages))
 	for _, msg := range messages {
 		if summary := summarizeMessageForDigest(msg); summary != "" {
-			lines = append(lines, "- "+summary)
+			bullets = append(bullets, "- "+summary)
 		}
 	}
-	if len(lines) == 0 {
+
+	// 对新增 bullets 超限时截断，existing digest 整段保留不参与 bullet 计数
+	if len(bullets) > maxDigestBulletCount {
+		bullets = append(bullets[:maxDigestBulletCount-1], "- 更早的执行细节已被压缩。")
+	}
+
+	// 拼接：existing digest（已有摘要）在前，新 bullets 在后
+	parts := make([]string, 0, 2)
+	if trimmed := strings.TrimSpace(existing); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	if len(bullets) > 0 {
+		parts = append(parts, strings.Join(bullets, "\n"))
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	if len(lines) > maxDigestBulletCount {
-		lines = append(lines[:maxDigestBulletCount-1], "- 更早的执行细节已被压缩。")
-	}
-	return historyDigestPrefix + "\n" + strings.Join(lines, "\n")
+	return historyDigestPrefix + "\n" + strings.Join(parts, "\n")
 }
 
 func (e *Engine) compactMessagesLocked(promptTokens int) {
@@ -356,42 +365,26 @@ func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
 func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 	return map[string]specialToolHandler{
 		"user_request_input": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
-			// LLM 可能发送 options 为对象数组 [{id,label,hint}] 或字符串数组 ["a","b"]
-			// AskUserData.Options 是 []string，所以需要打开解析
-			var raw struct {
-				Question   string          `json:"question"`
-				Reason     string          `json:"reason"`
-				Scope      string          `json:"scope"`
-				ContextRef string          `json:"context_ref"`
-				Required   bool            `json:"required"`
-				Options    json.RawMessage `json:"options"`
-			}
-			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &raw); err != nil {
-				return "", fmt.Errorf("user_request_input 参数解析失败: %w", err), true
-			}
-			payload := AskUserData{
-				Question:   raw.Question,
-				Reason:     raw.Reason,
-				Scope:      raw.Scope,
-				ContextRef: raw.ContextRef,
-				Required:   raw.Required,
-			}
-			// 尝试解析为字符串数组
-			var stringOpts []string
-			if json.Unmarshal(raw.Options, &stringOpts) == nil {
-				payload.Options = stringOpts
-			} else {
-				// 尝试解析为结构化选项对象数组
-				var structOpts []AskUserOption
-				if json.Unmarshal(raw.Options, &structOpts) == nil {
-					payload.StructuredOptions = structOpts
-					for _, opt := range structOpts {
-						if opt.Label != "" {
-							payload.Options = append(payload.Options, opt.Label)
-						} else if opt.ID != "" {
-							payload.Options = append(payload.Options, opt.ID)
+			var payload AskUserData
+			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &payload); err != nil {
+				// LLM 可能发送了字符串数组作为 options，尝试降级兼容
+				var raw map[string]interface{}
+				if err2 := json.Unmarshal([]byte(toolCall.Function.Arguments), &raw); err2 == nil {
+					if q, ok := raw["question"].(string); ok { payload.Question = q }
+					if r, ok := raw["reason"].(string); ok { payload.Reason = r }
+					if s, ok := raw["scope"].(string); ok { payload.Scope = s }
+					if c, ok := raw["context_ref"].(string); ok { payload.ContextRef = c }
+					if req, ok := raw["required"].(bool); ok { payload.Required = req }
+					if am, ok := raw["allow_multiple"].(bool); ok { payload.AllowMultiple = am }
+					if opts, ok := raw["options"].([]interface{}); ok {
+						for _, o := range opts {
+							if strOpt, ok2 := o.(string); ok2 {
+								payload.Options = append(payload.Options, AskUserOption{ID: strOpt, Label: strOpt})
+							}
 						}
 					}
+				} else {
+					return "", fmt.Errorf("user_request_input 参数解析失败: %w", err), true
 				}
 			}
 			emit(WSEvent{Type: EventUserRequestInput, Data: payload})
@@ -409,6 +402,8 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 }
 
 // Run 执行 Agent 主循环
+// userInput 为空字符串时表示从 user_request_input 挂起点恢复执行，
+// 用户答案已通过 ProvideAskUserResult 注入历史，此时不再追加额外的 user 消息。
 func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) {
 	if emit == nil {
 		emit = func(WSEvent) {}
@@ -417,11 +412,14 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 	specialHandlers := e.specialToolHandlers()
 
 	e.mu.Lock()
-	// 添加用户消息
-	e.messages = append(e.messages, openai.ChatCompletionMessage{
-		Role:    openai.ChatMessageRoleUser,
-		Content: userInput,
-	})
+	// 仅当有实际用户输入时才追加 user 消息；
+	// userInput=="" 说明是从 user_request_input 挂起后恢复，跳过追加避免注入空消息。
+	if userInput != "" {
+		e.messages = append(e.messages, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleUser,
+			Content: userInput,
+		})
+	}
 
 	oaiTools := e.registry.GetOpenAITools()
 	e.mu.Unlock()
@@ -587,7 +585,8 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 			continue // 继续循环
 		}
 
-		// 默认结束
+		// 保护性兜底：正常流程不会到达此处（有文本或 stop 的分支均已提前 return），
+		// 仅作为防御性路径保留，防止极端情况下 LLM 返回既无文本、无工具调用、也非 stop 的响应。
 		emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: "分析完成"}})
 		return
 	}

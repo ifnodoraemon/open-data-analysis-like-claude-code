@@ -8,7 +8,7 @@ import (
 )
 
 func ensureSession(ctx context.Context, identity auth.Identity) (*domain.Session, error) {
-	sess, _, err := sessionManager.GetOrCreate("", identity.WorkspaceID, identity.UserID)
+	sess, _, err := sessionManager.GetOrCreate(ctx, "", identity.WorkspaceID, identity.UserID)
 	if err != nil {
 		return nil, err
 	}

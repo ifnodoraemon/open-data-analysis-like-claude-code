@@ -104,13 +104,13 @@ type AskUserOption struct {
 
 // AskUserData 等待用户回答事件（结构化确认协议）
 type AskUserData struct {
-	Question   string          `json:"question"`
-	Reason     string          `json:"reason,omitempty"`      // 确认原因：为什么需要用户确认
-	Scope      string          `json:"scope,omitempty"`       // 作用域: join_key | metric | time_grain | filter | general
-	ContextRef string          `json:"context_ref,omitempty"` // 关联上下文（表名、列名等）
-	Required   bool            `json:"required"`
-	Options    []string        `json:"options,omitempty"`              // 纯文本选项（向后兼容当前客户端）
-	StructuredOptions []AskUserOption `json:"structured_options,omitempty"` // 结构化选项（客户端升级后使用）
+	Question      string          `json:"question"`
+	Reason        string          `json:"reason,omitempty"`      // 确认原因：为什么需要用户确认
+	Scope         string          `json:"scope,omitempty"`       // 作用域: join_key | metric | time_grain | filter | general
+	ContextRef    string          `json:"context_ref,omitempty"` // 关联上下文（表名、列名等）
+	Required      bool            `json:"required"`
+	AllowMultiple bool            `json:"allow_multiple,omitempty"` // 是否允许多选
+	Options       []AskUserOption `json:"options,omitempty"`        // 结构化选项
 }
 
 type MemoryUpdatedData struct {

@@ -57,10 +57,16 @@ func startEventPersistWorker() func() {
 			saveEventToDBSync(job.workspaceID, job.sessionID, job.runID, job.ev)
 		}
 	}()
+	var once sync.Once
 	return func() {
-		eventPersistQueue = nil
-		close(q)
-		wg.Wait() // 等待 worker goroutine 完全退出（包含最后一次 saveEventToDBSync 返回）
+		// 使用 sync.Once 确保只关闭一次：
+		// 先将全局引用置 nil，令新的 saveEventToDB 调用感知队列已关闭，
+		// 再调用 close 通知 worker goroutine 退出，最后等待其完成。
+		once.Do(func() {
+			eventPersistQueue = nil // 先置 nil，saveEventToDB 中读局部变量，不再写入
+			close(q)               // 关闭底层 channel，通知 worker 退出
+			wg.Wait()              // 等待 worker goroutine 完全退出（包含最后一次 saveEventToDBSync 返回）
+		})
 	}
 }
 
@@ -302,7 +308,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	identity, _ := auth.FromContext(r.Context())
-	sess, _, err := sessionManager.GetOrCreate(sessionID, identity.WorkspaceID, identity.UserID)
+	sess, _, err := sessionManager.GetOrCreate(r.Context(), sessionID, identity.WorkspaceID, identity.UserID)
 	if err != nil {
 		log.Printf("创建会话失败: %v", err)
 		return
@@ -565,14 +571,21 @@ func deriveSessionTitle(input string) string {
 	return title
 }
 
-// saveEventToDB 将事件投递到异步持乇化队列（#16）。
+// saveEventToDB 将事件投递到异步持乇化队列。
 // 非阻塞：若队列满则丢弃并打印 warning（事件持乇化允许有损，不影响实时性）。
+// 注意：读取全局 eventPersistQueue 到局部变量后再操作，
+// 防止并发 shutdown 时出现向已关闭 channel 发送 panic。
 func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev agent.WSEvent) {
-	if messageRepo == nil || eventPersistQueue == nil {
+	if messageRepo == nil {
+		return
+	}
+	// 用局部变量快照全局队列引用，避免在 nil 检查和 send 之间被置 nil
+	q := eventPersistQueue
+	if q == nil {
 		return
 	}
 	select {
-	case eventPersistQueue <- persistJob{workspaceID: workspaceID, sessionID: sessionID, runID: runID, ev: ev}:
+	case q <- persistJob{workspaceID: workspaceID, sessionID: sessionID, runID: runID, ev: ev}:
 	default:
 		log.Printf("[warn] eventPersistQueue full, dropping event type=%s run_id=%s", ev.Type, runID)
 	}
