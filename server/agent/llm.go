@@ -163,6 +163,22 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, too
 	return nil, fmt.Errorf("LLM API request failed after %d retries: %v", len(retryDelays), err)
 }
 
+func countRuntimeContextChars(ctxs []RuntimeContextBlock) int {
+	var total int
+	for _, c := range ctxs {
+		total += len([]rune(c.Content))
+	}
+	return total
+}
+
+func countHistoryChars(hist []ConversationItem) int {
+	var total int
+	for _, h := range hist {
+		total += len([]rune(h.Content))
+	}
+	return total
+}
+
 // chatOpenAI OpenAI 格式调用
 func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
 	reqBody, err := l.buildResponsesRequest(bundle, tools)
@@ -182,17 +198,21 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
 	requestPath := llmDebugWriter.WriteBlob(span, "request.json", reqBytes)
 	l.debugLog(span, "llm.request", map[string]interface{}{
-		"provider":          l.provider,
-		"model":             l.model,
-		"endpoint":          endpoint,
-		"message_count":     len(bundle.History),
-		"tool_count":        len(tools),
-		"tools":             summarizeTools(tools),
-		"user_preview":      clipText(lastUserMessage(bundle.History), 240),
-		"instruction_chars": len([]rune(reqBody.Instructions)),
-		"request_bytes":     len(reqBytes),
-		"request_sha256":    blobSHA256(reqBytes),
-		"request_path":      requestPath,
+		"provider":              l.provider,
+		"model":                 l.model,
+		"endpoint":              endpoint,
+		"message_count":         len(bundle.History),
+		"tool_count":            len(tools),
+		"tools":                 summarizeTools(tools),
+		"user_preview":          clipText(lastUserMessage(bundle.History), 240),
+		"instruction_chars":     len([]rune(reqBody.Instructions)),
+		"policy_chars":          len([]rune(bundle.Policy)),
+		"task_chars":            len([]rune(bundle.Task)),
+		"runtime_context_chars": countRuntimeContextChars(bundle.RuntimeContext),
+		"history_chars":         countHistoryChars(bundle.History),
+		"request_bytes":         len(reqBytes),
+		"request_sha256":        blobSHA256(reqBytes),
+		"request_path":          requestPath,
 	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBytes))
@@ -515,7 +535,7 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 	}
 
 	for _, block := range bundle.RuntimeContext {
-		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(block.Content))
+		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(fmt.Sprintf("[%s]\n%s", block.Name, block.Content)))
 	}
 
 	for _, msg := range bundle.History {
@@ -584,17 +604,21 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 	if err == nil {
 		requestPath := llmDebugWriter.WriteBlob(span, "request.json", reqBytes)
 		l.debugLog(span, "llm.request", map[string]interface{}{
-			"provider":          l.provider,
-			"model":             l.model,
-			"endpoint":          config.Cfg.LLMAPIEndpoint,
-			"message_count":     len(bundle.History),
-			"tool_count":        len(tools),
-			"tools":             summarizeTools(tools),
-			"user_preview":      clipText(lastUserMessage(bundle.History), 240),
-			"instruction_chars": len([]rune(systemPrompt)),
-			"request_bytes":     len(reqBytes),
-			"request_sha256":    blobSHA256(reqBytes),
-			"request_path":      requestPath,
+			"provider":              l.provider,
+			"model":                 l.model,
+			"endpoint":              config.Cfg.LLMAPIEndpoint,
+			"message_count":         len(bundle.History),
+			"tool_count":            len(tools),
+			"tools":                 summarizeTools(tools),
+			"user_preview":          clipText(lastUserMessage(bundle.History), 240),
+			"instruction_chars":     len([]rune(systemPrompt)),
+			"policy_chars":          len([]rune(bundle.Policy)),
+			"task_chars":            len([]rune(bundle.Task)),
+			"runtime_context_chars": countRuntimeContextChars(bundle.RuntimeContext),
+			"history_chars":         countHistoryChars(bundle.History),
+			"request_bytes":         len(reqBytes),
+			"request_sha256":        blobSHA256(reqBytes),
+			"request_path":          requestPath,
 		})
 	}
 	start := time.Now()
