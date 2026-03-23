@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
@@ -88,5 +89,45 @@ func TestPrepareUserRunWithoutEditTargetDoesNotLoadSnapshot(t *testing.T) {
 	}
 	if loader.calls != 0 {
 		t.Fatalf("expected loader to remain unused, calls=%d", loader.calls)
+	}
+}
+
+func TestSessionRuntimeVars(t *testing.T) {
+	t.Parallel()
+
+	sess := &Session{
+		ID: "test-sess",
+	}
+
+	// 1. Test EditScope
+	sess.EditState = &tools.ReportEditState{
+		Mode:          "append",
+		TargetBlockID: "b1",
+		SelectionText: "hello",
+	}
+	vars := sess.RuntimeVars()
+	if len(vars) != 1 || vars[0].Name != "active_edit_scope" {
+		t.Fatalf("expected 1 active_edit_scope, got %v", vars)
+	}
+	if !strings.Contains(vars[0].Content, "Mode: append") {
+		t.Errorf("missing Mode in edit scope fact: %s", vars[0].Content)
+	}
+	if strings.Contains(vars[0].Content, "请仅在允许的边界") {
+		t.Errorf("imperative hint should not be present in edit scope")
+	}
+
+	// 2. Test Subgoals
+	sess.EditState = nil
+	sess.Subgoals = agent.NewSubgoalManager()
+	sess.Subgoals.AddGoal("do work", "")
+	vars = sess.RuntimeVars()
+	if len(vars) != 1 || vars[0].Name != "active_subgoals" {
+		t.Fatalf("expected 1 active_subgoals, got %v", vars)
+	}
+	if !strings.Contains(vars[0].Content, "] do work (pending)") {
+		t.Errorf("missing subgoal in fact: %s", vars[0].Content)
+	}
+	if strings.Contains(vars[0].Content, "请记得更新状态") {
+		t.Errorf("imperative hint should not be present in subgoals")
 	}
 }

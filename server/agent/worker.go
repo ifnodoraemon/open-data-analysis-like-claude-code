@@ -218,7 +218,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return "创建一个受限子代理并执行指定任务。读取 role_name、task_instruction、allowed_tools 与可选 goal_id/system_prompt；成功时返回 child_run_id、delegate_summary、trace，失败时返回结构化错误与 child_run_status。"
+	return "创建一个受限子代理并执行指定任务。读取 role_name、task_instruction、allowed_tools 与可选 goal_id/policy_appendix；成功时返回 child_run_id、delegate_summary、trace，失败时返回结构化错误与 child_run_status。"
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -229,9 +229,9 @@ func (t *DelegateTaskTool) Parameters() json.RawMessage {
 				"type": "string",
 				"description": "子代理的标签，用于区分不同实例。"
 			},
-			"system_prompt": {
+			"policy_appendix": {
 				"type": "string",
-				"description": "附加给子代理的额外约束。"
+				"description": "附加给子代理的额外约束规则。仅限于行为准则，禁止在此放入背景事实、数据样例或历史记录。"
 			},
 			"task_instruction": {
 				"type": "string",
@@ -258,7 +258,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 
 	var payload struct {
 		RoleName        string   `json:"role_name"`
-		SystemPrompt    string   `json:"system_prompt"`
+		PolicyAppendix  string   `json:"policy_appendix"`
 		TaskInstruction string   `json:"task_instruction"`
 		AllowedTools    []string `json:"allowed_tools"`
 		GoalID          string   `json:"goal_id"`
@@ -325,7 +325,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 启动] 已派生子 Agent，工具边界: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
 
 	childPrompt := BuildPolicyPrompt()
-	if extra := strings.TrimSpace(payload.SystemPrompt); extra != "" {
+	if extra := strings.TrimSpace(payload.PolicyAppendix); extra != "" {
 		childPrompt = childPrompt + "\n\n## 本次派生附加约束\n" + extra
 	}
 

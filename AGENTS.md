@@ -44,3 +44,15 @@ This repository follows an agentic runtime model.
 ## Project References
 
 - Agentic direction details: `docs/agentic-principles.md`
+
+## Prompt Layering & Migration
+
+To maintain predictability and avoid context poisoning, the agent runtime strictly enforces a four-layer prompt model:
+1. **Policy (`system`)**: Pure, static behavioral rules and tool boundaries. Never inject temporary facts, user history, or workflow hints here.
+2. **Task (`user`)**: The user's direct instruction.
+3. **Runtime Context (`runtime`)**: Ephemeral facts necessary for the current turn (e.g., active edit scope, active subgoals). Must be factual, pull-based when possible, and free of "what to do next" advice.
+4. **History (`history`)**: The conversational memory, including tool results and compaction summaries (e.g., `history_digest`). Crucially, digests must be injected into the `Runtime Context` layer, taking care never to elevate them to the `Policy` layer.
+
+**Migration Note**: 
+- Legacy fields like `task_delegate`'s `system_prompt` must be migrated to `policy_appendix` and used strictly for constraints, not context dumping.
+- Legacy trace fields have been updated to separately audit `policy_chars`, `task_chars`, `runtime_context_chars`, and `history_chars`.

@@ -474,3 +474,42 @@ func (s *Session) RuntimeState() (map[string]string, []agent.Subgoal) {
 	}
 	return memory, subgoals
 }
+
+func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
+	var vars []agent.RuntimeContextBlock
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Active Edit Scope
+	if s.EditState != nil && s.EditState.Active() {
+		content := fmt.Sprintf("Mode: %s\n", s.EditState.Mode)
+		if s.EditState.TargetBlockID != "" {
+			content += fmt.Sprintf("TargetBlockID: %s\n", s.EditState.TargetBlockID)
+		}
+		if s.EditState.SelectionText != "" {
+			content += fmt.Sprintf("SelectionText: %s\n", s.EditState.SelectionText)
+		}
+		vars = append(vars, agent.RuntimeContextBlock{
+			Name:    "active_edit_scope",
+			Content: strings.TrimSpace(content),
+		})
+	}
+
+	// 2. Active Subgoals
+	if s.Subgoals != nil {
+		var activeGoals []string
+		for _, g := range s.Subgoals.ListAll() {
+			if g.Status == "pending" || g.Status == "running" {
+				activeGoals = append(activeGoals, fmt.Sprintf("- [%s] %s (%s)", g.ID, g.Description, g.Status))
+			}
+		}
+		if len(activeGoals) > 0 {
+			vars = append(vars, agent.RuntimeContextBlock{
+				Name:    "active_subgoals",
+				Content: strings.Join(activeGoals, "\n"),
+			})
+		}
+	}
+
+	return vars
+}

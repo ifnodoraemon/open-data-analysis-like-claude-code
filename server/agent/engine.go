@@ -379,7 +379,7 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 // Run 执行 Agent 主循环
 // userInput 为空字符串时表示从 user_request_input 挂起点恢复执行，
 // 用户答案已通过 ProvideAskUserResult 注入历史，此时不再追加额外的 user 消息。
-func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) {
+func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func() []RuntimeContextBlock, emit func(WSEvent)) {
 	if emit == nil {
 		emit = func(WSEvent) {}
 	}
@@ -407,6 +407,9 @@ func (e *Engine) Run(ctx context.Context, userInput string, emit func(WSEvent)) 
 		bundle := &PromptBundle{
 			Policy: e.policy,
 			Task:   userTask,
+		}
+		if getRuntimeVars != nil {
+			bundle.RuntimeContext = append(bundle.RuntimeContext, getRuntimeVars()...)
 		}
 		if e.contextDigest != "" {
 			bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{

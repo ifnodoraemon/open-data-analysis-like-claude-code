@@ -62,7 +62,8 @@
 
 参考：
 
-- `docs/agentic-principles.md`
+- `docs/agentic-principles.md` (核心原则与方向)
+- `AGENTS.md` (核心运行时约束、提示分层及迁移指南)
 
 非目标：
 

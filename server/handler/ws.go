@@ -408,7 +408,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					userID:      identity.UserID,
 					emit:        runEmitter.Emit,
 				})
-				go sess.Engine.Run(resumeCtx, "", runEmitter.Emit)
+				go sess.Engine.Run(resumeCtx, "", sess.RuntimeVars, runEmitter.Emit)
 				continue
 			}
 
@@ -511,7 +511,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				emit:        runEmitter.Emit,
 			})
 
-			go sess.Engine.Run(ctx, userContent, runEmitter.Emit)
+			go sess.Engine.Run(ctx, userContent, sess.RuntimeVars, runEmitter.Emit)
 
 		case agent.EventStop:
 			dataBytes, _ := json.Marshal(event.Data)

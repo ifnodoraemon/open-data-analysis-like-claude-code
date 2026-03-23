@@ -325,7 +325,7 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 	for _, block := range bundle.RuntimeContext {
 		req.Input = append(req.Input, responsesInput{
 			"role":    "user",
-			"content": block.Content,
+			"content": fmt.Sprintf("[%s]\n%s", block.Name, block.Content),
 		})
 	}
 

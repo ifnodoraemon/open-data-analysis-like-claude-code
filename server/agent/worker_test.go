@@ -81,3 +81,31 @@ func TestDelegateChildToolFailureReturnsStructuredPayload(t *testing.T) {
 		t.Fatalf("unexpected child tool failure fields: %#v", payload)
 	}
 }
+
+func TestDelegateTaskToolParsesPolicyAppendix(t *testing.T) {
+	t.Parallel()
+
+	tool := &DelegateTaskTool{
+		BaseRegistry: tools.NewRegistry(),
+	}
+	result, err := tool.Execute(json.RawMessage(`{
+		"role_name":"researcher",
+		"task_instruction":"检查销售异常",
+		"allowed_tools":["missing_tool"],
+		"policy_appendix":"仅检查国内数据"
+	}`))
+	if err != nil {
+		t.Fatalf("expected structured failure instead of error, got %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json payload: %v", err)
+	}
+	if payload["tool"] != "task_delegate" || payload["ok"] != false {
+		t.Fatalf("unexpected delegate failure payload: %#v", payload)
+	}
+	if payload["error_code"] != "no_allowed_tools_resolved" {
+		t.Fatalf("unexpected error_code: %#v", payload["error_code"])
+	}
+}

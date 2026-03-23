@@ -51,8 +51,33 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		}
 		chapterNum++
 		displayTitle := blockDisplayTitle(block)
+		if displayTitle == "" && block.Content != "" {
+			lines := strings.Split(block.Content, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") {
+					displayTitle = strings.TrimSpace(strings.TrimLeft(line, "#"))
+					break
+				}
+				lowerLine := strings.ToLower(line)
+				if strings.Contains(lowerLine, "<h") && strings.Contains(lowerLine, "</h") {
+					start := strings.Index(line, ">")
+					end := strings.Index(lowerLine, "</h")
+					if start != -1 && end != -1 && start < end {
+						tagContent := line[start+1 : end]
+						// strip simple nested tags if any
+						tagContent = strings.ReplaceAll(tagContent, "<b>", "")
+						tagContent = strings.ReplaceAll(tagContent, "</b>", "")
+						tagContent = strings.ReplaceAll(tagContent, "<strong>", "")
+						tagContent = strings.ReplaceAll(tagContent, "</strong>", "")
+						displayTitle = strings.TrimSpace(tagContent)
+						break
+					}
+				}
+			}
+		}
 		if displayTitle != "" {
-			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, displayTitle))
+			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, escapeHTMLText(displayTitle)))
 		}
 		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts))
 	}
@@ -211,27 +236,16 @@ body {
   gap: 0.5rem;
 }
 .toc h2::before { content: '📑'; }
-.toc ol { counter-reset: toc; padding-left: 0; }
+.toc ol { padding-left: 1.5rem; }
 .toc li {
   list-style: none;
-  counter-increment: toc;
-  padding: 0.7rem 0.5rem;
+  padding: 0.5rem 0.5rem;
   border-bottom: 1px solid var(--border-light);
   transition: all 0.2s ease;
   border-radius: 6px;
 }
 .toc li:hover { background: var(--bg-alt); padding-left: 1rem; }
-.toc li::before {
-  content: '0' counter(toc);
-  color: var(--accent);
-  font-weight: 700;
-  font-size: 0.85rem;
-  margin-right: 0.75rem;
-  display: inline-block;
-  min-width: 1.8rem;
-}
-.toc li:nth-child(n+10)::before { content: counter(toc); }
-.toc a { color: var(--text); text-decoration: none; font-weight: 500; }
+.toc a { color: var(--text); text-decoration: none; font-weight: 500; min-width: 1.8rem; }
 .toc a:hover { color: var(--primary-light); }
 
 /* === 章节 === */

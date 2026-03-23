@@ -62,7 +62,8 @@ The project treats the backend as an agent runtime, not a hidden workflow engine
 
 Reference:
 
-- `docs/agentic-principles.md`
+- `docs/agentic-principles.md` (Agentic design principles)
+- `AGENTS.md` (Core runtime capabilities and prompt layering/migration rules)
 
 Non-goals:
 
