@@ -125,7 +125,7 @@ func compactWorkerBundle(bundle *PromptBundle, promptTokens int) {
 // NewEngine 创建 Agent 引擎（支持多轮对话）
 func NewEngine(registry *tools.Registry, systemPrompt string) *Engine {
 	if systemPrompt == "" {
-		systemPrompt = BuildPlannerPrompt(registry)
+		systemPrompt = BuildPolicyPrompt()
 	}
 	return &Engine{
 		llm:      NewLLMClient(),

@@ -149,8 +149,8 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		}
 	}
 
-	plannerPrompt := agent.BuildPlannerPrompt(plannerRegistry)
-	s.Engine = agent.NewEngine(plannerRegistry, plannerPrompt)
+	policyPrompt := agent.BuildPolicyPrompt()
+	s.Engine = agent.NewEngine(plannerRegistry, policyPrompt)
 
 	return s, nil
 }

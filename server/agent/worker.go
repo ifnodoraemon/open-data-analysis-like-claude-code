@@ -324,7 +324,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 
 	emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 启动] 已派生子 Agent，工具边界: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
 
-	childPrompt := BuildPlannerPrompt(subReg)
+	childPrompt := BuildPolicyPrompt()
 	if extra := strings.TrimSpace(payload.SystemPrompt); extra != "" {
 		childPrompt = childPrompt + "\n\n## 本次派生附加约束\n" + extra
 	}
