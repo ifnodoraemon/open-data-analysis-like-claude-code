@@ -39,7 +39,7 @@ type runtimeEventScope struct {
 	session           *session.Session
 	runID             string
 	emitReportPreview func()
-	finalizeReport    func()
+	finalizeReport    func() error
 	setRunStatus      func(domain.RunStatus, *string)
 	setRunSummary     func(string)
 }
@@ -62,8 +62,8 @@ func newRuntimeEventDispatcher(ctx context.Context, conn *websocket.Conn, writeM
 		emitReportPreview: func() {
 			emitReportPreviewUpdate(ctx, conn, writeMu, sess.ID, sess.WorkspaceID, runID, sess.ReportState)
 		},
-		finalizeReport: func() {
-			finalizeAndPersistReport(ctx, conn, writeMu, sess, identity, runID)
+		finalizeReport: func() error {
+			return finalizeAndPersistReport(ctx, conn, writeMu, sess, identity, runID)
 		},
 		setRunStatus: func(status domain.RunStatus, errMsg *string) {
 			_ = withPersistenceContext(ctx, func(persistCtx context.Context) error {
@@ -108,7 +108,15 @@ func reportLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 		scope.emitReportPreview()
 	}
 	if result.Name == "report_finalize" && result.Success && scope.finalizeReport != nil {
-		scope.finalizeReport()
+		if err := scope.finalizeReport(); err != nil {
+			if scope.session != nil {
+				scope.session.FinishRun(scope.runID, "failed")
+			}
+			if scope.setRunStatus != nil {
+				msg := "报告生成成功但在保存或绑定时发生错误: " + err.Error()
+				scope.setRunStatus(domain.RunStatusFailed, &msg)
+			}
+		}
 	}
 }
 
@@ -124,7 +132,9 @@ func runLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 			scope.setRunStatus(domain.RunStatusWaitingUserInput, nil)
 		}
 	case agent.EventRunCompleted:
-		scope.session.FinishRun(scope.runID, "completed")
+		if !scope.session.FinishRun(scope.runID, "completed") {
+			return
+		}
 		if scope.setRunStatus != nil {
 			scope.setRunStatus(domain.RunStatusCompleted, nil)
 		}

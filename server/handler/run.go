@@ -20,6 +20,10 @@ const runPreviewLimit = 3
 
 func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	if sessionID == "" {
 		http.Error(w, "缺少 session_id", http.StatusBadRequest)
@@ -50,6 +54,10 @@ func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 
 func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	runID := chi.URLParam(r, "runID")
 	run, err := runRepo.GetByID(r.Context(), runID)
 	if writeRepoLookupError(w, err, "任务不存在") {
@@ -78,6 +86,10 @@ func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 
 func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	runID := chi.URLParam(r, "runID")
 	run, err := runRepo.GetByID(r.Context(), runID)
 	if writeRepoLookupError(w, err, "任务不存在") {

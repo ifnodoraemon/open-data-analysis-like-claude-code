@@ -37,6 +37,7 @@ type Config struct {
 	SessionTTLHours    int    // 空闲 session 自动清理阈值（小时），0 = 不自动清理
 	TraceRetentionDays int    // LLM debug trace 保留天数，0 = 永久保留
 	TempCleanupOnStart bool   // 启动时清理 TempDir
+	ReportEchartsUrl   string // ECharts 资源路径，默认为 jsDelivr CDN
 }
 
 var Cfg *Config
@@ -86,6 +87,7 @@ func Load() {
 		SessionTTLHours:    getEnvInt("SESSION_TTL_HOURS", 0),
 		TraceRetentionDays: getEnvInt("TRACE_RETENTION_DAYS", 0),
 		TempCleanupOnStart: getEnvBool("TEMP_CLEANUP_ON_START", false),
+		ReportEchartsUrl:   getEnv("REPORT_ECHARTS_URL", "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"),
 	}
 
 	if Cfg.LLMAPIKey == "" {

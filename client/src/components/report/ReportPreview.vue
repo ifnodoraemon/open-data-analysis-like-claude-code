@@ -184,16 +184,20 @@ function handleBlockClick(event) {
   const block = event.currentTarget
   const blockId = block?.dataset?.blockId || ''
   if (!blockId) return
+
+  const doc = block.ownerDocument
+  const fragments = Array.from(doc.querySelectorAll(`[data-block-id="${blockId}"]`))
+
   selectedBlockId.value = blockId
-  selectedBlockLabel.value = extractBlockLabel(block)
-  selectedBlockText.value = block.textContent?.trim() || ''
+  selectedBlockLabel.value = extractBlockLabel(fragments[0])
+  selectedBlockText.value = fragments.map(n => n.textContent?.trim()).filter(Boolean).join('\n\n')
   applySelectionHighlight(blockId)
 }
 
 function extractBlockLabel(block) {
   const heading = block.querySelector('h1, h2, h3, h4, h5, h6')
   const headingText = heading?.textContent?.trim()
-  return headingText || block.dataset.blockId || '未命名段落'
+  return headingText || block.dataset.blockTitle || block.dataset.blockId || '未命名段落'
 }
 
 function applySelectionHighlight(blockId) {

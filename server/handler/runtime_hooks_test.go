@@ -49,7 +49,7 @@ func TestReportLifecycleHookTriggersDerivedReportEffects(t *testing.T) {
 	var previewCount, finalizeCount int
 	scope := runtimeEventScope{
 		emitReportPreview: func() { previewCount++ },
-		finalizeReport:    func() { finalizeCount++ },
+		finalizeReport:    func() error { finalizeCount++; return nil },
 	}
 
 	reportLifecycleHook(scope, agent.WSEvent{

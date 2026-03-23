@@ -117,14 +117,13 @@ export function sanitizeReportHTML(html) {
   const scriptSnapshots = new Map()
   doc.querySelectorAll('script').forEach((node) => {
     const src = node.getAttribute('src') || ''
-    const isSafeLoader = src.includes('echarts.min.js')
-    const isSafeRuntime = !src
+    const id = node.getAttribute('id') || ''
+    const isSafeLoader = src.includes('echarts.min.js') && id === 'oda-echarts-loader'
+    const isSafeRuntime = !src && id === 'oda-chart-runtime'
     if (!isSafeLoader && !isSafeRuntime) {
       node.remove()
     } else if (isSafeRuntime) {
-      const scriptId = node.getAttribute('id') || `script-${Math.random().toString(36).substr(2, 9)}`
-      if (!node.getAttribute('id')) node.setAttribute('id', scriptId)
-      scriptSnapshots.set(scriptId, node.textContent)
+      scriptSnapshots.set(id, node.textContent)
     }
   })
 

@@ -221,7 +221,7 @@ func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu 
 	saveEventToDB(ctx, workspaceID, sessID, runID, updateEv)
 }
 
-func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) {
+func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) error {
 	finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
 	err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
 		reportFile, err := fileService.SaveReportHTML(persistCtx, service.SaveReportInput{
@@ -250,6 +250,7 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 		}
 		sendSessionEvent(conn, writeMu, sess.ID, runID, errEv)
 		saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, errEv)
+		return err
 	}
 	if title := strings.TrimSpace(sess.ReportState.FinalTitle); title != "" {
 		_ = withPersistenceContext(ctx, func(persistCtx context.Context) error {
@@ -265,6 +266,7 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 	}
 	sendSessionEvent(conn, writeMu, sess.ID, runID, finalEv)
 	saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, finalEv)
+	return nil
 }
 
 type handlerReportSnapshotLoader struct{}
@@ -408,7 +410,14 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					userID:      identity.UserID,
 					emit:        runEmitter.Emit,
 				})
-				go sess.Engine.Run(resumeCtx, "", sess.RuntimeVars, runEmitter.Emit)
+
+				ctx, cancel := context.WithCancel(resumeCtx)
+				sess.UpdateCancelFunc(activeRunID, cancel)
+
+				go func() {
+					defer cancel()
+					sess.Engine.Run(ctx, "", sess.RuntimeVars, runEmitter.Emit)
+				}()
 				continue
 			}
 

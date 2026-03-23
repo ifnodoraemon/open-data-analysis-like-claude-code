@@ -141,6 +141,15 @@ func (e *Engine) ResetMessages() {
 	e.contextDigest = ""
 }
 
+// RestoreHistory 从外部持久化存储恢复 LLM 执行历史
+func (e *Engine) RestoreHistory(history []ConversationItem) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.history) == 0 {
+		e.history = history
+	}
+}
+
 // summarizeMessageForDigest 为历史摘要提取每条消息的最有价值片段。
 // - tool result：优先使用 ui_summary/message 等语义字段（由 digestSummary 提取），不截断
 // - assistant thinking：取末段结论（结论往往在末尾），而非首部截断

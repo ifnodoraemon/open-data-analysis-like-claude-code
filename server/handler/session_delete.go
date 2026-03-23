@@ -86,10 +86,14 @@ func deleteSessionResources(ctx context.Context, session domain.Session) error {
 
 func buildSessionDeletionPlan(ctx context.Context, db *sql.DB, sessionID string) (sessionDeletionPlan, error) {
 	sourceFileIDs, err := queryStrings(ctx, db, `
-		SELECT DISTINCT file_id
-		FROM session_files
-		WHERE session_id = ?
-	`, sessionID)
+		SELECT DISTINCT sf1.file_id
+		FROM session_files sf1
+		WHERE sf1.session_id = ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM session_files sf2 
+		      WHERE sf2.file_id = sf1.file_id AND sf2.session_id != ?
+		  )
+	`, sessionID, sessionID)
 	if err != nil {
 		return sessionDeletionPlan{}, err
 	}
@@ -105,11 +109,16 @@ func buildSessionDeletionPlan(ctx context.Context, db *sql.DB, sessionID string)
 		SELECT DISTINCT storage_key
 		FROM files
 		WHERE id IN (
-			SELECT file_id FROM session_files WHERE session_id = ?
+			SELECT file_id FROM session_files sf1 
+			WHERE sf1.session_id = ? 
+			  AND NOT EXISTS (
+			      SELECT 1 FROM session_files sf2 
+			      WHERE sf2.file_id = sf1.file_id AND sf2.session_id != ?
+			  )
 			UNION
 			SELECT report_file_id FROM analysis_runs WHERE session_id = ? AND report_file_id IS NOT NULL AND report_file_id != ''
 		)
-	`, sessionID, sessionID)
+	`, sessionID, sessionID, sessionID)
 	if err != nil {
 		return sessionDeletionPlan{}, err
 	}

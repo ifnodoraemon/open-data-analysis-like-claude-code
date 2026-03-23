@@ -11,6 +11,10 @@ import (
 
 func ListSessionsHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	sessions, err := sessionRepo.ListByUserWorkspace(r.Context(), identity.UserID, identity.WorkspaceID, 20)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -30,6 +34,10 @@ func ListSessionsHandler(w http.ResponseWriter, r *http.Request) {
 
 func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	sessionID := chi.URLParam(r, "sessionID")
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
 	if writeRepoLookupError(w, err, "会话不存在") {
@@ -68,6 +76,10 @@ func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	session, err := ensureSession(r.Context(), identity)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -86,6 +98,10 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	sessionID := chi.URLParam(r, "sessionID")
 
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
@@ -121,6 +137,10 @@ func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 func DeleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
+	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
+		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		return
+	}
 	sessionID := chi.URLParam(r, "sessionID")
 
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)

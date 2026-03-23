@@ -28,6 +28,88 @@ func TestRenderReportHTMLConvertsMarkdownHeadings(t *testing.T) {
 	}
 }
 
+func TestRenderReportHTMLUsesContentHeadingAsCanonicalSectionTitle(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "analysis-1",
+				Kind:    "markdown",
+				Title:   "销售分布与区域表现",
+				Content: "## 2. 销售分布与区域表现\n\n正文",
+			},
+		},
+	})
+
+	if !strings.Contains(html, `<li><a href="#section-1">2. 销售分布与区域表现</a></li>`) {
+		t.Fatalf("expected toc to follow content heading, got: %s", html)
+	}
+	if strings.Contains(html, "<h2>销售分布与区域表现</h2>") {
+		t.Fatalf("expected markdown block not to render synthetic h2 heading, got: %s", html)
+	}
+	if !strings.Contains(html, `<div class="section" id="section-1" data-block-id="analysis-1" data-block-kind="markdown" data-block-title="2. 销售分布与区域表现">`) {
+		t.Fatalf("expected block title metadata to remain on wrapper, got: %s", html)
+	}
+}
+
+func TestRenderReportHTMLAttachesUntitledChartBlocksToNearestSection(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "blk_overview", Kind: "markdown", Content: "## 一、数据概览\n\n总览"},
+			{ID: "blk_sales_chart", Kind: "chart", ChartID: "chart_sales_trend", Content: "趋势说明"},
+			{ID: "blk_sales_analysis", Kind: "markdown", Content: "## 二、销售分析\n\n销售正文"},
+		},
+		Charts: []ChartData{
+			{ID: "chart_sales_trend", Option: json.RawMessage(`{"series":[{"type":"bar","data":[1]}]}`)},
+		},
+	})
+
+	if !strings.Contains(html, `<li><a href="#section-2">二、销售分析</a></li>`) {
+		t.Fatalf("expected analysis section to remain in toc, got: %s", html)
+	}
+	if strings.Contains(html, `data-block-id="blk_sales_chart"`) {
+		t.Fatalf("expected untitled chart block to be inlined into nearby section, got: %s", html)
+	}
+	analysisIdx := strings.Index(html, `data-block-id="blk_sales_analysis"`)
+	chartIdx := strings.Index(html, `data-chart-id="chart_sales_trend"`)
+	if analysisIdx < 0 || chartIdx < 0 || chartIdx < analysisIdx {
+		t.Fatalf("expected chart to render inside analysis section after it starts, got: %s", html)
+	}
+	if strings.Count(html, `data-chart-id="chart_sales_trend" class="chart-box"`) != 1 {
+		t.Fatalf("expected chart to render exactly once, got: %s", html)
+	}
+}
+
+func TestRenderReportHTMLSplitsMarkdownBlockByTopLevelHeadings(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "blk_recommendations",
+				Kind:    "markdown",
+				Content: "## 六、建议\n\n建议正文\n\n## 七、结论\n\n结论正文",
+			},
+		},
+	})
+
+	if !strings.Contains(html, `<li><a href="#section-1">六、建议</a></li>`) {
+		t.Fatalf("expected recommendations section in toc, got: %s", html)
+	}
+	if !strings.Contains(html, `<li><a href="#section-2">七、结论</a></li>`) {
+		t.Fatalf("expected conclusion section in toc, got: %s", html)
+	}
+	if strings.Count(html, `data-block-id="blk_recommendations"`) != 2 {
+		t.Fatalf("expected one markdown block to split into two rendered sections, got: %s", html)
+	}
+	if !strings.Contains(html, `class="section conclusion"`) {
+		t.Fatalf("expected conclusion fragment to use conclusion preset, got: %s", html)
+	}
+}
+
 func TestRenderReportHTMLDoesNotAppendUnreferencedCharts(t *testing.T) {
 	t.Parallel()
 
@@ -81,11 +163,11 @@ func TestRenderReportHTMLSupportsCustomSectionKinds(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, "<h2>主要风险</h2>") {
-		t.Fatalf("expected custom risks section to render with heading")
+	if !strings.Contains(html, `class="section risks"`) {
+		t.Fatalf("expected custom risks section preset, got: %s", html)
 	}
-	if !strings.Contains(html, "<h2>分析方法</h2>") {
-		t.Fatalf("expected custom methodology section to render with heading")
+	if !strings.Contains(html, `class="section methodology"`) {
+		t.Fatalf("expected custom methodology section preset, got: %s", html)
 	}
 }
 
@@ -109,14 +191,8 @@ func TestRenderReportHTMLNormalizesPrefixedSectionTitles(t *testing.T) {
 	if !strings.Contains(html, `<li><a href="#section-3">第3章 趋势变化</a></li>`) {
 		t.Fatalf("expected chapter prefix to remain, got: %s", html)
 	}
-	if !strings.Contains(html, `<h2>一、数据概览</h2>`) {
-		t.Fatalf("expected heading to match original title, got: %s", html)
-	}
-	if !strings.Contains(html, `<h2>02 各维度分布</h2>`) {
-		t.Fatalf("expected heading to match original title, got: %s", html)
-	}
-	if !strings.Contains(html, `<h2>第3章 趋势变化</h2>`) {
-		t.Fatalf("expected heading to match original title, got: %s", html)
+	if !strings.Contains(html, `<h2>一、数据概览</h2>`) || !strings.Contains(html, `<h2>02 各维度分布</h2>`) || !strings.Contains(html, `<h2>第3章 趋势变化</h2>`) {
+		t.Fatalf("expected markdown blocks to render synthetic h2 headings when content lacks headings, got: %s", html)
 	}
 }
 
@@ -194,8 +270,8 @@ func TestRenderReportHTMLUsesBlocksAsPrimaryModel(t *testing.T) {
 
 	html := RenderReportHTML("测试报告", "AI", &ReportState{
 		Blocks: []ReportBlock{
-			{ID: "intro", Kind: "markdown", Title: "导言", Content: "这是导言。"},
-			{ID: "raw", Kind: "html", Title: "自定义块", Content: `<div class="custom">RAW</div>`},
+			{ID: "intro", Kind: "markdown", Title: "导言", Content: "## 导言\n\n这是导言。"},
+			{ID: "raw", Kind: "html", Title: "自定义块", Content: `<h3>自定义块</h3><div class="custom">RAW</div>`},
 			{ID: "trend", Kind: "chart", Title: "趋势图", ChartID: "chart_sales", Content: "图表解读"},
 		},
 		Charts: []ChartData{

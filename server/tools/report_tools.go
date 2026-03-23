@@ -84,7 +84,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
 func (t *ManageReportBlocksTool) Description() string {
-	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 title、markdown、html、chart 四类 block；会直接修改报告内容结构，但执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
+	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 title、markdown、html、chart 四类 block；markdown/html block 的 content 支持使用 `{{chart:chart_id}}` 占位符在正文中内联展示图表，chart block 则用于独立图表段落。会直接修改报告内容结构，但执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
 }
 func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -94,7 +94,7 @@ func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 			"block_id": {"type": "string", "description": "block 稳定 ID。upsert/remove/move 必填；append 可选，不填则自动生成。"},
 			"block_kind": {"type": "string", "enum": ["title", "markdown", "html", "chart"], "description": "block 类型。"},
 			"title": {"type": "string", "description": "标题。"},
-			"content": {"type": "string", "description": "block 内容。chart block 时作为图下说明。"},
+			"content": {"type": "string", "description": "block 内容。markdown/html block 可使用 {{chart:chart_id}} 内联图表；chart block 时作为图下说明。"},
 			"chart_id": {"type": "string", "description": "chart block 引用的图表 ID。"},
 			"before_block_id": {"type": "string", "description": "插入到某个 block 之前。"},
 			"after_block_id": {"type": "string", "description": "插入到某个 block 之后。"},

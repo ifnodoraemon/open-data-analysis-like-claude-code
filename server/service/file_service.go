@@ -86,6 +86,7 @@ func (s *FileService) Upload(ctx context.Context, in UploadFileInput) (*domain.F
 	}
 	if err := s.FileRepo.AttachFilesToSession(ctx, in.SessionID, []string{file.ID}); err != nil {
 		_ = s.Storage.Delete(ctx, obj.Key)
+		_ = s.FileRepo.Delete(ctx, file.ID)
 		return nil, err
 	}
 	return file, nil
@@ -99,10 +100,28 @@ func (s *FileService) GetFile(ctx context.Context, fileID string) (*domain.File,
 	return s.FileRepo.GetByID(ctx, fileID)
 }
 
-func (s *FileService) MaterializeToTemp(ctx context.Context, fileID string) (string, *domain.File, error) {
+func (s *FileService) MaterializeToTemp(ctx context.Context, sessionID, workspaceID, fileID string) (string, *domain.File, error) {
 	file, err := s.FileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return "", nil, err
+	}
+	if file.WorkspaceID != workspaceID {
+		return "", nil, fmt.Errorf("文件不属于当前工作区")
+	}
+
+	sessionFiles, err := s.GetSessionFiles(ctx, sessionID)
+	if err != nil {
+		return "", nil, fmt.Errorf("读取会话文件列表失败: %w", err)
+	}
+	found := false
+	for _, sf := range sessionFiles {
+		if sf.ID == fileID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "", nil, fmt.Errorf("安全拦截：无法跨会话访问未挂载到当前会话的文件")
 	}
 
 	reader, err := s.Storage.Get(ctx, file.StorageKey)
@@ -223,6 +242,8 @@ func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*
 			report.Author = strings.TrimSpace(in.Author)
 		}
 		if err := s.ReportRepo.Create(ctx, report); err != nil {
+			_ = s.Storage.Delete(ctx, obj.Key)
+			_ = s.FileRepo.Delete(ctx, file.ID)
 			return nil, fmt.Errorf("保存报告元数据失败: %w", err)
 		}
 	}

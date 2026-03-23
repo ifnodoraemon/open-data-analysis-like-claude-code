@@ -11,4 +11,5 @@ type FileRepository interface {
 	GetByID(ctx context.Context, fileID string) (*domain.File, error)
 	ListBySession(ctx context.Context, sessionID string) ([]domain.File, error)
 	AttachFilesToSession(ctx context.Context, sessionID string, fileIDs []string) error
+	Delete(ctx context.Context, fileID string) error
 }

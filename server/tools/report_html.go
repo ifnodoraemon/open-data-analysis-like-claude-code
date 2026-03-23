@@ -11,13 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 	htmlnode "golang.org/x/net/html"
 )
 
 var (
-	htmlHeadingRegexp = regexp.MustCompile(`(?i)<h[1-6][^>]*>(.*?)</h[1-6]>`)
+	htmlHeadingRegexp = regexp.MustCompile(`(?im)^\s*<h[1-6][^>]*>(.*?)</h[1-6]>`)
 	htmlTagsRegexp    = regexp.MustCompile(`<[^>]*>`)
-	mdHeadingRegexp   = regexp.MustCompile(`(?m)^(?:#{1,6})\s+(.+)$`)
+	mdHeadingRegexp   = regexp.MustCompile(`(?m)^\s*(?:#{1,6})\s+(.+?)(?:\r?\n|$)`)
+	renderTokenRegexp = regexp.MustCompile(`[a-z0-9]+`)
 )
 
 func ResolveReportTitleFromState(state *ReportState) string {
@@ -32,7 +34,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	if state == nil {
 		state = &ReportState{}
 	}
-	blocks := state.Blocks
+	units := buildRenderUnits(state.Blocks)
 	if title == "" && state != nil {
 		title = state.FinalTitle
 	}
@@ -51,31 +53,17 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	var bodyHTML strings.Builder
 	chapterNum := 0
 
-	for _, block := range blocks {
+	for _, unit := range units {
+		block := unit.Block
 		if isTitleBlock(block) {
 			continue
 		}
 		chapterNum++
 		displayTitle := blockDisplayTitle(block)
-		if displayTitle == "" && block.Content != "" {
-			htmlLoc := htmlHeadingRegexp.FindStringIndex(block.Content)
-			mdLoc := mdHeadingRegexp.FindStringIndex(block.Content)
-
-			var firstMatch []string
-			if htmlLoc != nil && (mdLoc == nil || htmlLoc[0] < mdLoc[0]) {
-				firstMatch = htmlHeadingRegexp.FindStringSubmatch(block.Content)
-			} else if mdLoc != nil {
-				firstMatch = mdHeadingRegexp.FindStringSubmatch(block.Content)
-			}
-
-			if len(firstMatch) > 1 {
-				displayTitle = strings.TrimSpace(htmlTagsRegexp.ReplaceAllString(firstMatch[1], ""))
-			}
-		}
 		if displayTitle != "" {
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, escapeHTMLText(displayTitle)))
 		}
-		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts))
+		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts, unit.AttachedCharts))
 	}
 
 	chartScripts := buildChartScripts(state.Charts)
@@ -105,13 +93,17 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		customCSSBlock = "\n" + customCSS + "\n"
 	}
 
+	echartsUrl := "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"
+	if config.Cfg != nil && config.Cfg.ReportEchartsUrl != "" {
+		echartsUrl = config.Cfg.ReportEchartsUrl
+	}
+
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>%s</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
   --primary: #0f2b46;
@@ -135,7 +127,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', -apple-system, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", sans-serif;
   color: var(--text);
   line-height: 1.85;
   background: var(--bg-alt);
@@ -410,7 +402,7 @@ strong { color: var(--primary); font-weight: 600; }
 }
 %s
 </style>
-<script id="oda-echarts-loader" src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script id="oda-echarts-loader" src="%s"></script>
 </head>
 <body class="%s">
 %s
@@ -421,7 +413,7 @@ strong { color: var(--primary); font-weight: 600; }
 </div>
 %s
 </body>
-</html>`, safeTitle, customCSSBlock, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), safeDate, chartScripts)
+</html>`, safeTitle, customCSSBlock, echartsUrl, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), safeDate, chartScripts)
 }
 
 type reportShellData struct {
@@ -531,45 +523,87 @@ func isTitleBlock(block ReportBlock) bool {
  
 
 func blockDisplayTitle(block ReportBlock) string {
+	if title := extractContentHeadingTitle(block.Content); title != "" {
+		return title
+	}
 	return strings.TrimSpace(block.Title)
+}
+
+func extractContentHeadingTitle(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+
+	htmlLoc := htmlHeadingRegexp.FindStringIndex(content)
+	mdLoc := mdHeadingRegexp.FindStringIndex(content)
+
+	var firstMatch []string
+	if htmlLoc != nil && (mdLoc == nil || htmlLoc[0] < mdLoc[0]) {
+		firstMatch = htmlHeadingRegexp.FindStringSubmatch(content)
+	} else if mdLoc != nil {
+		firstMatch = mdHeadingRegexp.FindStringSubmatch(content)
+	}
+
+	if len(firstMatch) > 1 {
+		return strings.TrimSpace(htmlTagsRegexp.ReplaceAllString(firstMatch[1], ""))
+	}
+	return ""
 }
 
 type reportBlockRenderer func(ReportBlock, int, []ChartData) string
 
 var reportBlockRenderers = map[string]reportBlockRenderer{
-	"markdown": renderMarkdownBlockHTML,
-	"html":     renderHTMLBlock,
+	"markdown": renderMarkdownBlockHTMLStandalone,
+	"html":     renderHTMLBlockStandalone,
 	"chart":    renderChartBlockHTML,
 }
 
-func renderReportBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
-	kind := strings.ToLower(strings.TrimSpace(block.Kind))
-	renderer, ok := reportBlockRenderers[kind]
-	if !ok {
-		renderer = renderMarkdownBlockHTML
-	}
-	return renderer(block, chapterNum, charts)
+type reportRenderUnit struct {
+	Block         ReportBlock
+	AttachedCharts []ReportBlock
 }
 
-func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
-	preset := inferMarkdownBlockPreset(block)
-	title := blockDisplayTitle(block)
+func renderReportBlockHTML(block ReportBlock, chapterNum int, charts []ChartData, attachedCharts []ReportBlock) string {
+	kind := strings.ToLower(strings.TrimSpace(block.Kind))
+	switch kind {
+	case "markdown":
+		return renderMarkdownBlockHTML(block, chapterNum, charts, attachedCharts)
+	case "html":
+		return renderHTMLBlock(block, chapterNum, charts, attachedCharts)
+	default:
+		renderer, ok := reportBlockRenderers[kind]
+		if !ok {
+			renderer = renderMarkdownBlockHTMLStandalone
+		}
+		return renderer(block, chapterNum, charts)
+	}
+}
 
-	var headingHTML string
-	if title != "" {
-		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
+func renderMarkdownBlockHTMLStandalone(block ReportBlock, chapterNum int, charts []ChartData) string {
+	return renderMarkdownBlockHTML(block, chapterNum, charts, nil)
+}
+
+func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartData, attachedCharts []ReportBlock) string {
+	preset := inferMarkdownBlockPreset(block)
+	displayTitle := blockDisplayTitle(block)
+
+	headingHTML := ""
+	if displayTitle != "" && extractContentHeadingTitle(block.Content) == "" {
+		headingHTML = fmt.Sprintf("<h2>%s</h2>\n", escapeHTMLText(displayTitle))
 	}
 
+	contentHTML := headingHTML + processContent(block.Content, charts) + renderAttachedChartsInline(attachedCharts, charts)
+
 	return fmt.Sprintf(`
-		<div class="%s" id="section-%d" data-block-id="%s" data-block-kind="%s">
-			%s
+		<div class="%s" id="section-%d" data-block-id="%s" data-block-kind="%s" data-block-title="%s">
 			<div class="%s">%s</div>
-		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(strings.ToLower(strings.TrimSpace(block.Kind))), headingHTML, escapeHTMLAttr(preset.bodyClass), processContent(block.Content, charts))
+		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(strings.ToLower(strings.TrimSpace(block.Kind))), escapeHTMLAttr(displayTitle), escapeHTMLAttr(preset.bodyClass), contentHTML)
 }
 
 func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
 	defaultPreset := sectionRenderPreset{classes: []string{"section"}, bodyClass: "content"}
-	hint := strings.ToLower(strings.TrimSpace(block.ID + " " + block.Title))
+	hint := strings.ToLower(strings.TrimSpace(block.ID + " " + block.Title + " " + blockDisplayTitle(block)))
 	switch {
 	case strings.Contains(hint, "summary"), strings.Contains(hint, "摘要"):
 		if preset, ok := sectionRenderPresets["summary"]; ok {
@@ -591,17 +625,23 @@ func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
 	return defaultPreset
 }
 
-func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData) string {
-	title := blockDisplayTitle(block)
-	var headingHTML string
-	if title != "" {
-		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
+func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData, attachedCharts []ReportBlock) string {
+	displayTitle := blockDisplayTitle(block)
+
+	headingHTML := ""
+	if displayTitle != "" && extractContentHeadingTitle(block.Content) == "" {
+		headingHTML = fmt.Sprintf("<h2>%s</h2>\n", escapeHTMLText(displayTitle))
 	}
+
+	contentHTML := headingHTML + sanitizeHTMLFragment(block.Content) + renderAttachedChartsInline(attachedCharts, charts)
 	return fmt.Sprintf(`
-		<div class="section html-block" id="section-%d" data-block-id="%s" data-block-kind="html">
-			%s
+		<div class="section html-block" id="section-%d" data-block-id="%s" data-block-kind="html" data-block-title="%s">
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), headingHTML, sanitizeHTMLFragment(block.Content))
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(displayTitle), contentHTML)
+}
+
+func renderHTMLBlockStandalone(block ReportBlock, chapterNum int, charts []ChartData) string {
+	return renderHTMLBlock(block, chapterNum, charts, nil)
 }
 
 func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData) string {
@@ -615,10 +655,246 @@ func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData)
 		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
 	}
 	return fmt.Sprintf(`
-		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart">
+		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart" data-block-title="%s">
 			%s
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), headingHTML, processContent(content, charts))
+		</div>`, chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(title), headingHTML, processContent(content, charts))
+}
+
+func renderAttachedChartsInline(attachedCharts []ReportBlock, charts []ChartData) string {
+	if len(attachedCharts) == 0 {
+		return ""
+	}
+	var html strings.Builder
+	for _, block := range attachedCharts {
+		title := blockDisplayTitle(block)
+		if title != "" {
+			html.WriteString(fmt.Sprintf("<h4>%s</h4>\n", escapeHTMLText(title)))
+		}
+		content := fmt.Sprintf("{{chart:%s}}", block.ChartID)
+		if strings.TrimSpace(block.Content) != "" {
+			content += "\n\n" + block.Content
+		}
+		html.WriteString(processContent(content, charts))
+	}
+	return html.String()
+}
+
+func buildRenderUnits(blocks []ReportBlock) []reportRenderUnit {
+	if len(blocks) == 0 {
+		return nil
+	}
+	attachments := make(map[int][]ReportBlock)
+	attachedCharts := make(map[int]struct{})
+	for idx, block := range blocks {
+		if !shouldAttachChartInline(block) {
+			continue
+		}
+		target := findInlineChartAnchorIndex(blocks, idx)
+		if target < 0 {
+			continue
+		}
+		attachments[target] = append(attachments[target], block)
+		attachedCharts[idx] = struct{}{}
+	}
+
+	baseUnits := make([]reportRenderUnit, 0, len(blocks))
+	for idx, block := range blocks {
+		if _, attached := attachedCharts[idx]; attached {
+			continue
+		}
+		unit := reportRenderUnit{Block: block}
+		if len(attachments[idx]) > 0 {
+			unit.AttachedCharts = append(unit.AttachedCharts, attachments[idx]...)
+		}
+		baseUnits = append(baseUnits, unit)
+	}
+
+	units := make([]reportRenderUnit, 0, len(baseUnits))
+	for _, unit := range baseUnits {
+		units = append(units, splitRenderUnitSections(unit)...)
+	}
+	return units
+}
+
+func splitRenderUnitSections(unit reportRenderUnit) []reportRenderUnit {
+	if !strings.EqualFold(strings.TrimSpace(unit.Block.Kind), "markdown") {
+		return []reportRenderUnit{unit}
+	}
+
+	fragments := splitMarkdownIntoTopLevelSections(unit.Block.Content)
+	if len(fragments) <= 1 {
+		return []reportRenderUnit{unit}
+	}
+
+	units := make([]reportRenderUnit, 0, len(fragments))
+	for i, fragment := range fragments {
+		block := unit.Block
+		block.Content = fragment
+		fragmentUnit := reportRenderUnit{Block: block}
+		if i == 0 && len(unit.AttachedCharts) > 0 {
+			fragmentUnit.AttachedCharts = append(fragmentUnit.AttachedCharts, unit.AttachedCharts...)
+		}
+		units = append(units, fragmentUnit)
+	}
+	return units
+}
+
+func splitMarkdownIntoTopLevelSections(content string) []string {
+	lines := strings.Split(content, "\n")
+	minLevel := 0
+	headingCount := 0
+	for _, line := range lines {
+		level, ok := markdownHeadingLevel(line)
+		if !ok || level > 2 {
+			continue
+		}
+		if minLevel == 0 || level < minLevel {
+			minLevel = level
+			headingCount = 1
+			continue
+		}
+		if level == minLevel {
+			headingCount++
+		}
+	}
+	if minLevel == 0 || headingCount <= 1 {
+		return []string{content}
+	}
+
+	parts := make([]string, 0, headingCount)
+	current := make([]string, 0, len(lines))
+	for _, line := range lines {
+		level, ok := markdownHeadingLevel(line)
+		if ok && level == minLevel && len(current) > 0 {
+			parts = append(parts, strings.TrimSpace(strings.Join(current, "\n")))
+			current = current[:0]
+		}
+		current = append(current, line)
+	}
+	if len(current) > 0 {
+		parts = append(parts, strings.TrimSpace(strings.Join(current, "\n")))
+	}
+	if len(parts) <= 1 {
+		return []string{content}
+	}
+	return parts
+}
+
+func markdownHeadingLevel(line string) (int, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || trimmed[0] != '#' {
+		return 0, false
+	}
+	level := 0
+	for level < len(trimmed) && trimmed[level] == '#' {
+		level++
+	}
+	if level == 0 || level >= len(trimmed) || trimmed[level] != ' ' {
+		return 0, false
+	}
+	return level, true
+}
+
+func shouldAttachChartInline(block ReportBlock) bool {
+	return strings.EqualFold(strings.TrimSpace(block.Kind), "chart") &&
+		strings.TrimSpace(block.ChartID) != "" &&
+		strings.TrimSpace(block.Title) == ""
+}
+
+func findInlineChartAnchorIndex(blocks []ReportBlock, chartIndex int) int {
+	chartBlock := blocks[chartIndex]
+	prevIdx := findAdjacentTextBlockIndex(blocks, chartIndex, -1)
+	nextIdx := findAdjacentTextBlockIndex(blocks, chartIndex, 1)
+	if prevIdx < 0 {
+		return nextIdx
+	}
+	if nextIdx < 0 {
+		return prevIdx
+	}
+
+	prevScore := scoreInlineChartAnchor(chartBlock, blocks[prevIdx], chartIndex-prevIdx, false)
+	nextScore := scoreInlineChartAnchor(chartBlock, blocks[nextIdx], nextIdx-chartIndex, true)
+	if nextScore > prevScore {
+		return nextIdx
+	}
+	return prevIdx
+}
+
+func findAdjacentTextBlockIndex(blocks []ReportBlock, start, step int) int {
+	for idx := start + step; idx >= 0 && idx < len(blocks); idx += step {
+		if isTextRenderBlock(blocks[idx]) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func isTextRenderBlock(block ReportBlock) bool {
+	kind := strings.ToLower(strings.TrimSpace(block.Kind))
+	return kind == "markdown" || kind == "html"
+}
+
+func scoreInlineChartAnchor(chartBlock, textBlock ReportBlock, distance int, _ bool) int {
+	score := positiveDistanceScore(distance)
+	score += tokenOverlapScore(chartBlock, textBlock) * 10
+	if isOverviewLikeBlock(textBlock) {
+		score -= 4
+	}
+	return score
+}
+
+func positiveDistanceScore(distance int) int {
+	if distance >= 8 {
+		return 0
+	}
+	return 8 - distance
+}
+
+func tokenOverlapScore(chartBlock, textBlock ReportBlock) int {
+	chartTokens := blockRenderTokens(chartBlock)
+	textTokens := blockRenderTokens(textBlock)
+	if len(chartTokens) == 0 || len(textTokens) == 0 {
+		return 0
+	}
+	score := 0
+	for token := range chartTokens {
+		if _, ok := textTokens[token]; ok {
+			score++
+		}
+	}
+	return score
+}
+
+func blockRenderTokens(block ReportBlock) map[string]struct{} {
+	source := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+		block.ID,
+		block.Title,
+		block.ChartID,
+		blockDisplayTitle(block),
+	}, " ")))
+	matches := renderTokenRegexp.FindAllString(source, -1)
+	tokens := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		tokens[match] = struct{}{}
+	}
+	return tokens
+}
+
+func isOverviewLikeBlock(block ReportBlock) bool {
+	hint := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+		block.ID,
+		block.Title,
+		blockDisplayTitle(block),
+	}, " ")))
+	return strings.Contains(hint, "overview") ||
+		strings.Contains(hint, "summary") ||
+		strings.Contains(hint, "exec") ||
+		strings.Contains(hint, "摘要") ||
+		strings.Contains(hint, "概览")
 }
 
 // processContent 处理内容：Markdown 转 HTML + 替换图表占位符

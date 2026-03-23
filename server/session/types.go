@@ -89,7 +89,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		Memory:            memory,
 		Subgoals:          subgoals,
 		FileMaterializer: func(fileID string) (*tools.FileReference, error) {
-			tempPath, file, err := s.FileService.MaterializeToTemp(context.Background(), fileID)
+			tempPath, file, err := s.FileService.MaterializeToTemp(context.Background(), s.ID, s.WorkspaceID, fileID)
 			if err != nil {
 				return nil, err
 			}
@@ -238,19 +238,22 @@ func (s *Session) StartRun(parent context.Context) (string, context.Context, err
 	return runID, ctx, nil
 }
 
-func (s *Session) FinishRun(runID, status string) {
+func (s *Session) FinishRun(runID, status string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	finished := false
 	if s.ActiveRun != nil && s.ActiveRun.RunID == runID {
 		s.ActiveRun.Status = status
 		s.ActiveRun.Cancel = nil
 		s.ActiveRun = nil
+		finished = true
 	}
 	if s.EditState != nil {
 		s.EditState.Reset()
 	}
 	s.LastSeenAt = time.Now()
+	return finished
 }
 
 func (s *Session) SuspendRun(runID string) {
@@ -269,6 +272,17 @@ func (s *Session) ResumeRun(runID string) {
 		s.ActiveRun.Status = "running"
 	}
 	s.LastSeenAt = time.Now()
+}
+
+// UpdateCancelFunc 更新当活跃任务的 cancel 控制流
+func (s *Session) UpdateCancelFunc(runID string, cancel context.CancelFunc) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ActiveRun != nil && s.ActiveRun.RunID == runID {
+		s.ActiveRun.Cancel = cancel
+		return true
+	}
+	return false
 }
 
 // GetWaitingRunID 返回正在等待用户输入的 run ID。

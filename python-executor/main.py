@@ -22,15 +22,12 @@ logger = logging.getLogger("python-executor")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 # 工作目录：存放生成的文件（图表等）
-WORK_DIR = Path("/app/workspace")
+WORK_DIR = Path(os.environ.get("WORK_DIR", "/app/workspace"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
-# 预加载常用数据分析库的全局命名空间
-GLOBAL_NS = {}
-
-def init_namespace():
-    """初始化全局命名空间，预加载常用库"""
-    imports = """
+def init_namespace(ns, work_dir: Path):
+    """初始化命名空间，预加载常用库"""
+    imports = f"""
 import pandas as pd
 import numpy as np
 import json
@@ -49,14 +46,12 @@ import matplotlib.pyplot as plt
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-WORK_DIR = Path('/app/workspace')
+WORK_DIR = Path('{work_dir}')
 """
     try:
-        exec(imports, GLOBAL_NS)
-    except ImportError as e:
+        exec(imports, ns)
+    except Exception as e:
         print(f"Warning: Some libraries not available: {e}")
-
-init_namespace()
 
 
 class ExecuteRequest(BaseModel):
@@ -126,57 +121,130 @@ def list_tools():
     }
 
 
-@app.post("/execute", response_model=ExecuteResponse)
-def execute_code(req: ExecuteRequest):
-    """执行 Python 代码"""
-    start = time.time()
+import multiprocessing
+import sys
+import shutil
+import uuid
 
-    # 捕获 stdout/stderr
+def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue):
+    req_dir = Path(req_dir_path)
+    os.chdir(req_dir)
+    
+    local_ns = {}
+    init_namespace(local_ns, req_dir)
+    
+    # 构建沙箱 builtins
+    import builtins
+    safe_builtins = builtins.__dict__.copy()
+    
+    original_import = builtins.__import__
+    def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+        forbidden = {'os', 'sys', 'subprocess', 'shutil', 'socket', 'urllib', 'requests', 'pty', 'builtins'}
+        base_name = name.split('.')[0]
+        if base_name in forbidden:
+            raise ImportError(f"Importing '{base_name}' is not allowed in this sandbox.")
+        return original_import(name, globals, locals, fromlist, level)
+        
+    safe_builtins['__import__'] = safe_import
+    safe_builtins.pop('eval', None)
+    safe_builtins.pop('exec', None)
+    
+    local_ns['__builtins__'] = safe_builtins
+
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
-
-    # 记录执行前的文件
-    files_before = set(WORK_DIR.glob("*"))
-
-    # 复制全局命名空间（避免污染）
-    local_ns = dict(GLOBAL_NS)
-
     success = True
     error = None
 
     try:
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-            exec(req.code, local_ns)
+            exec(code, local_ns)
     except Exception as e:
         success = False
         error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
 
-    # 关闭所有 matplotlib 图形
     try:
         import matplotlib.pyplot as plt
         plt.close('all')
     except:
         pass
 
-    # 检查新生成的文件
-    files_after = set(WORK_DIR.glob("*"))
-    new_files = [str(f.name) for f in (files_after - files_before)]
+    q.put({
+        "success": success,
+        "stdout": stdout_buf.getvalue(),
+        "stderr": stderr_buf.getvalue(),
+        "error": error
+    })
+
+
+@app.post("/execute", response_model=ExecuteResponse)
+def execute_code(req: ExecuteRequest):
+    """执行 Python 代码"""
+    start = time.time()
+    
+    req_id = f"req_{uuid.uuid4().hex[:8]}"
+    req_dir = WORK_DIR / req_id
+    req_dir.mkdir(parents=True, exist_ok=True)
+
+    q = multiprocessing.Queue()
+    p = multiprocessing.Process(target=run_in_process, args=(req.code, str(req_dir), q))
+    p.start()
+    
+    p.join(req.timeout)
+    
+    timeout_occurred = False
+    if p.is_alive():
+        p.terminate()
+        p.join()
+        timeout_occurred = True
 
     duration_ms = int((time.time() - start) * 1000)
+    
+    if timeout_occurred:
+        shutil.rmtree(req_dir, ignore_errors=True)
+        return ExecuteResponse(
+            success=False,
+            stdout="",
+            stderr="",
+            error=f"Execution timed out after {req.timeout} seconds.",
+            files=[],
+            duration_ms=duration_ms
+        )
+
+    try:
+        result = q.get_nowait()
+    except Exception:
+        result = {
+            "success": False,
+            "stdout": "",
+            "stderr": "",
+            "error": "Execution failed to return a result (possible crash or out of memory)."
+        }
+
+    # 移动文件到 WORK_DIR 并返回列表
+    new_files = []
+    if req_dir.exists():
+        for f in req_dir.glob("*"):
+            if f.is_file():
+                dest_name = f"{req_id}_{f.name}"
+                shutil.move(str(f), str(WORK_DIR / dest_name))
+                new_files.append(dest_name)
+        shutil.rmtree(req_dir, ignore_errors=True)
+
     logger.info(
         "execute success=%s duration_ms=%d files=%d stdout_chars=%d stderr_chars=%d",
-        success,
+        result["success"],
         duration_ms,
         len(new_files),
-        len(stdout_buf.getvalue()),
-        len(stderr_buf.getvalue()),
+        len(result["stdout"]),
+        len(result["stderr"]),
     )
 
     return ExecuteResponse(
-        success=success,
-        stdout=stdout_buf.getvalue()[:10000],  # 限制输出长度
-        stderr=stderr_buf.getvalue()[:5000],
-        error=error,
+        success=result["success"],
+        stdout=result["stdout"][:10000],
+        stderr=result["stderr"][:5000],
+        error=result["error"],
         files=new_files,
         duration_ms=duration_ms,
     )

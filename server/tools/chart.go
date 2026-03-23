@@ -62,7 +62,7 @@ func (t *CreateChartTool) Name() string { return "report_create_chart" }
 func (t *CreateChartTool) Strict() bool { return true }
 
 func (t *CreateChartTool) Description() string {
-	return "创建或更新一个 ECharts 图表。支持简化 DSL 或原生 option，返回 chart_id 与引用标记；会修改 report chart 状态，但不会自动创建或更新正文 block。执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，只允许修改被授权的 chart_id。"
+	return "创建或更新一个 ECharts 图表。支持简化 DSL 或原生 option，返回 chart_id 与引用标记；会修改 report chart 状态，但不会自动创建或更新正文 block。若要在正文中内联展示图表，可在 markdown/html block 内容里使用 `{{chart:chart_id}}` 占位符。执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，只允许修改被授权的 chart_id。"
 }
 
 func (t *CreateChartTool) Parameters() json.RawMessage {

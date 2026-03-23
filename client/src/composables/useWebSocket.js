@@ -58,7 +58,7 @@ export function useWebSocket() {
 
     const latestRun = (runs || [])[0]
     store.setSelectedRun(latestRun?.id || '')
-    if (latestRun?.status === 'running') {
+    if (latestRun?.status === 'running' || latestRun?.status === 'waiting_user_input') {
       store.startRun(latestRun.id)
     } else {
       store.finishRun()
@@ -101,7 +101,7 @@ export function useWebSocket() {
       latestRun = session?.latestRun || null
     }
     store.updateReport('')
-    if (latestRun?.reportFileId) {
+    if (latestRun?.reportFileId || latestRun?.report) {
       await tryLoadRunReport(latestRun.id)
     }
   }
@@ -188,7 +188,7 @@ export function useWebSocket() {
     const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [], data.runtimeState)
     store.updateReport('')
     try {
-      if (latestRun?.reportFileId) {
+      if (latestRun?.reportFileId || latestRun?.report) {
         await tryLoadRunReport(latestRun.id)
       }
     } finally {
@@ -216,6 +216,8 @@ export function useWebSocket() {
             let parsedResult = null
             if (msg.type === 'tool_call') {
               try { parsedArgs = JSON.parse(msg.content) } catch (e) {}
+            } else if (msg.type === 'user_request_input') {
+              try { parsedArgs = JSON.parse(msg.content) } catch (e) {}
             }
             if (msg.type === 'tool_result') {
               try { parsedResult = JSON.parse(msg.content) } catch (e) {}
@@ -223,9 +225,12 @@ export function useWebSocket() {
             return {
               id: msg.id,
               type: msg.type,
-              content: msg.type !== 'tool_call' && msg.type !== 'tool_result' ? msg.content : undefined,
+              content: msg.type !== 'tool_call' && msg.type !== 'tool_result' && msg.type !== 'user_request_input' ? msg.content : undefined,
               name: msg.name,
               arguments: msg.type === 'tool_call' ? parsedArgs : undefined,
+              question: msg.type === 'user_request_input' ? parsedArgs?.question : undefined,
+              options: msg.type === 'user_request_input' ? parsedArgs?.options : undefined,
+              allow_multiple: msg.type === 'user_request_input' ? parsedArgs?.allow_multiple : undefined,
               result: msg.type === 'tool_result' ? msg.content : undefined,
               parsedResult: parsedResult,
               duration: msg.duration,
@@ -263,10 +268,9 @@ export function useWebSocket() {
     const params = new URLSearchParams()
     if (store.sessionId) params.set('session_id', store.sessionId)
     if (store.workspace?.id) params.set('workspace_id', store.workspace.id)
-    params.set('token', store.token)
     const sessionQuery = params.toString() ? `?${params.toString()}` : ''
     const url = `${protocol}//${location.host}/ws${sessionQuery}`
-    const socket = new WebSocket(url)
+    const socket = new WebSocket(url, ['mcp-token', store.token])
     wsInstance = socket
     store.setConnectionState('connecting')
     connected.value = false

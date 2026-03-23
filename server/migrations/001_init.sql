@@ -86,7 +86,8 @@ create table analysis_runs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   foreign key (session_id) references sessions(id) on delete cascade,
-  foreign key (parent_run_id) references analysis_runs(id) on delete cascade
+  foreign key (parent_run_id) references analysis_runs(id) on delete cascade,
+  foreign key (report_file_id) references files(id) on delete set null
 );
 
 create table reports (

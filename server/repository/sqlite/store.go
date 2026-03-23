@@ -59,7 +59,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO users (id, email, password_hash, name, avatar_url, status, created_at, updated_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO users (id, email, password_hash, name, avatar_url, status, created_at, updated_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, user.Email, user.PasswordHash, user.Name, user.AvatarURL, string(user.Status), user.CreatedAt, user.UpdatedAt, user.LastLoginAt)
 	return err
 }
@@ -115,20 +115,25 @@ func (r *WorkspaceRepository) IsMember(ctx context.Context, workspaceID, userID 
 }
 
 func (r *WorkspaceRepository) CreateWorkspace(ctx context.Context, workspace *domain.Workspace) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO workspaces (id, name, slug, owner_user_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO workspaces (id, name, slug, owner_user_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		workspace.ID, workspace.Name, workspace.Slug, workspace.OwnerUserID, string(workspace.Status), workspace.CreatedAt, workspace.UpdatedAt)
 	return err
 }
 
 func (r *WorkspaceRepository) AddMember(ctx context.Context, member *domain.WorkspaceMember) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO workspace_members (workspace_id, user_id, role, created_at) VALUES (?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO workspace_members (workspace_id, user_id, role, created_at) VALUES (?, ?, ?, ?)`,
 		member.WorkspaceID, member.UserID, string(member.Role), member.CreatedAt)
 	return err
 }
 
 func (r *FileRepository) Create(ctx context.Context, file *domain.File) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO files (id, workspace_id, uploaded_by, display_name, purpose, content_type, size_bytes, storage_provider, bucket, storage_key, checksum, status, visibility, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO files (id, workspace_id, uploaded_by, display_name, purpose, content_type, size_bytes, storage_provider, bucket, storage_key, checksum, status, visibility, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		file.ID, file.WorkspaceID, file.UploadedBy, file.DisplayName, string(file.Purpose), file.ContentType, file.SizeBytes, file.StorageProvider, file.Bucket, file.StorageKey, file.Checksum, string(file.Status), string(file.Visibility), file.CreatedAt, file.UpdatedAt, file.DeletedAt)
+	return err
+}
+
+func (r *FileRepository) Delete(ctx context.Context, fileID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, fileID)
 	return err
 }
 
@@ -187,7 +192,7 @@ func (r *FileRepository) ListBySession(ctx context.Context, sessionID string) ([
 func (r *FileRepository) AttachFilesToSession(ctx context.Context, sessionID string, fileIDs []string) error {
 	now := time.Now()
 	for _, fileID := range fileIDs {
-		if _, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO session_files (session_id, file_id, created_at) VALUES (?, ?, ?)`, sessionID, fileID, now); err != nil {
+		if _, err := r.db.ExecContext(ctx, `INSERT INTO session_files (session_id, file_id, created_at) VALUES (?, ?, ?)`, sessionID, fileID, now); err != nil {
 			return err
 		}
 	}
@@ -195,7 +200,7 @@ func (r *FileRepository) AttachFilesToSession(ctx context.Context, sessionID str
 }
 
 func (r *ReportRepository) Create(ctx context.Context, report *domain.Report) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO reports (id, run_id, workspace_id, title, author, html_storage_provider, html_bucket, html_storage_key, snapshot_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO reports (id, run_id, workspace_id, title, author, html_storage_provider, html_bucket, html_storage_key, snapshot_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		report.ID, report.RunID, report.WorkspaceID, report.Title, report.Author, report.HTMLStorageProvider, report.HTMLBucket, report.HTMLStorageKey, report.SnapshotJSON, report.CreatedAt)
 	return err
 }
@@ -210,7 +215,7 @@ func (r *ReportRepository) GetByRunID(ctx context.Context, runID string) (*domai
 }
 
 func (r *SessionRepository) Create(ctx context.Context, session *domain.Session) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO sessions (id, workspace_id, user_id, title, status, last_run_id, created_at, updated_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO sessions (id, workspace_id, user_id, title, status, last_run_id, created_at, updated_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.WorkspaceID, session.UserID, session.Title, string(session.Status), session.LastRunID, session.CreatedAt, session.UpdatedAt, session.LastSeenAt)
 	return err
 }
@@ -278,7 +283,7 @@ func (r *SessionRepository) UpdateLastRun(ctx context.Context, sessionID, runID 
 }
 
 func (r *RunRepository) Create(ctx context.Context, run *domain.AnalysisRun) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR REPLACE INTO analysis_runs (id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := r.db.ExecContext(ctx, `INSERT INTO analysis_runs (id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID, run.SessionID, run.WorkspaceID, run.UserID, run.ParentRunID, string(run.RunKind), run.DelegateRole, run.GoalID, string(run.Status), run.InputMessage, run.Summary, run.ErrorMessage, run.ReportFileID, run.StartedAt, run.FinishedAt, run.CreatedAt, run.UpdatedAt)
 	return err
 }
