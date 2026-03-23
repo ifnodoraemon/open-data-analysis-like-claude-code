@@ -183,6 +183,11 @@ func extractToolSummary(content string) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 		if summary := buildStructuredToolSummary(payload); summary != "" {
+			if tool, ok := payload["tool"].(string); ok && tool == "task_delegate" {
+				if delegateSum, hasSum := payload["delegate_summary"].(string); hasSum && strings.TrimSpace(delegateSum) != "" {
+					return summary + ", delegate_summary=" + strings.TrimSpace(delegateSum)
+				}
+			}
 			return summary
 		}
 		if result, ok := payload["result"].(string); ok && strings.TrimSpace(result) != "" {

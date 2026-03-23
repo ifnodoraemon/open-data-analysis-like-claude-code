@@ -117,6 +117,24 @@ func TestExtractToolSummaryPrefersStructuredFacts(t *testing.T) {
 	}
 }
 
+func TestExtractToolSummaryPreservesDelegateSummary(t *testing.T) {
+	t.Parallel()
+
+	raw := `{
+  "ok": true,
+  "tool": "task_delegate",
+  "delegate_summary": "I have successfully analyzed the trend.",
+  "child_run_id": "child-123"
+}`
+	summary := extractToolSummary(raw)
+	if !strings.Contains(summary, "delegate_summary=I have successfully analyzed the trend.") {
+		t.Fatalf("expected delegate_summary to be preserved, got %q", summary)
+	}
+	if !strings.Contains(summary, "tool=task_delegate") {
+		t.Fatalf("expected structured core fields to be preserved, got %q", summary)
+	}
+}
+
 func TestToolCallSucceeded(t *testing.T) {
 	t.Parallel()
 
