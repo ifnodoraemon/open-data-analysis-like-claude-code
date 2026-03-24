@@ -60,12 +60,12 @@ func startEventPersistWorker() func() {
 	var once sync.Once
 	return func() {
 		// 使用 sync.Once 确保只关闭一次：
-		// 先将全局引用置 nil，令新的 saveEventToDB 调用感知队列已关闭，
-		// 再调用 close 通知 worker goroutine 退出，最后等待其完成。
+		// 先将全局引用置 nil，令新的 saveEventToDB 调用直接丢弃，
+		// 再关闭底层 channel 以通知 worker 退出，最后等待其完成。
 		once.Do(func() {
 			eventPersistQueue = nil // 先置 nil，saveEventToDB 中读局部变量，不再写入
-			close(q)               // 关闭底层 channel，通知 worker 退出
-			wg.Wait()              // 等待 worker goroutine 完全退出（包含最后一次 saveEventToDBSync 返回）
+			close(q)               // 必须 close 才能跳出 for range
+			wg.Wait()              // 等待 worker goroutine 完全退出
 		})
 	}
 }
@@ -596,7 +596,9 @@ func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev
 	select {
 	case q <- persistJob{workspaceID: workspaceID, sessionID: sessionID, runID: runID, ev: ev}:
 	default:
-		log.Printf("[warn] eventPersistQueue full, dropping event type=%s run_id=%s", ev.Type, runID)
+		// 当队列满时，不直接丢弃事件（防止关键的状态转换无法被持久化），而是起一个 goroutine 同步写入（弹性溢出）
+		log.Printf("[warn] eventPersistQueue full, falling back to sync saving for event type=%s run_id=%s", ev.Type, runID)
+		go saveEventToDBSync(workspaceID, sessionID, runID, ev)
 	}
 }
 

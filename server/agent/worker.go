@@ -373,6 +373,11 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				})
 				bundle.Task = ""
 			}
+			// ISSUE6 注释：
+			// 注意，这里的 compactWorkerBundle 逻辑与 engine.go 中的 compactMessagesLocked 不同。
+			// 主代理由于需要维护长期存在的 Session，会执行较激进的压缩（提炼 Digest、保留少数最近的对话）；
+			// 而子代理 (worker) 的生命周期较短，关注点更内聚。为了避免中间过程的细节事实在频繁提炼中丢失，
+			// 我们通常采取较温和的滑动窗口策略（例如仅截断旧轮次，而不强制使用大范围摘要压缩）。
 			compactWorkerBundle(bundle, resp.Usage.PromptTokens)
 		}
 		if err != nil {
