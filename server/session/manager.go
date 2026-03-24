@@ -221,3 +221,12 @@ func (m *Manager) Stop(sessionID, workspaceID, userID string) error {
 	}
 	return nil
 }
+
+// IsSessionLive 判断 session 是否存在于内存中（有活跃引擎 / 等待态 run）。
+// 用于 bootstrap 阶段识别 stale run（DB 中仍为 running/waiting_user_input 但无引擎持有）。
+func (m *Manager) IsSessionLive(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.sessions[sessionID]
+	return ok
+}

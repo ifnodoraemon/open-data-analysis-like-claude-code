@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
 
 func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +54,19 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("bootstrap: list runs error session_id=%s err=%v", latestSession.ID, err)
 				http.Error(w, "获取运行记录失败", http.StatusInternalServerError)
 				return
+			}
+			// 回收 stale runs：服务重启后 DB 中残留的 running/waiting_user_input 状态
+			// 如果 session 不在内存中（无活跃引擎），这些 run 永远无法恢复，标记为 failed
+			if !sessionManager.IsSessionLive(latestSession.ID) {
+				for i := range runs {
+					if runs[i].Status == domain.RunStatusRunning || runs[i].Status == domain.RunStatusWaitingUserInput {
+						errMsg := "服务重启后任务无法恢复，已自动标记为失败"
+						log.Printf("bootstrap: recovered stale run run_id=%s old_status=%s", runs[i].ID, runs[i].Status)
+						runs[i].Status = domain.RunStatusFailed
+						runs[i].ErrorMessage = &errMsg
+						_ = runRepo.UpdateStatus(r.Context(), runs[i].ID, domain.RunStatusFailed, &errMsg)
+					}
+				}
 			}
 			resp["runs"] = serializeRuns(r.Context(), runs)
 

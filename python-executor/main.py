@@ -144,10 +144,20 @@ def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue):
         if base_name in forbidden:
             raise ImportError(f"Importing '{base_name}' is not allowed in this sandbox.")
         return original_import(name, globals, locals, fromlist, level)
-        
+    
+    # 限制 open() 只能访问请求工作目录内的文件
+    _builtin_open = builtins.open
+    def safe_open(file, mode='r', *args, **kwargs):
+        resolved = Path(file).resolve()
+        if not str(resolved).startswith(str(req_dir.resolve())):
+            raise PermissionError(f"Access denied: file operations are restricted to the working directory.")
+        return _builtin_open(file, mode, *args, **kwargs)
+    
     safe_builtins['__import__'] = safe_import
+    safe_builtins['open'] = safe_open
     safe_builtins.pop('eval', None)
     safe_builtins.pop('exec', None)
+    safe_builtins.pop('compile', None)
     
     local_ns['__builtins__'] = safe_builtins
 
