@@ -73,6 +73,44 @@ func TestReportLifecycleHookTriggersDerivedReportEffects(t *testing.T) {
 	}
 }
 
+func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("storage offline")
+	sess := &session.Session{
+		ActiveRun: &session.RunState{RunID: "run_99", Status: "running"},
+	}
+
+	var updatedStatus domain.RunStatus
+	var updatedMsg string
+	scope := runtimeEventScope{
+		session:        sess,
+		runID:          "run_99",
+		finalizeReport: func() error { return boom },
+		setRunStatus: func(status domain.RunStatus, msg *string) {
+			updatedStatus = status
+			if msg != nil {
+				updatedMsg = *msg
+			}
+		},
+	}
+
+	reportLifecycleHook(scope, agent.WSEvent{
+		Type: agent.EventToolResult,
+		Data: agent.ToolResultData{Name: "report_finalize", Success: true},
+	})
+
+	if sess.ActiveRun != nil && sess.ActiveRun.Status != "failed" {
+		t.Fatalf("expected session run status to be marked failed in memory, got %v", sess.ActiveRun.Status)
+	}
+	if updatedStatus != domain.RunStatusFailed {
+		t.Fatalf("expected persistence status to be Failed, got %v", updatedStatus)
+	}
+	if !strings.Contains(updatedMsg, "storage offline") {
+		t.Fatalf("expected error message to contain 'storage offline', got %q", updatedMsg)
+	}
+}
+
 func TestRunLifecycleHookUpdatesSessionStateAndPersistenceCallbacks(t *testing.T) {
 	t.Parallel()
 

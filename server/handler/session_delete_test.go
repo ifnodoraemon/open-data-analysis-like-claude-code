@@ -232,6 +232,67 @@ func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionDoesNotDeleteSharedFiles(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := metadata.Open(root + "/metadata.db")
+	t.Cleanup(func() { _ = store.DB.Close() })
+
+	fRepo := sqliterepo.NewFileRepository(store.DB)
+	sRepo := sqliterepo.NewSessionRepository(store.DB)
+	fs := &service.FileService{
+		Storage:  localstorage.New(root+"/objects", ""),
+		FileRepo: fRepo,
+	}
+
+	_ = sRepo.Create(ctx, &domain.Session{
+		ID: "s_shared", WorkspaceID: "w_1", UserID: "u_1", Status: domain.SessionStatusActive,
+	})
+
+	sharedObj := putObject(t, ctx, fs.Storage, "workspaces/w_1/files/f_shared/data.csv", "1,2,3")
+	sharedFile := &domain.File{
+		ID:          "f_shared",
+		WorkspaceID: "w_1",
+		Visibility:  domain.FileVisibilityWorkspace, // Shared file
+		Status:      domain.FileStatusReady,
+		StorageKey:  sharedObj.Key,
+	}
+	_ = fRepo.Create(ctx, sharedFile)
+	_ = fRepo.AttachFilesToSession(ctx, "s_shared", []string{"f_shared"})
+
+	// Simulate deletion
+	record, _ := sRepo.GetByID(ctx, "s_shared")
+
+	// Temporarily patch globals for the scope of the test if needed,
+	// but deleteSessionResources uses globals. We must set them up.
+	prevFs := fileService
+	prevMs := metadataStore
+	fileService = fs
+	metadataStore = store
+	t.Cleanup(func() {
+		fileService = prevFs
+		metadataStore = prevMs
+	})
+
+	err := deleteSessionResources(ctx, *record)
+	if err != nil {
+		t.Fatalf("delete session resources: %v", err)
+	}
+
+	if _, err := sRepo.GetByID(ctx, "s_shared"); err == nil {
+		t.Fatal("expected session to be deleted")
+	}
+	if _, err := fRepo.GetByID(ctx, "f_shared"); err != nil {
+		t.Fatalf("expected shared file to remain in DB, got err: %v", err)
+	}
+	if exists, _ := fs.Storage.Exists(ctx, sharedObj.Key); !exists {
+		t.Fatal("expected shared object file to remain in object storage")
+	}
+}
+
 func putObject(t *testing.T, ctx context.Context, store storage.ObjectStorage, key, body string) *storage.StoredObject {
 	t.Helper()
 	obj, err := store.Put(ctx, storage.PutObjectRequest{

@@ -131,3 +131,32 @@ func TestSessionRuntimeVars(t *testing.T) {
 		t.Errorf("imperative hint should not be present in subgoals")
 	}
 }
+
+func TestSessionWaitingRunRecovery(t *testing.T) {
+	t.Parallel()
+
+	sess := &Session{
+		ID: "sess_waiting",
+		ActiveRun: &RunState{
+			RunID:  "run_waiting_1",
+			Status: "running",
+		},
+	}
+
+	sess.SuspendRun("run_waiting_1")
+
+	runID, isWaiting := sess.GetWaitingRunID()
+	if !isWaiting || runID != "run_waiting_1" {
+		t.Fatalf("expected waiting run run_waiting_1, got waiting=%t, id=%s", isWaiting, runID)
+	}
+
+	consumedRunID := sess.ConsumeWaitingRun()
+	if consumedRunID != "run_waiting_1" {
+		t.Fatalf("expected to consume run_waiting_1, got %s", consumedRunID)
+	}
+
+	runID, isWaiting = sess.GetWaitingRunID()
+	if isWaiting || runID != "" {
+		t.Fatalf("expected no waiting run after consume, got waiting=%t, id=%s", isWaiting, runID)
+	}
+}

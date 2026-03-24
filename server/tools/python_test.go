@@ -2,7 +2,11 @@ package tools
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestFormatPythonResultReturnsStructuredSuccess(t *testing.T) {
@@ -50,5 +54,34 @@ func TestFormatPythonResultReturnsStructuredFailure(t *testing.T) {
 	}
 	if payload["error_code"] != "execution_failed" {
 		t.Fatalf("unexpected error_code: %#v", payload["error_code"])
+	}
+}
+
+func TestRunPythonToolExecutionTimeout(t *testing.T) {
+	t.Parallel()
+
+	fakeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(7 * time.Second) // wait longer than the client timeout (1 + 5 = 6s)
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(fakeHandler)
+	t.Cleanup(func() { server.Close() })
+
+	tool := &RunPythonTool{
+		MCPEndpoint: server.URL,
+	}
+
+	start := time.Now()
+	_, err := tool.Execute(json.RawMessage(`{"code": "import time; time.sleep(10)", "timeout": 1}`))
+	dur := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected run to fail with a timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Python MCP 服务不可用") {
+		t.Fatalf("expected MCP unavailable error, got %v", err)
+	}
+	if dur > 8*time.Second {
+		t.Fatalf("expected tool to time out at around 6s, but it took %v", dur)
 	}
 }

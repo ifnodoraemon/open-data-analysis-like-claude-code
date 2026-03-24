@@ -737,8 +737,8 @@ func stripHistorySummaryFields(payload map[string]interface{}) map[string]interf
 const queryCompactRowThreshold = 20
 const queryCompactKeepRows = 10
 
-// compactQueryResult 为 data_query_sql 的大结果添加列统计摘要，不截断行数据。
-// 满足两个目标：保留完整数据供下游推理使用，同时提供统计摘要加速理解。
+// compactQueryResult 为 data_query_sql 的大结果添加列统计摘要，截断多余行数据。
+// 满足两个目标：提供统计摘要加速理解，同时截断数据降低上下文膨胀。
 func compactQueryResult(payload map[string]interface{}) string {
 	cloned := stripHistorySummaryFields(payload)
 
@@ -748,7 +748,7 @@ func compactQueryResult(payload map[string]interface{}) string {
 		return string(minified)
 	}
 
-	// 为数值列生成统计摘要（不截断行）
+	// 为数值列生成统计摘要
 	cloned["_row_count"] = len(rows)
 	if columns, ok := cloned["columns"].([]interface{}); ok && len(rows) > 0 {
 		stats := buildColumnStats(columns, rows)
@@ -756,6 +756,11 @@ func compactQueryResult(payload map[string]interface{}) string {
 			cloned["column_stats"] = stats
 		}
 	}
+
+	// 截断行数据，降低上下文膨胀
+	cloned["rows"] = rows[:queryCompactKeepRows]
+	cloned["_truncated"] = true
+	cloned["_note"] = "result truncated for history context; full result is saved in traces."
 
 	minified, _ := json.Marshal(cloned)
 	return string(minified)

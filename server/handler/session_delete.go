@@ -96,7 +96,9 @@ func buildSessionDeletionPlan(ctx context.Context, db *sql.DB, sessionID string)
 	sourceFileIDs, err := queryStrings(ctx, db, `
 		SELECT DISTINCT sf1.file_id
 		FROM session_files sf1
+		JOIN files f ON f.id = sf1.file_id
 		WHERE sf1.session_id = ?
+		  AND f.visibility = 'private'
 		  AND NOT EXISTS (
 		      SELECT 1 FROM session_files sf2 
 		      WHERE sf2.file_id = sf1.file_id AND sf2.session_id != ?
@@ -117,8 +119,10 @@ func buildSessionDeletionPlan(ctx context.Context, db *sql.DB, sessionID string)
 		SELECT DISTINCT storage_key
 		FROM files
 		WHERE id IN (
-			SELECT file_id FROM session_files sf1 
+			SELECT sf1.file_id FROM session_files sf1 
+			JOIN files f ON f.id = sf1.file_id
 			WHERE sf1.session_id = ? 
+			  AND f.visibility = 'private'
 			  AND NOT EXISTS (
 			      SELECT 1 FROM session_files sf2 
 			      WHERE sf2.file_id = sf1.file_id AND sf2.session_id != ?

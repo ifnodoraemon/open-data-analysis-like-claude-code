@@ -356,3 +356,27 @@ func TestRenderReportHTMLAllowsRepeatedChartReferences(t *testing.T) {
 		t.Fatalf("expected unique container ids for repeated chart references, got html: %s", html)
 	}
 }
+
+func TestRenderReportHTMLHistoricalSnapshotFallbackTitle(t *testing.T) {
+	t.Parallel()
+
+	// 模拟老版本遗留下的快照：Content 中没有 markdown heading，只有纯文本。
+	// 新版本的渲染必须兜底生成 <h2> 标题，否则 TOC 和正文中都找不到这块内容原来的名字。
+	html := RenderReportHTML("回归测试", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "old-block-1",
+				Kind:    "markdown",
+				Title:   "旧版分析模块",
+				Content: "这是一段没有内置 heading 的纯老版本快照文本。",
+			},
+		},
+	})
+
+	if !strings.Contains(html, "<h2>旧版分析模块</h2>") {
+		t.Fatalf("expected historical snapshot rendering regression test to synthesize h2 title from block.Title when content lacks one, got: %s", html)
+	}
+	if !strings.Contains(html, `<li><a href="#section-1">旧版分析模块</a></li>`) {
+		t.Fatalf("expected historical snapshot fallback title to appear in TOC, got: %s", html)
+	}
+}
