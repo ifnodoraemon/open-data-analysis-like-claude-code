@@ -35,11 +35,11 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 
 	sessions, err := sessionRepo.ListByUserWorkspace(r.Context(), identity.UserID, identity.WorkspaceID, 20)
 	if err != nil {
-		// 查询失败时记录日志并返回空列表，避免前端收到缺少字段的响应（无声失败）
 		log.Printf("bootstrap: list sessions error workspace_id=%s user_id=%s err=%v", identity.WorkspaceID, identity.UserID, err)
-		resp["sessions"] = []map[string]interface{}{}
-	} else {
-		respSessions := make([]map[string]interface{}, 0, len(sessions))
+		http.Error(w, "获取历史会话失败", http.StatusInternalServerError)
+		return
+	}
+	respSessions := make([]map[string]interface{}, 0, len(sessions))
 		for _, session := range sessions {
 			respSessions = append(respSessions, serializeSession(session))
 		}
@@ -49,21 +49,33 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 			latestSession := sessions[0]
 			resp["session"] = serializeSession(latestSession)
 			runs, err := runRepo.ListBySession(r.Context(), latestSession.ID, 20)
-			if err == nil {
-				resp["runs"] = serializeRuns(r.Context(), runs)
+			if err != nil {
+				log.Printf("bootstrap: list runs error session_id=%s err=%v", latestSession.ID, err)
+				http.Error(w, "获取运行记录失败", http.StatusInternalServerError)
+				return
 			}
+			resp["runs"] = serializeRuns(r.Context(), runs)
+
 			files, err := fileService.GetSessionFiles(r.Context(), latestSession.ID)
-			if err == nil {
-				respFiles := make([]map[string]interface{}, 0, len(files))
-				for _, file := range files {
-					respFiles = append(respFiles, serializeFile(file))
-				}
-				resp["files"] = respFiles
+			if err != nil {
+				log.Printf("bootstrap: get session files error session_id=%s err=%v", latestSession.ID, err)
+				http.Error(w, "获取会话文件失败", http.StatusInternalServerError)
+				return
 			}
+			respFiles := make([]map[string]interface{}, 0, len(files))
+			for _, file := range files {
+				respFiles = append(respFiles, serializeFile(file))
+			}
+			resp["files"] = respFiles
 			attachRuntimeState(r.Context(), resp, identity.WorkspaceID, identity.UserID, latestSession.ID)
 		} else {
 			session, createErr := ensureSession(r.Context(), identity)
-			if createErr == nil && session != nil {
+			if createErr != nil {
+				log.Printf("bootstrap: create session error workspace_id=%s err=%v", identity.WorkspaceID, createErr)
+				http.Error(w, "创建初始会话失败", http.StatusInternalServerError)
+				return
+			}
+			if session != nil {
 				resp["session"] = serializeSession(*session)
 				resp["sessions"] = []map[string]interface{}{serializeSession(*session)}
 				resp["files"] = []map[string]interface{}{}
@@ -71,7 +83,6 @@ func BootstrapHandler(w http.ResponseWriter, r *http.Request) {
 				attachRuntimeState(r.Context(), resp, identity.WorkspaceID, identity.UserID, session.ID)
 			}
 		}
-	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

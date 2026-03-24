@@ -119,11 +119,13 @@ export function sanitizeReportHTML(html) {
     const src = node.getAttribute('src') || ''
     const id = node.getAttribute('id') || ''
     const isSafeLoader = src.includes('echarts.min.js') && id === 'oda-echarts-loader'
-    const isSafeRuntime = !src && id === 'oda-chart-runtime'
+    const isSafeRuntime = !src && id === 'oda-chart-runtime' && node.textContent.includes('echarts.init(')
     if (!isSafeLoader && !isSafeRuntime) {
       node.remove()
-    } else if (isSafeRuntime) {
+    } else if (isSafeRuntime && !scriptSnapshots.has(id)) {
       scriptSnapshots.set(id, node.textContent)
+    } else if (isSafeRuntime) {
+      node.remove() // Only keep the first valid runtime script to prevent duplicate injection
     }
   })
 

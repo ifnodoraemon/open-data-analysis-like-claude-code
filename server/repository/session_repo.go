@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
@@ -13,5 +14,6 @@ type SessionRepository interface {
 	UpdateTitle(ctx context.Context, sessionID, title string) error
 	UpdateLastSeen(ctx context.Context, sessionID string) error
 	UpdateLastRun(ctx context.Context, sessionID, runID string) error
+	ListExpired(ctx context.Context, cutoff time.Time, limit int) ([]domain.Session, error)
 	Delete(ctx context.Context, sessionID string) error
 }

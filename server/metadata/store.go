@@ -141,7 +141,8 @@ func (s *Store) migrate() error {
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL,
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-			FOREIGN KEY (parent_run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
+			FOREIGN KEY (parent_run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE,
+			FOREIGN KEY (report_file_id) REFERENCES files(id) ON DELETE SET NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS reports (
 			id TEXT PRIMARY KEY,
@@ -163,6 +164,7 @@ func (s *Store) migrate() error {
 			workspace_id TEXT NOT NULL,
 			type TEXT NOT NULL,
 			name TEXT,
+			tool_call_id TEXT,
 			content TEXT NOT NULL,
 			success BOOLEAN,
 			duration INTEGER,
@@ -195,6 +197,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := ensureColumn(s.DB, "files", "purpose", "TEXT NOT NULL DEFAULT 'source'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.DB, "run_messages", "tool_call_id", "TEXT"); err != nil {
 		return err
 	}
 	if _, err := s.DB.Exec(`UPDATE files SET purpose = 'report' WHERE purpose = 'source' AND storage_key LIKE '%/report/%'`); err != nil {

@@ -47,25 +47,38 @@ var eventPersistQueue chan persistJob
 // startEventPersistWorker 开启后台持久化 goroutine，不影响实时事件推送。
 // 返回的 shutdown 函数会关闭队列并等待 goroutine 完全退出，用于测试和优雅关闭。
 func startEventPersistWorker() func() {
-	q := make(chan persistJob, 512)
+	q := make(chan persistJob, 4096)
 	eventPersistQueue = q
 	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for job := range q {
-			saveEventToDBSync(job.workspaceID, job.sessionID, job.runID, job.ev)
+		for {
+			select {
+			case <-ctx.Done():
+				// Drain the remaining jobs before exiting
+				for {
+					select {
+					case job := <-q:
+						saveEventToDBSync(job.workspaceID, job.sessionID, job.runID, job.ev)
+					default:
+						return
+					}
+				}
+			case job := <-q:
+				saveEventToDBSync(job.workspaceID, job.sessionID, job.runID, job.ev)
+			}
 		}
 	}()
+	
 	var once sync.Once
 	return func() {
-		// 使用 sync.Once 确保只关闭一次：
-		// 先将全局引用置 nil，令新的 saveEventToDB 调用直接丢弃，
-		// 再关闭底层 channel 以通知 worker 退出，最后等待其完成。
 		once.Do(func() {
-			eventPersistQueue = nil // 先置 nil，saveEventToDB 中读局部变量，不再写入
-			close(q)               // 必须 close 才能跳出 for range
-			wg.Wait()              // 等待 worker goroutine 完全退出
+			eventPersistQueue = nil // Stop accepting new jobs
+			cancel()                // Signal worker to drain and exit, but DO NOT close(q) to avoid panics on concurrent sends
+			wg.Wait()
 		})
 	}
 }
@@ -630,10 +643,18 @@ func saveEventToDBSync(workspaceID, sessionID, runID string, ev agent.WSEvent) {
 		msg.Content = string(argsBytes)
 	case agent.ToolCallData:
 		msg.Name = data.Name
+		if data.ID != "" {
+			id := data.ID
+			msg.ToolCallID = &id
+		}
 		argsBytes, _ := json.Marshal(data.Arguments)
 		msg.Content = string(argsBytes)
 	case agent.ToolResultData:
 		msg.Name = data.Name
+		if data.ID != "" {
+			id := data.ID
+			msg.ToolCallID = &id
+		}
 		msg.Content = string(data.Result)
 		msg.Duration = &data.Duration
 		success := data.Success

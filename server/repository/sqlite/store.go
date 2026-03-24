@@ -262,6 +262,33 @@ func (r *SessionRepository) ListByUserWorkspace(ctx context.Context, userID, wor
 	return sessions, rows.Err()
 }
 
+func (r *SessionRepository) ListExpired(ctx context.Context, cutoff time.Time, limit int) ([]domain.Session, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id, workspace_id, user_id, title, status, last_run_id, created_at, updated_at, last_seen_at FROM sessions WHERE last_seen_at < ? ORDER BY last_seen_at ASC LIMIT ?`, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []domain.Session
+	for rows.Next() {
+		var session domain.Session
+		var status string
+		var lastRun sql.NullString
+		if err := rows.Scan(&session.ID, &session.WorkspaceID, &session.UserID, &session.Title, &status, &lastRun, &session.CreatedAt, &session.UpdatedAt, &session.LastSeenAt); err != nil {
+			return nil, err
+		}
+		session.Status = domain.SessionStatus(status)
+		if lastRun.Valid {
+			session.LastRunID = &lastRun.String
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
 func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID, title string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?`, title, time.Now(), sessionID)
 	return err
@@ -430,15 +457,15 @@ func (r *RunRepository) BindReportFile(ctx context.Context, runID, reportFileID 
 
 func (r *MessageRepository) Create(ctx context.Context, msg *domain.RunMessage) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO run_messages (id, run_id, session_id, workspace_id, type, name, content, success, duration, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, msg.ID, msg.RunID, msg.SessionID, msg.WorkspaceID, msg.Type, msg.Name, msg.Content, msg.Success, msg.Duration, msg.CreatedAt)
+		INSERT INTO run_messages (id, run_id, session_id, workspace_id, type, name, tool_call_id, content, success, duration, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, msg.ID, msg.RunID, msg.SessionID, msg.WorkspaceID, msg.Type, msg.Name, msg.ToolCallID, msg.Content, msg.Success, msg.Duration, msg.CreatedAt)
 	return err
 }
 
 func (r *MessageRepository) ListByRun(ctx context.Context, runID string) ([]domain.RunMessage, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, run_id, session_id, workspace_id, type, name, content, success, duration, created_at
+		SELECT id, run_id, session_id, workspace_id, type, name, tool_call_id, content, success, duration, created_at
 		FROM run_messages
 		WHERE run_id = ?
 		ORDER BY created_at ASC
@@ -453,11 +480,16 @@ func (r *MessageRepository) ListByRun(ctx context.Context, runID string) ([]doma
 		var msg domain.RunMessage
 		var success sql.NullBool
 		var duration sql.NullInt64
+		var toolCallID sql.NullString
 		if err := rows.Scan(
 			&msg.ID, &msg.RunID, &msg.SessionID, &msg.WorkspaceID,
-			&msg.Type, &msg.Name, &msg.Content, &success, &duration, &msg.CreatedAt,
+			&msg.Type, &msg.Name, &toolCallID, &msg.Content, &success, &duration, &msg.CreatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if toolCallID.Valid {
+			t := toolCallID.String
+			msg.ToolCallID = &t
 		}
 		if success.Valid {
 			s := success.Bool
@@ -477,7 +509,7 @@ func (r *MessageRepository) ListRecentByRun(ctx context.Context, runID string, l
 		limit = 3
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, run_id, session_id, workspace_id, type, name, content, success, duration, created_at
+		SELECT id, run_id, session_id, workspace_id, type, name, tool_call_id, content, success, duration, created_at
 		FROM run_messages
 		WHERE run_id = ?
 		ORDER BY created_at DESC
@@ -493,11 +525,16 @@ func (r *MessageRepository) ListRecentByRun(ctx context.Context, runID string, l
 		var msg domain.RunMessage
 		var success sql.NullBool
 		var duration sql.NullInt64
+		var toolCallID sql.NullString
 		if err := rows.Scan(
 			&msg.ID, &msg.RunID, &msg.SessionID, &msg.WorkspaceID,
-			&msg.Type, &msg.Name, &msg.Content, &success, &duration, &msg.CreatedAt,
+			&msg.Type, &msg.Name, &toolCallID, &msg.Content, &success, &duration, &msg.CreatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if toolCallID.Valid {
+			t := toolCallID.String
+			msg.ToolCallID = &t
 		}
 		if success.Valid {
 			s := success.Bool

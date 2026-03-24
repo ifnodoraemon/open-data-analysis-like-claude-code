@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -55,7 +56,11 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeWorkspace := selectWorkspace(workspaces, req.WorkspaceID)
+	activeWorkspace, err := selectWorkspace(workspaces, req.WorkspaceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	identity := auth.Identity{
 		UserID:      user.ID,
 		UserName:    user.Name,
@@ -95,15 +100,16 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func selectWorkspace(workspaces []domain.Workspace, workspaceID string) domain.Workspace {
+func selectWorkspace(workspaces []domain.Workspace, workspaceID string) (domain.Workspace, error) {
 	if workspaceID != "" {
 		for _, workspace := range workspaces {
 			if workspace.ID == workspaceID {
-				return workspace
+				return workspace, nil
 			}
 		}
+		return domain.Workspace{}, fmt.Errorf("指定的工作区不存在或无权访问")
 	}
-	return workspaces[0]
+	return workspaces[0], nil
 }
 
 func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {

@@ -26,7 +26,7 @@ func (m *Manager) CleanupExpiredSessions(ttlHours int) int {
 	var candidates []string
 	for id, sess := range m.sessions {
 		sess.mu.Lock()
-		isIdle := sess.ActiveRun == nil || (sess.ActiveRun.Status != "running" && sess.ActiveRun.Status != "waiting_user_input")
+		isIdle := sess.ActiveRun == nil || sess.ActiveRun.Status != "running"
 		lastSeen := sess.LastSeenAt
 		sess.mu.Unlock()
 		if isIdle && lastSeen.Before(cutoff) {
@@ -42,7 +42,7 @@ func (m *Manager) CleanupExpiredSessions(ttlHours int) int {
 		sess, ok := m.sessions[id]
 		if ok {
 			sess.mu.Lock()
-			isStillIdle := sess.ActiveRun == nil || (sess.ActiveRun.Status != "running" && sess.ActiveRun.Status != "waiting_user_input")
+			isStillIdle := sess.ActiveRun == nil || sess.ActiveRun.Status != "running"
 			stillExpired := sess.LastSeenAt.Before(cutoff)
 			sess.mu.Unlock()
 			if !isStillIdle || !stillExpired {
@@ -85,6 +85,28 @@ func (m *Manager) CleanupExpiredSessions(ttlHours int) int {
 		m.mu.Unlock()
 		cleaned++
 	}
+
+	// 第四步：清理 DB 独占的过期会话（内存中未加载的会话）
+	if m.sessionRepo != nil && m.FullDeleteFunc != nil {
+		dbExpired, err := m.sessionRepo.ListExpired(context.Background(), cutoff, 100)
+		if err == nil {
+			for _, sess := range dbExpired {
+				m.mu.Lock()
+				_, inMem := m.sessions[sess.ID]
+				m.mu.Unlock()
+				if !inMem {
+					if err := m.FullDeleteFunc(context.Background(), sess.ID); err != nil {
+						log.Printf("cleanup: db-only session %s full-delete error: %v", sess.ID, err)
+					} else {
+						cleaned++
+					}
+				}
+			}
+		} else {
+			log.Printf("cleanup: list expired sessions error: %v", err)
+		}
+	}
+
 	return cleaned
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/storage"
@@ -20,14 +21,33 @@ type Storage struct {
 }
 
 func New(rootDir, baseURL string) *Storage {
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		absRoot = rootDir // fallback
+	}
 	return &Storage{
-		rootDir: rootDir,
+		rootDir: absRoot,
 		baseURL: baseURL,
 	}
 }
 
+func (s *Storage) resolvePath(key string) (string, error) {
+	cleanKey := filepath.Clean(filepath.FromSlash(key))
+	if strings.Contains(cleanKey, "..") {
+		return "", fmt.Errorf("非法的存储路径 (包含 ..): %s", key)
+	}
+	fullPath := filepath.Join(s.rootDir, cleanKey)
+	if !strings.HasPrefix(fullPath, s.rootDir) {
+		return "", fmt.Errorf("路径越界访问: %s", key)
+	}
+	return fullPath, nil
+}
+
 func (s *Storage) Put(ctx context.Context, req storage.PutObjectRequest) (*storage.StoredObject, error) {
-	fullPath := filepath.Join(s.rootDir, filepath.FromSlash(req.Key))
+	fullPath, err := s.resolvePath(req.Key)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return nil, fmt.Errorf("创建对象目录失败: %w", err)
 	}
@@ -54,7 +74,10 @@ func (s *Storage) Put(ctx context.Context, req storage.PutObjectRequest) (*stora
 }
 
 func (s *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	fullPath := filepath.Join(s.rootDir, filepath.FromSlash(key))
+	fullPath, err := s.resolvePath(key)
+	if err != nil {
+		return nil, err
+	}
 	file, err := os.Open(fullPath)
 	if err != nil {
 		return nil, fmt.Errorf("打开对象失败: %w", err)
@@ -63,7 +86,10 @@ func (s *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (s *Storage) Delete(ctx context.Context, key string) error {
-	fullPath := filepath.Join(s.rootDir, filepath.FromSlash(key))
+	fullPath, err := s.resolvePath(key)
+	if err != nil {
+		return err // 对于非法路径，直接返回错误或视为不出错
+	}
 	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("删除对象失败: %w", err)
 	}
@@ -71,8 +97,11 @@ func (s *Storage) Delete(ctx context.Context, key string) error {
 }
 
 func (s *Storage) Exists(ctx context.Context, key string) (bool, error) {
-	fullPath := filepath.Join(s.rootDir, filepath.FromSlash(key))
-	_, err := os.Stat(fullPath)
+	fullPath, err := s.resolvePath(key)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(fullPath)
 	if err == nil {
 		return true, nil
 	}

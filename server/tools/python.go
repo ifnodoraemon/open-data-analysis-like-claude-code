@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -110,6 +111,14 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 	var result pyExecResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("解析 Python 执行结果失败: %w", err)
+	}
+
+	apiBaseURL := strings.TrimRight(os.Getenv("API_BASE_URL"), "/")
+	if apiBaseURL == "" {
+		apiBaseURL = "http://localhost:8080"
+	}
+	for i, f := range result.Files {
+		result.Files[i] = fmt.Sprintf("%s/api/python-files/%s", apiBaseURL, f)
 	}
 
 	return formatPythonResult(result), nil

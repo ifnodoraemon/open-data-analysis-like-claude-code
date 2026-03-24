@@ -13,8 +13,10 @@ func ConvertReportDOCXHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req request
+	
+	r.Body = http.MaxBytesReader(w, r.Body, 5*1024*1024)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "无效的导出请求", http.StatusBadRequest)
+		http.Error(w, "无效的导出请求或请求体过大", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.HTML) == "" {

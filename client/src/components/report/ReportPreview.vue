@@ -52,7 +52,7 @@
         ref="reportFrame"
         :src="reportURL"
         class="report-iframe"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts"
         @load="handleFrameLoad"
       ></iframe>
       <pre v-else class="source-code">{{ sanitizedReportHTML }}</pre>
@@ -78,6 +78,7 @@ const reportURL = ref('')
 const reportFrame = ref(null)
 const showExportMenu = ref(false)
 const selectedBlockId = ref('')
+const selectedFragmentIndex = ref('')
 const selectedBlockLabel = ref('')
 const selectedBlockText = ref('')
 const regenerateInstruction = ref('')
@@ -130,6 +131,7 @@ const canRegenerate = computed(() => selectedBlockId.value && regenerateInstruct
 
 function clearSelection() {
   selectedBlockId.value = ''
+  selectedFragmentIndex.value = ''
   selectedBlockLabel.value = ''
   selectedBlockText.value = ''
   regenerateInstruction.value = ''
@@ -138,8 +140,8 @@ function clearSelection() {
 
 function handleFrameLoad() {
   decorateFrameBlocks()
-  if (selectedBlockId.value) {
-    applySelectionHighlight(selectedBlockId.value)
+  if (selectedFragmentIndex.value) {
+    applySelectionHighlight(selectedFragmentIndex.value)
   }
 }
 
@@ -148,9 +150,10 @@ function decorateFrameBlocks() {
   if (!doc) return
 
   ensureFrameStyles(doc)
-  doc.querySelectorAll('[data-block-id]').forEach((node) => {
+  doc.querySelectorAll('[data-block-id]').forEach((node, idx) => {
     if (node.dataset.codexBound === '1') return
     node.dataset.codexBound = '1'
+    node.dataset.fragmentIndex = String(idx)
     node.classList.add('report-block-selectable')
     node.addEventListener('click', handleBlockClick)
   })
@@ -185,13 +188,12 @@ function handleBlockClick(event) {
   const blockId = block?.dataset?.blockId || ''
   if (!blockId) return
 
-  const doc = block.ownerDocument
-  const fragments = Array.from(doc.querySelectorAll(`[data-block-id="${blockId}"]`))
-
+  const fragmentIdx = block?.dataset?.fragmentIndex || ''
   selectedBlockId.value = blockId
-  selectedBlockLabel.value = extractBlockLabel(fragments[0])
-  selectedBlockText.value = fragments.map(n => n.textContent?.trim()).filter(Boolean).join('\n\n')
-  applySelectionHighlight(blockId)
+  selectedFragmentIndex.value = fragmentIdx
+  selectedBlockLabel.value = extractBlockLabel(block)
+  selectedBlockText.value = block.textContent?.trim() || ''
+  applySelectionHighlight(fragmentIdx)
 }
 
 function extractBlockLabel(block) {
@@ -200,11 +202,11 @@ function extractBlockLabel(block) {
   return headingText || block.dataset.blockTitle || block.dataset.blockId || '未命名段落'
 }
 
-function applySelectionHighlight(blockId) {
+function applySelectionHighlight(fragmentIdx) {
   const doc = reportFrame.value?.contentWindow?.document
   if (!doc) return
   doc.querySelectorAll('[data-block-id]').forEach((node) => {
-    node.classList.toggle('report-block-selected', node.dataset.blockId === blockId)
+    node.classList.toggle('report-block-selected', node.dataset.fragmentIndex === fragmentIdx && fragmentIdx !== '')
   })
 }
 

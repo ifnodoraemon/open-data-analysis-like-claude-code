@@ -111,6 +111,7 @@ create table run_messages (
   workspace_id varchar(64) not null references workspaces(id),
   type varchar(64) not null,
   name varchar(255),
+  tool_call_id varchar(128),
   content text not null,
   success boolean,
   duration bigint,

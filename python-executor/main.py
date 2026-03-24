@@ -251,8 +251,13 @@ def execute_code(req: ExecuteRequest):
 
 
 @app.get("/files/{filename}")
-def get_file(filename: str):
+def get_file(filename: str, request: Request):
     """获取生成的文件"""
+    token = request.headers.get("X-Proxy-Token")
+    expected_token = os.environ.get("PROXY_TOKEN", "internal-secret-token")
+    if token != expected_token:
+        raise HTTPException(403, "Forbidden: Missing or invalid proxy token")
+        
     filepath = WORK_DIR / filename
     if not filepath.exists():
         raise HTTPException(404, f"File not found: {filename}")

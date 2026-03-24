@@ -48,8 +48,11 @@ func TestRenderReportHTMLUsesContentHeadingAsCanonicalSectionTitle(t *testing.T)
 	if strings.Contains(html, "<h2>销售分布与区域表现</h2>") {
 		t.Fatalf("expected markdown block not to render synthetic h2 heading, got: %s", html)
 	}
-	if !strings.Contains(html, `<div class="section" id="section-1" data-block-id="analysis-1" data-block-kind="markdown" data-block-title="2. 销售分布与区域表现">`) {
+	if !strings.Contains(html, `<div class="report-block-wrapper" data-block-id="analysis-1" data-block-kind="markdown" data-block-title="2. 销售分布与区域表现">`) {
 		t.Fatalf("expected block title metadata to remain on wrapper, got: %s", html)
+	}
+	if strings.Contains(html, `class="section" id="section-1" data-block-id`) {
+		t.Fatalf("expected section not to duplicate data-block attributes, got: %s", html)
 	}
 }
 
@@ -102,8 +105,8 @@ func TestRenderReportHTMLSplitsMarkdownBlockByTopLevelHeadings(t *testing.T) {
 	if !strings.Contains(html, `<li><a href="#section-2">七、结论</a></li>`) {
 		t.Fatalf("expected conclusion section in toc, got: %s", html)
 	}
-	if strings.Count(html, `data-block-id="blk_recommendations"`) != 2 {
-		t.Fatalf("expected one markdown block to split into two rendered sections, got: %s", html)
+	if strings.Count(html, `data-block-id="blk_recommendations"`) != 1 {
+		t.Fatalf("expected one wrapper block capturing the split sections, got: %s", html)
 	}
 	if !strings.Contains(html, `class="section conclusion"`) {
 		t.Fatalf("expected conclusion fragment to use conclusion preset, got: %s", html)

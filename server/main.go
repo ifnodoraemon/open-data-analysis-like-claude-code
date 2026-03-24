@@ -49,6 +49,7 @@ func main() {
 		protected.Get("/api/runs/{runID}", handler.GetRunHandler)
 		protected.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)
 		protected.Post("/api/report-exports/docx", handler.ConvertReportDOCXHandler)
+		protected.Get("/api/python-files/{filename}", handler.ProxyPythonFileHandler)
 		protected.Post("/api/upload", handler.UploadHandler)
 		protected.Get("/ws", handler.WSHandler)
 	})

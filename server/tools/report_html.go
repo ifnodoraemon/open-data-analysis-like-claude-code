@@ -53,17 +53,42 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	var bodyHTML strings.Builder
 	chapterNum := 0
 
+	var lastBlockID string
+	var wrapperOpen bool
+
 	for _, unit := range units {
 		block := unit.Block
 		if isTitleBlock(block) {
 			continue
 		}
+
+		if block.ID != lastBlockID {
+			if wrapperOpen {
+				bodyHTML.WriteString("</div>\n")
+			}
+			blockKind := strings.ToLower(strings.TrimSpace(block.Kind))
+			if blockKind == "" {
+				blockKind = "markdown" // Default
+			}
+			wrapperTitle := blockDisplayTitle(block)
+			bodyHTML.WriteString(fmt.Sprintf(`<div class="report-block-wrapper" data-block-id="%s" data-block-kind="%s" data-block-title="%s">`+"\n",
+				escapeHTMLAttr(block.ID),
+				escapeHTMLAttr(blockKind),
+				escapeHTMLAttr(wrapperTitle)))
+			wrapperOpen = true
+			lastBlockID = block.ID
+		}
+
 		chapterNum++
 		displayTitle := blockDisplayTitle(block)
 		if displayTitle != "" {
 			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, escapeHTMLText(displayTitle)))
 		}
 		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts, unit.AttachedCharts))
+	}
+
+	if wrapperOpen {
+		bodyHTML.WriteString("</div>\n")
 	}
 
 	chartScripts := buildChartScripts(state.Charts)
@@ -596,9 +621,9 @@ func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartDa
 	contentHTML := headingHTML + processContent(block.Content, charts) + renderAttachedChartsInline(attachedCharts, charts)
 
 	return fmt.Sprintf(`
-		<div class="%s" id="section-%d" data-block-id="%s" data-block-kind="%s" data-block-title="%s">
+		<div class="%s" id="section-%d">
 			<div class="%s">%s</div>
-		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(strings.ToLower(strings.TrimSpace(block.Kind))), escapeHTMLAttr(displayTitle), escapeHTMLAttr(preset.bodyClass), contentHTML)
+		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(preset.bodyClass), contentHTML)
 }
 
 func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
@@ -635,9 +660,9 @@ func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData, atta
 
 	contentHTML := headingHTML + sanitizeHTMLFragment(block.Content) + renderAttachedChartsInline(attachedCharts, charts)
 	return fmt.Sprintf(`
-		<div class="section html-block" id="section-%d" data-block-id="%s" data-block-kind="html" data-block-title="%s">
+		<div class="section html-block" id="section-%d">
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(displayTitle), contentHTML)
+		</div>`, chapterNum, contentHTML)
 }
 
 func renderHTMLBlockStandalone(block ReportBlock, chapterNum int, charts []ChartData) string {
@@ -655,10 +680,10 @@ func renderChartBlockHTML(block ReportBlock, chapterNum int, charts []ChartData)
 		headingHTML = fmt.Sprintf("<h2>%s</h2>", escapeHTMLText(title))
 	}
 	return fmt.Sprintf(`
-		<div class="section chart-block" id="section-%d" data-block-id="%s" data-block-kind="chart" data-block-title="%s">
+		<div class="section chart-block" id="section-%d">
 			%s
 			<div class="content">%s</div>
-		</div>`, chapterNum, escapeHTMLAttr(block.ID), escapeHTMLAttr(title), headingHTML, processContent(content, charts))
+		</div>`, chapterNum, headingHTML, processContent(content, charts))
 }
 
 func renderAttachedChartsInline(attachedCharts []ReportBlock, charts []ChartData) string {
