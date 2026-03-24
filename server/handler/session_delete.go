@@ -80,6 +80,8 @@ func deleteSessionResources(ctx context.Context, session domain.Session) error {
 			log.Printf("stop in-memory session failed session_id=%s err=%v", session.ID, err)
 		}
 	}
+	
+	CloseSessionWebSockets(session.ID)
 
 	// The storage deletion was already done above before tx.Commit.
 	if sessionManager != nil {

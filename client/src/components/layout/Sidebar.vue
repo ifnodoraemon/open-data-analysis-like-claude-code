@@ -71,7 +71,7 @@
       <div class="user-profile">
         <div class="avatar">{{ userInitial }}</div>
         <div class="user-info">
-          <span class="user-name">{{ store.user?.username || store.user?.email || 'User' }}</span>
+          <span class="user-name">{{ store.user?.name || store.user?.username || store.user?.email || 'User' }}</span>
           <div class="status-indicator">
             <span class="dot" :class="connected ? 'online' : 'offline'"></span>
             <span class="text">{{ statusText }}</span>
@@ -105,7 +105,7 @@ const editInput = ref(null)
 
 // Computed user initials
 const userInitial = computed(() => {
-  const name = store.user?.username || store.user?.email || 'U'
+  const name = store.user?.name || store.user?.username || store.user?.email || 'U'
   return name.charAt(0).toUpperCase()
 })
 

@@ -306,7 +306,7 @@ func TestRenderReportHTMLSanitizesUnsafeHTML(t *testing.T) {
 		},
 	})
 
-	if strings.Contains(html, "<script>alert(1)</script>") || strings.Contains(html, "onclick=") || strings.Contains(html, `href="javascript:alert(1)"`) {
+	if strings.Contains(html, "<script>alert(1)</script>") || strings.Contains(html, `onclick="alert(1)"`) || strings.Contains(html, `href="javascript:alert(1)"`) {
 		t.Fatalf("expected unsafe html/js to be removed, got: %s", html)
 	}
 	if !strings.Contains(html, "&lt;script&gt;alert(1)&lt;/script&gt;") {

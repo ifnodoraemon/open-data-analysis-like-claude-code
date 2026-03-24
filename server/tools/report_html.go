@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	htmlstd "html"
@@ -21,6 +22,9 @@ var (
 	mdHeadingRegexp   = regexp.MustCompile(`(?m)^\s*(?:#{1,6})\s+(.+?)(?:\r?\n|$)`)
 	renderTokenRegexp = regexp.MustCompile(`[a-z0-9]+`)
 )
+
+//go:embed assets/echarts.min.js
+var echartsMinJS string
 
 func ResolveReportTitleFromState(state *ReportState) string {
 	if state == nil {
@@ -118,9 +122,13 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		customCSSBlock = "\n" + customCSS + "\n"
 	}
 
-	echartsUrl := "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"
+	echartsScriptNode := ""
 	if config.Cfg != nil && config.Cfg.ReportEchartsUrl != "" {
-		echartsUrl = config.Cfg.ReportEchartsUrl
+		echartsScriptNode = fmt.Sprintf(`<script id="oda-echarts-loader" src="%s"></script>`, escapeHTMLAttr(config.Cfg.ReportEchartsUrl))
+	} else if len(echartsMinJS) > 0 {
+		echartsScriptNode = fmt.Sprintf(`<script id="oda-echarts-loader">%s</script>`, echartsMinJS)
+	} else {
+		echartsScriptNode = `<script id="oda-echarts-loader" src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>`
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -427,7 +435,7 @@ strong { color: var(--primary); font-weight: 600; }
 }
 %s
 </style>
-<script id="oda-echarts-loader" src="%s"></script>
+%s
 </head>
 <body class="%s">
 %s
@@ -438,7 +446,7 @@ strong { color: var(--primary); font-weight: 600; }
 </div>
 %s
 </body>
-</html>`, safeTitle, customCSSBlock, echartsUrl, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), safeDate, chartScripts)
+</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), safeDate, chartScripts)
 }
 
 type reportShellData struct {

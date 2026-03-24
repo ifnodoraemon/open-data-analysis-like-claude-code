@@ -58,8 +58,11 @@ export function useWebSocket() {
 
     const latestRun = (runs || [])[0]
     store.setSelectedRun(latestRun?.id || '')
-    if (latestRun?.status === 'running' || latestRun?.status === 'waiting_user_input') {
+    if (latestRun?.status === 'running') {
       store.startRun(latestRun.id)
+    } else if (latestRun?.status === 'waiting_user_input') {
+      store.startRun(latestRun.id)
+      store.setRunning(false)
     } else {
       store.finishRun()
       store.setSelectedRun(latestRun?.id || '')
@@ -101,7 +104,7 @@ export function useWebSocket() {
       latestRun = session?.latestRun || null
     }
     store.updateReport('')
-    if (latestRun?.reportFileId || latestRun?.report) {
+    if (latestRun?.runKind === 'report' || latestRun?.reportFileId || latestRun?.report) {
       await tryLoadRunReport(latestRun.id)
     }
   }
@@ -188,7 +191,7 @@ export function useWebSocket() {
     const latestRun = applySessionState(data.session?.id || '', data.files || [], data.runs || [], data.runtimeState)
     store.updateReport('')
     try {
-      if (latestRun?.reportFileId || latestRun?.report) {
+      if (latestRun?.runKind === 'report' || latestRun?.reportFileId || latestRun?.report) {
         await tryLoadRunReport(latestRun.id)
       }
     } finally {
@@ -230,7 +233,7 @@ export function useWebSocket() {
               arguments: msg.type === 'tool_call' ? parsedArgs : undefined,
               question: msg.type === 'user_request_input' ? parsedArgs?.question : undefined,
               options: msg.type === 'user_request_input' ? parsedArgs?.options : undefined,
-              allow_multiple: msg.type === 'user_request_input' ? parsedArgs?.allow_multiple : undefined,
+              allow_multiple: msg.type === 'user_request_input' ? (parsedArgs?.allow_multiple || false) : undefined,
               result: msg.type === 'tool_result' ? msg.content : undefined,
               parsedResult: parsedResult,
               duration: msg.duration,
@@ -269,6 +272,7 @@ export function useWebSocket() {
     if (store.sessionId) params.set('session_id', store.sessionId)
     if (store.workspace?.id) params.set('workspace_id', store.workspace.id)
     const sessionQuery = params.toString() ? `?${params.toString()}` : ''
+    // Issue 27: Ensure token is correctly passed in custom sub-protocols without exposing it in URL query
     const url = `${protocol}//${location.host}/ws${sessionQuery}`
     const socket = new WebSocket(url, ['mcp-token', store.token])
     wsInstance = socket
@@ -369,9 +373,10 @@ export function useWebSocket() {
         store.setSession(event.data.sessionId)
         store.replaceFiles(event.data.files || [])
         applyRuntimeState(event.data)
+        const existingSession = store.sessions.find(s => s.id === event.data.sessionId)
         store.upsertSession({
           id: event.data.sessionId,
-          title: '未命名分析',
+          title: event.data.title || existingSession?.title || '未命名分析',
           lastSeenAt: new Date().toISOString(),
         })
         break
@@ -456,8 +461,11 @@ export function useWebSocket() {
             updatedAt: new Date().toISOString(),
           })
         }
+        const run = store.getRun(event.runId)
         if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
-          store.addMessage({ type: 'complete', content: event.data.summary })
+          if (run?.runKind !== 'report') {
+            store.addMessage({ type: 'complete', content: event.data.summary })
+          }
         }
         store.finishRun(event.runId)
         break
@@ -503,18 +511,31 @@ export function useWebSocket() {
         }
         // 挂起状态，将提问显示到信息流中
         store.setRunning(false)
+        if (event.runId) {
+          store.patchRun(event.runId, {
+            status: 'waiting_user_input',
+            updatedAt: new Date().toISOString()
+          })
+        }
         store.addMessage({
           type: 'user_request_input',
           question: event.data.question,
           options: event.data.options,
+          allow_multiple: event.data.allow_multiple || false,
         })
         break
       case 'state_subgoals_updated':
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) {
+          break
+        }
         if (event.data && event.data.goals) {
           store.setSubgoals(event.data.goals)
         }
         break
       case 'state_memory_updated':
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) {
+          break
+        }
         if (event.data && event.data.facts) {
           store.setMemoryFacts(event.data.facts)
         }

@@ -17,7 +17,7 @@
     <div class="input-row">
       <label class="upload-btn" :class="{ disabled: isUploading }" title="上传数据文件">
         📁
-        <input type="file" accept=".csv,.xlsx,.xls,.json" @change="handleFile" :disabled="isUploading" hidden />
+        <input type="file" accept=".csv,.xlsx,.xls" @change="handleFile" :disabled="isUploading" hidden />
       </label>
       <textarea
         v-model="input"

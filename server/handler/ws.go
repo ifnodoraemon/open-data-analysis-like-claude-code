@@ -32,6 +32,50 @@ var upgrader = websocket.Upgrader{
 
 const persistenceTimeout = 10 * time.Second
 
+var (
+	wsConnsMu sync.Mutex
+	wsConns   = make(map[string]map[*websocket.Conn]context.CancelFunc)
+)
+
+func registerWS(sessionID string, conn *websocket.Conn) context.CancelFunc {
+	wsConnsMu.Lock()
+	defer wsConnsMu.Unlock()
+	if wsConns[sessionID] == nil {
+		wsConns[sessionID] = make(map[*websocket.Conn]context.CancelFunc)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	_ = ctx
+	wsConns[sessionID][conn] = cancel
+	return cancel
+}
+
+func unregisterWS(sessionID string, conn *websocket.Conn) {
+	wsConnsMu.Lock()
+	defer wsConnsMu.Unlock()
+	if m, ok := wsConns[sessionID]; ok {
+		if cancel, exists := m[conn]; exists {
+			cancel()
+			delete(m, conn)
+		}
+		if len(m) == 0 {
+			delete(wsConns, sessionID)
+		}
+	}
+}
+
+// CloseSessionWebSockets forces immediate disconnection of all active websockets tied to a session.
+func CloseSessionWebSockets(sessionID string) {
+	wsConnsMu.Lock()
+	defer wsConnsMu.Unlock()
+	if m, ok := wsConns[sessionID]; ok {
+		for conn, cancel := range m {
+			cancel()
+			conn.Close()
+		}
+		delete(wsConns, sessionID)
+	}
+}
+
 // persistJob 异步事件持久化任务
 type persistJob struct {
 	workspaceID string
@@ -329,7 +373,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("ws connected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
-	defer log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
+	_ = registerWS(sess.ID, conn)
+	defer func() {
+		unregisterWS(sess.ID, conn)
+		log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
+	}()
 
 	memory, subgoals := sess.RuntimeState()
 	requestCtx := detachedContext(r.Context())

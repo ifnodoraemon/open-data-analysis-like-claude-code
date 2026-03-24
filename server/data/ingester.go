@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"regexp"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -155,8 +156,15 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 
 	colCount := len(headers)
 	sanitizedHeaders := make([]string, colCount)
+	seenCols := make(map[string]int)
 	for i, h := range headers {
-		sanitizedHeaders[i] = sanitizeColumnName(h)
+		base := sanitizeColumnName(h)
+		finalName := base
+		if count := seenCols[base]; count > 0 {
+			finalName = fmt.Sprintf("%s_%d", base, count)
+		}
+		seenCols[base]++
+		sanitizedHeaders[i] = finalName
 	}
 
 	// 读取部分数据进行类型推断（最多扫描 500 行）
@@ -180,6 +188,13 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
 		return 0, 0, err
 	}
+
+	success := false
+	defer func() {
+		if !success {
+			_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
+		}
+	}()
 
 	// 插入已经读出的 sample 行
 	rowCount := 0
@@ -228,6 +243,7 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	// 如果配置了 LLM enricher，自动触发语义分析（失败不阻塞导入）
 	ing.tryEnrichAfterImport(tableName)
 
+	success = true
 	return rowCount, colCount, nil
 }
 
@@ -262,8 +278,15 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	}
 
 	sanitizedHeaders := make([]string, colCount)
+	seenColsExcel := make(map[string]int)
 	for i, h := range headers {
-		sanitizedHeaders[i] = sanitizeColumnName(h)
+		base := sanitizeColumnName(h)
+		finalName := base
+		if count := seenColsExcel[base]; count > 0 {
+			finalName = fmt.Sprintf("%s_%d", base, count)
+		}
+		seenColsExcel[base]++
+		sanitizedHeaders[i] = finalName
 	}
 
 	// 明确产品上限：最多支持 10 万行
@@ -300,6 +323,13 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
 		return 0, 0, err
 	}
+
+	success := false
+	defer func() {
+		if !success {
+			_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
+		}
+	}()
 
 	// 插入已经读出的 sample 行
 	rowCount := 0
@@ -352,6 +382,7 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	// 如果配置了 LLM enricher，自动触发语义分析（失败不阻塞导入）
 	ing.tryEnrichAfterImport(tableName)
 
+	success = true
 	return rowCount, colCount, nil
 }
 
@@ -512,11 +543,20 @@ func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types 
 	return tx.Commit()
 }
 
+var invalidSQLIdent = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
 // sanitizeTableName 清理表名
 func sanitizeTableName(name string) string {
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	return strings.ToLower(name)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "table"
+	}
+	name = invalidSQLIdent.ReplaceAllString(name, "_")
+	name = strings.ToLower(name)
+	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+		name = "t_" + name
+	}
+	return name
 }
 
 // sanitizeColumnName 清理列名
@@ -525,9 +565,12 @@ func sanitizeColumnName(name string) string {
 	if name == "" {
 		name = "unnamed"
 	}
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	return strings.ToLower(name)
+	name = invalidSQLIdent.ReplaceAllString(name, "_")
+	name = strings.ToLower(name)
+	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+		name = "c_" + name
+	}
+	return name
 }
 
 // ensureMetadataTable 确保 _oda_table_metadata 表存在，使用新的分层结构
