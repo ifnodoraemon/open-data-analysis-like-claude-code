@@ -35,7 +35,7 @@ func TestCompactQueryResult_SmallResult(t *testing.T) {
 }
 
 func TestCompactQueryResult_LargeResult(t *testing.T) {
-	// 生成 50 行结果
+	// 生成 50 行结果（超过 queryCompactRowThreshold=20）
 	rows := make([]interface{}, 50)
 	for i := range rows {
 		rows[i] = map[string]interface{}{
@@ -62,13 +62,18 @@ func TestCompactQueryResult_LargeResult(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// 不应截断行
+	// 应截断到 queryCompactKeepRows (10) 行
 	resultRows := decoded["rows"].([]interface{})
-	if len(resultRows) != 50 {
-		t.Fatalf("expected all 50 rows preserved, got %d", len(resultRows))
+	if len(resultRows) != queryCompactKeepRows {
+		t.Fatalf("expected rows truncated to %d, got %d", queryCompactKeepRows, len(resultRows))
 	}
 
-	// 应有 _row_count
+	// 应标记 _truncated
+	if decoded["_truncated"] != true {
+		t.Fatal("expected _truncated=true for large result")
+	}
+
+	// 应有 _row_count 记录原始行数
 	if decoded["_row_count"] != float64(50) {
 		t.Fatalf("expected _row_count=50, got %v", decoded["_row_count"])
 	}

@@ -280,6 +280,7 @@ func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu 
 
 func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) error {
 	finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
+	var finalReportFileID string
 	err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
 		reportFile, err := fileService.SaveReportHTML(persistCtx, service.SaveReportInput{
 			UserID:      identity.UserID,
@@ -297,6 +298,7 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 		if err := runRepo.BindReportFile(persistCtx, runID, reportFile.ID); err != nil {
 			return err
 		}
+		finalReportFileID = reportFile.ID
 		log.Printf("report saved run_id=%s session_id=%s file_id=%s size_bytes=%d", runID, sess.ID, reportFile.ID, reportFile.SizeBytes)
 		return nil
 	})
@@ -317,8 +319,9 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 	finalEv := agent.WSEvent{
 		Type: agent.EventReportFinal,
 		Data: agent.ReportUpdateData{
-			HTML:  finalHTML,
-			Title: strings.TrimSpace(sess.ReportState.FinalTitle),
+			HTML:         finalHTML,
+			Title:        strings.TrimSpace(sess.ReportState.FinalTitle),
+			ReportFileID: finalReportFileID,
 		},
 	}
 	sendSessionEvent(conn, writeMu, sess.ID, runID, finalEv)

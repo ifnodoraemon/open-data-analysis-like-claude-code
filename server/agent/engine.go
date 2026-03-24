@@ -297,9 +297,16 @@ func buildHistoryDigest(existing string, messages []ConversationItem) string {
 	}
 
 	// 拼接：existing digest（已有摘要）在前，新 bullets 在后
+	// 注意：此函数返回纯 digest 内容（不含 historyDigestPrefix），
+	// 由调用方在注入 RuntimeContext 时统一添加前缀，避免“摘要包摘要”的前缀累积。
 	parts := make([]string, 0, 2)
 	if trimmed := strings.TrimSpace(existing); trimmed != "" {
-		parts = append(parts, trimmed)
+		// 已有摘要可能带有前缀（来自旧版本），统一剥离
+		trimmed = strings.TrimPrefix(trimmed, historyDigestPrefix)
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed != "" {
+			parts = append(parts, trimmed)
+		}
 	}
 	if len(bullets) > 0 {
 		parts = append(parts, strings.Join(bullets, "\n"))
@@ -307,7 +314,7 @@ func buildHistoryDigest(existing string, messages []ConversationItem) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return historyDigestPrefix + "\n" + strings.Join(parts, "\n")
+	return strings.Join(parts, "\n")
 }
 
 func (e *Engine) compactMessagesLocked(promptTokens int) {
@@ -421,10 +428,14 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			bundle.RuntimeContext = append(bundle.RuntimeContext, getRuntimeVars()...)
 		}
 		if e.contextDigest != "" {
-			bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{
-				Name:    "digest",
-				Content: historyDigestPrefix + "\n" + e.contextDigest,
-			})
+			digestBody := strings.TrimPrefix(strings.TrimSpace(e.contextDigest), historyDigestPrefix)
+			digestBody = strings.TrimSpace(digestBody)
+			if digestBody != "" {
+				bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{
+					Name:    "digest",
+					Content: historyDigestPrefix + "\n" + digestBody,
+				})
+			}
 		}
 		bundle.History = append([]ConversationItem(nil), e.history...)
 		e.mu.Unlock()

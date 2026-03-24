@@ -15,7 +15,7 @@ func TestPolicyPromptIncludesGuardrails(t *testing.T) {
 	if !strings.Contains(prompt, "字段映射") {
 		t.Fatalf("expected field-mapping ambiguity to be covered, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "report_finalize") {
+	if !strings.Contains(prompt, "经过 finalize 的内容才可交付") {
 		t.Fatalf("expected finalize guardrail in prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "working memory") {

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,7 +65,15 @@ func TestRunPythonToolExecutionTimeout(t *testing.T) {
 		time.Sleep(7 * time.Second) // wait longer than the client timeout (1 + 5 = 6s)
 		w.WriteHeader(http.StatusOK)
 	})
-	server := httptest.NewServer(fakeHandler)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("skipping network-dependent test due to inability to bind port: %v", err)
+	}
+
+	server := httptest.NewUnstartedServer(fakeHandler)
+	server.Listener = l
+	server.Start()
 	t.Cleanup(func() { server.Close() })
 
 	tool := &RunPythonTool{
@@ -72,7 +81,7 @@ func TestRunPythonToolExecutionTimeout(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := tool.Execute(json.RawMessage(`{"code": "import time; time.sleep(10)", "timeout": 1}`))
+	_, err = tool.Execute(json.RawMessage(`{"code": "import time; time.sleep(10)", "timeout": 1}`))
 	dur := time.Since(start)
 
 	if err == nil {

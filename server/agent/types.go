@@ -124,9 +124,10 @@ type ChildRunsUpdatedData struct {
 
 // ReportUpdateData 研报更新事件
 type ReportUpdateData struct {
-	HTML      string `json:"html"`
-	SectionID string `json:"sectionId,omitempty"`
-	Title     string `json:"title,omitempty"`
+	HTML         string `json:"html"`
+	SectionID    string `json:"sectionId,omitempty"`
+	Title        string `json:"title,omitempty"`
+	ReportFileID string `json:"reportFileId,omitempty"`
 }
 
 // ErrorData 错误事件

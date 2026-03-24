@@ -446,6 +446,11 @@ export function useWebSocket() {
             lastSeenAt: new Date().toISOString(),
           })
         }
+        if (event.data.reportFileId && event.runId) {
+          if (!store.patchRun(event.runId, { reportFileId: event.data.reportFileId })) {
+             store.upsertRun({ id: event.runId, reportFileId: event.data.reportFileId })
+          }
+        }
         store.addMessage({ type: 'complete', content: '✅ 研究报告已生成完成，可点击右上角导出。' })
         break
       case 'run_completed':
@@ -463,7 +468,7 @@ export function useWebSocket() {
         }
         const run = store.getRun(event.runId)
         if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
-          if (run?.runKind !== 'report') {
+          if (!run?.reportFileId) {
             store.addMessage({ type: 'complete', content: event.data.summary })
           }
         }
