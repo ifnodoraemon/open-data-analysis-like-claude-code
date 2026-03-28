@@ -489,6 +489,19 @@ func (s *Session) RuntimeState() (map[string]string, []agent.Subgoal) {
 	return memory, subgoals
 }
 
+func (s *Session) LoadRuntimeState(memory map[string]string, subgoals []agent.Subgoal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.Memory != nil {
+		s.Memory.ReplaceSnapshot(memory)
+	}
+	if s.Subgoals != nil {
+		s.Subgoals.ReplaceAll(subgoals)
+	}
+	s.LastSeenAt = time.Now()
+}
+
 func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 	var vars []agent.RuntimeContextBlock
 	s.mu.Lock()

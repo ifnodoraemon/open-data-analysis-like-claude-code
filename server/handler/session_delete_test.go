@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"testing"
 	"time"
 
@@ -17,6 +18,34 @@ import (
 	"github.com/ifnodoraemon/openDataAnalysis/storage"
 	localstorage "github.com/ifnodoraemon/openDataAnalysis/storage/local"
 )
+
+type flakyDeleteStorage struct {
+	inner    storage.ObjectStorage
+	failKeys map[string]bool
+}
+
+func (s *flakyDeleteStorage) Put(ctx context.Context, req storage.PutObjectRequest) (*storage.StoredObject, error) {
+	return s.inner.Put(ctx, req)
+}
+
+func (s *flakyDeleteStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return s.inner.Get(ctx, key)
+}
+
+func (s *flakyDeleteStorage) Delete(ctx context.Context, key string) error {
+	if s.failKeys[key] {
+		return context.DeadlineExceeded
+	}
+	return s.inner.Delete(ctx, key)
+}
+
+func (s *flakyDeleteStorage) Exists(ctx context.Context, key string) (bool, error) {
+	return s.inner.Exists(ctx, key)
+}
+
+func (s *flakyDeleteStorage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return s.inner.PresignGet(ctx, key, ttl)
+}
 
 func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
 	ctx := context.Background()
@@ -233,8 +262,6 @@ func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
 }
 
 func TestDeleteSessionDoesNotDeleteSharedFiles(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	root := t.TempDir()
 
@@ -290,6 +317,123 @@ func TestDeleteSessionDoesNotDeleteSharedFiles(t *testing.T) {
 	}
 	if exists, _ := fs.Storage.Exists(ctx, sharedObj.Key); !exists {
 		t.Fatal("expected shared object file to remain in object storage")
+	}
+}
+
+func TestDeleteSessionResourcesCommitsMetadataEvenIfStorageCleanupFails(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, err := metadata.Open(root + "/metadata.db")
+	if err != nil {
+		t.Fatalf("open metadata: %v", err)
+	}
+	t.Cleanup(func() { _ = store.DB.Close() })
+
+	prevMetadataStore := metadataStore
+	prevFileService := fileService
+	prevSessionRepo := sessionRepo
+	prevRunRepo := runRepo
+	prevMessageRepo := messageRepo
+	prevSessionManager := sessionManager
+	t.Cleanup(func() {
+		metadataStore = prevMetadataStore
+		fileService = prevFileService
+		sessionRepo = prevSessionRepo
+		runRepo = prevRunRepo
+		messageRepo = prevMessageRepo
+		sessionManager = prevSessionManager
+	})
+
+	metadataStore = store
+	fileRepo := sqliterepo.NewFileRepository(store.DB)
+	sessionRepo = sqliterepo.NewSessionRepository(store.DB)
+	runRepo = sqliterepo.NewRunRepository(store.DB)
+	messageRepo = sqliterepo.NewMessageRepository(store.DB)
+
+	baseStorage := localstorage.New(root+"/objects", "")
+	objectKey := "workspaces/w_1/runs/r_1/report/report.html"
+	if _, err := baseStorage.Put(ctx, storage.PutObjectRequest{
+		Key:         objectKey,
+		Body:        bytes.NewBufferString("<html></html>"),
+		Size:        int64(len("<html></html>")),
+		ContentType: "text/html",
+	}); err != nil {
+		t.Fatalf("put object: %v", err)
+	}
+
+	fileService = &service.FileService{
+		Storage: &flakyDeleteStorage{
+			inner:    baseStorage,
+			failKeys: map[string]bool{objectKey: true},
+		},
+		FileRepo: fileRepo,
+		TempDir:  root + "/tmp",
+	}
+	sessionManager = session.NewManager(root+"/cache", fileService)
+	sessionManager.SetSessionRepository(sessionRepo)
+
+	now := time.Now()
+	if err := sessionRepo.Create(ctx, &domain.Session{
+		ID:          "s_1",
+		WorkspaceID: "w_1",
+		UserID:      "u_1",
+		Title:       "Delete Me",
+		Status:      domain.SessionStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		LastSeenAt:  now,
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := fileRepo.Create(ctx, &domain.File{
+		ID:              "rep_r_1",
+		WorkspaceID:     "w_1",
+		UploadedBy:      "u_1",
+		DisplayName:     "report.html",
+		Purpose:         domain.FilePurposeReport,
+		ContentType:     "text/html",
+		SizeBytes:       int64(len("<html></html>")),
+		StorageProvider: "local",
+		StorageKey:      objectKey,
+		Status:          domain.FileStatusReady,
+		Visibility:      domain.FileVisibilityPrivate,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if err := runRepo.Create(ctx, &domain.AnalysisRun{
+		ID:           "r_1",
+		SessionID:    "s_1",
+		WorkspaceID:  "w_1",
+		UserID:       "u_1",
+		RunKind:      domain.RunKindRoot,
+		Status:       domain.RunStatusCompleted,
+		InputMessage: "analyze",
+		ReportFileID: ptr("rep_r_1"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	record, err := sessionRepo.GetByID(ctx, "s_1")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if err := deleteSessionResources(ctx, *record); err != nil {
+		t.Fatalf("delete session resources: %v", err)
+	}
+
+	if _, err := sessionRepo.GetByID(ctx, "s_1"); err == nil {
+		t.Fatal("expected session metadata to be deleted")
+	}
+	if _, err := runRepo.GetByID(ctx, "r_1"); err == nil {
+		t.Fatal("expected run metadata to be deleted")
+	}
+	if exists, err := baseStorage.Exists(ctx, objectKey); err != nil || !exists {
+		t.Fatalf("expected orphaned object to remain for later cleanup, exists=%t err=%v", exists, err)
 	}
 }
 

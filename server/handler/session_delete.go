@@ -26,6 +26,12 @@ func deleteSessionResources(ctx context.Context, session domain.Session) error {
 		return err
 	}
 
+	if sessionManager != nil {
+		if err := sessionManager.Stop(session.ID, session.WorkspaceID, session.UserID); err != nil {
+			return err
+		}
+	}
+
 	tx, err := metadataStore.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -60,33 +66,23 @@ func deleteSessionResources(ctx context.Context, session domain.Session) error {
 		return err
 	}
 
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	CloseSessionWebSockets(session.ID)
+	if sessionManager != nil {
+		if err := sessionManager.Delete(session.ID, session.WorkspaceID, session.UserID); err != nil {
+			log.Printf("delete in-memory session failed session_id=%s err=%v", session.ID, err)
+		}
+	}
+
 	for _, key := range plan.storageKeys {
 		if strings.TrimSpace(key) == "" || fileService == nil || fileService.Storage == nil {
 			continue
 		}
 		if err := fileService.Storage.Delete(ctx, key); err != nil {
-			log.Printf("delete session storage object failed session_id=%s key=%s err=%v", session.ID, key, err)
-			return fmt.Errorf("未能清理所有对象文件，放弃删除: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	// Interruption logic moved after successful DB commit
-	if sessionManager != nil {
-		if err := sessionManager.Stop(session.ID, session.WorkspaceID, session.UserID); err != nil {
-			log.Printf("stop in-memory session failed session_id=%s err=%v", session.ID, err)
-		}
-	}
-	
-	CloseSessionWebSockets(session.ID)
-
-	// The storage deletion was already done above before tx.Commit.
-	if sessionManager != nil {
-		if err := sessionManager.Delete(session.ID, session.WorkspaceID, session.UserID); err != nil {
-			log.Printf("delete in-memory session failed session_id=%s err=%v", session.ID, err)
+			log.Printf("delete session storage object failed after metadata removal session_id=%s key=%s err=%v", session.ID, key, err)
 		}
 	}
 	return nil

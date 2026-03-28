@@ -38,6 +38,10 @@ func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "无权访问该会话", http.StatusForbidden)
 		return
 	}
+	if err := recoverStaleSessionRuns(r.Context(), sessionID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	runs, err := runRepo.ListBySession(r.Context(), sessionID, 20)
 	if err != nil {
@@ -65,6 +69,15 @@ func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if run.UserID != identity.UserID || run.WorkspaceID != identity.WorkspaceID {
 		http.Error(w, "无权访问该任务", http.StatusForbidden)
+		return
+	}
+	if err := recoverStaleSessionRuns(r.Context(), run.SessionID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	run, err = runRepo.GetByID(r.Context(), runID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -97,6 +110,15 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if run.UserID != identity.UserID || run.WorkspaceID != identity.WorkspaceID {
 		http.Error(w, "无权访问该任务", http.StatusForbidden)
+		return
+	}
+	if err := recoverStaleSessionRuns(r.Context(), run.SessionID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	run, err = runRepo.GetByID(r.Context(), runID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

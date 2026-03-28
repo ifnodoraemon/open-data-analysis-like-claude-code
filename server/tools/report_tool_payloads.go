@@ -53,6 +53,17 @@ func reportFinalizeIssuesFailure(state *ReportState, issues []string) string {
 	))
 }
 
+func reportAlreadyFinalizedFailure(state *ReportState) string {
+	return toolFailure("report_finalize", "report_already_finalized", "当前报告已经是最终状态；未发生新的草稿修改时不允许重复 finalize。", mergePayloads(
+		reportDraftPayload(state, nil),
+		map[string]interface{}{
+			"can_finalize": false,
+			"message":      "当前报告已经是最终状态；未发生新的草稿修改时不允许重复 finalize。",
+			"ui_summary":   "报告已是 finalized 状态，未检测到新的草稿改动。",
+		},
+	))
+}
+
 func reportFinalizeSuccess(fields map[string]interface{}) string {
 	payload := clonePayload(fields)
 	payload["delivery_state"] = "finalized"

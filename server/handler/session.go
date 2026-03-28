@@ -53,6 +53,10 @@ func GetSessionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := recoverStaleSessionRuns(r.Context(), session.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	runs, err := runRepo.ListBySession(r.Context(), session.ID, 20)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

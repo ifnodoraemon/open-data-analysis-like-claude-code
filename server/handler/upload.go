@@ -19,9 +19,12 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity, _ := auth.FromContext(r.Context())
-	sess, err := sessionManager.Get(r.Context(), sessionID, identity.WorkspaceID, identity.UserID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	sess, err := sessionRepo.GetByID(r.Context(), sessionID)
+	if writeRepoLookupError(w, err, "会话不存在") {
+		return
+	}
+	if sess.UserID != identity.UserID || sess.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "无权访问该会话", http.StatusForbidden)
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
@@ -21,6 +22,14 @@ func getSessionRuntimeState(ctx context.Context, workspaceID, userID, sessionID 
 		if sess, ok, err := sessionManager.Peek(sessionID, workspaceID, userID); err == nil && ok && sess != nil {
 			return sess.RuntimeState()
 		}
+	}
+
+	return loadSessionRuntimeStateFromPersistence(ctx, sessionID)
+}
+
+func loadSessionRuntimeStateFromPersistence(ctx context.Context, sessionID string) (map[string]string, []agent.Subgoal) {
+	if strings.TrimSpace(sessionID) == "" {
+		return map[string]string{}, []agent.Subgoal{}
 	}
 
 	runs, err := runRepo.ListBySession(ctx, sessionID, 1000)

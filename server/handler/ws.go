@@ -95,7 +95,7 @@ func startEventPersistWorker() func() {
 	eventPersistQueue = q
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -116,7 +116,7 @@ func startEventPersistWorker() func() {
 			}
 		}
 	}()
-	
+
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -370,10 +370,29 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	identity, _ := auth.FromContext(r.Context())
+	shouldHydrate := false
+	if sessionID != "" {
+		var hydrateErr error
+		shouldHydrate, hydrateErr = shouldHydrateSessionFromPersistence(r.Context(), identity.WorkspaceID, identity.UserID, sessionID)
+		if hydrateErr != nil {
+			log.Printf("检查会话补水状态失败 session_id=%s err=%v", sessionID, hydrateErr)
+			return
+		}
+	}
 	sess, _, err := sessionManager.GetOrCreate(r.Context(), sessionID, identity.WorkspaceID, identity.UserID)
 	if err != nil {
 		log.Printf("创建会话失败: %v", err)
 		return
+	}
+	if shouldHydrate {
+		if err := recoverStaleSessionRuns(r.Context(), sess.ID); err != nil {
+			log.Printf("修复历史运行状态失败 session_id=%s err=%v", sess.ID, err)
+			return
+		}
+		if err := hydrateSessionFromPersistence(r.Context(), sess); err != nil {
+			log.Printf("补水会话运行态失败 session_id=%s err=%v", sess.ID, err)
+			return
+		}
 	}
 	log.Printf("ws connected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 	_ = registerWS(sess.ID, conn)

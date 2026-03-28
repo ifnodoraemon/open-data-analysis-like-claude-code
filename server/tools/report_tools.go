@@ -176,6 +176,10 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		if errors.As(err, &issuesErr) {
 			return reportFinalizeIssuesFailure(t.ReportState, issuesErr.Issues), nil
 		}
+		var alreadyFinalizedErr reportAlreadyFinalizedError
+		if errors.As(err, &alreadyFinalizedErr) {
+			return reportAlreadyFinalizedFailure(t.ReportState), nil
+		}
 		return "", err
 	}
 

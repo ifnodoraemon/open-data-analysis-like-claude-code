@@ -112,4 +112,65 @@ describe('useWebSocket deduplication', () => {
     disconnect()
     global.fetch = undefined
   })
+
+  it('still processes lifecycle events for the active run when a different run is selected', async () => {
+    const store = useAgentStore()
+    store.setToken('test-token')
+    store.setSession('sess-1')
+    store.startRun('run-root')
+    store.upsertRun({ id: 'run-root', sessionId: 'sess-1', status: 'running' })
+    store.upsertRun({ id: 'run-child', sessionId: 'sess-1', parentRunId: 'run-root', status: 'running' })
+    store.setSelectedRun('run-child')
+    store.setMessages([])
+
+    global.location = { protocol: 'http:', host: 'localhost' }
+
+    let activeSocket = null
+    class MockWebSocket {
+      constructor(url, protocols) {
+        this.url = url
+        this.protocols = protocols
+        this.readyState = 1
+        activeSocket = this
+        setTimeout(() => {
+          this.onopen?.()
+        }, 1)
+      }
+      send() {}
+      close() { this.onclose?.() }
+      triggerMessage(dataObj) {
+        this.onmessage?.({ data: JSON.stringify(dataObj) })
+      }
+    }
+    MockWebSocket.CONNECTING = 0
+    MockWebSocket.OPEN = 1
+    MockWebSocket.CLOSING = 2
+    MockWebSocket.CLOSED = 3
+    vi.stubGlobal('WebSocket', MockWebSocket)
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+      text: async () => ''
+    })
+
+    const { connect, disconnect } = useWebSocket()
+    await connect()
+
+    activeSocket.triggerMessage({
+      type: 'run_completed',
+      runId: 'run-root',
+      data: {
+        summary: 'root finished'
+      }
+    })
+
+    expect(store.isRunning).toBe(false)
+    expect(store.activeRunId).toBe('')
+    expect(store.getRun('run-root')?.status).toBe('completed')
+    expect(store.messages.length).toBe(0)
+
+    disconnect()
+    global.fetch = undefined
+  })
 })

@@ -33,9 +33,19 @@ func (e reportFinalizeIssuesError) Error() string {
 	return fmt.Sprintf("finalize blocked by %d report issues", len(e.Issues))
 }
 
+type reportAlreadyFinalizedError struct{}
+
+func (e reportAlreadyFinalizedError) Error() string {
+	return "report already finalized"
+}
+
 func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params reportFinalizeParams) (reportFinalizeResult, error) {
 	if state == nil {
 		return reportFinalizeResult{}, fmt.Errorf("report state is not initialized")
+	}
+
+	if DescribeReportDeliveryState(state).IsFinalized {
+		return reportFinalizeResult{}, reportAlreadyFinalizedError{}
 	}
 
 	params.Author = strings.TrimSpace(params.Author)

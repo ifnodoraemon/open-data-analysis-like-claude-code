@@ -54,6 +54,17 @@ func (m *WorkingMemory) Reset() {
 	m.Facts = make(map[string]string)
 }
 
+// ReplaceSnapshot 用持久化恢复出的事实快照整体替换当前工作记忆。
+func (m *WorkingMemory) ReplaceSnapshot(facts map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Facts = make(map[string]string, len(facts))
+	for k, v := range facts {
+		m.Facts[k] = v
+	}
+}
+
 // GetSummary 输出格式化的大模型提示词上下文
 func (m *WorkingMemory) GetSummary() string {
 	m.mu.RLock()
@@ -287,4 +298,13 @@ func (s *SubgoalManager) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Goals = make([]Subgoal, 0)
+}
+
+// ReplaceAll 用持久化恢复出的目标树整体替换当前子目标状态。
+func (s *SubgoalManager) ReplaceAll(goals []Subgoal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Goals = make([]Subgoal, len(goals))
+	copy(s.Goals, goals)
 }

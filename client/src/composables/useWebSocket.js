@@ -358,12 +358,20 @@ export function useWebSocket() {
       return
     }
     const relevantRunIds = [store.activeRunId, store.selectedRunId].filter(Boolean)
+    const selectedRunScopedTypes = new Set([
+      'thinking',
+      'tool_call',
+      'tool_result',
+      'report_update',
+      'user_request_input',
+      'state_subgoals_updated',
+      'state_memory_updated',
+    ])
     if (
       event.runId &&
       relevantRunIds.length > 0 &&
       !relevantRunIds.includes(event.runId) &&
-      event.type !== 'run_started' &&
-      event.type !== 'state_child_runs_updated'
+      selectedRunScopedTypes.has(event.type)
     ) {
       return
     }
