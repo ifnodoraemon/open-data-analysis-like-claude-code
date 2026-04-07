@@ -13,7 +13,12 @@
     <div class="main-content">
       <div class="chat-area" :style="{ width: leftWidth + '%' }">
         <div class="top-bar-minimal">
-          <button v-if="!isSidebarOpen" class="toggle-sidebar-btn" @click="toggleSidebar" title="展开侧边栏">
+          <button
+            v-if="!isSidebarOpen"
+            class="toggle-sidebar-btn"
+            @click="toggleSidebar"
+            title="展开侧边栏"
+          >
             <span class="icon">▤</span>
           </button>
           <span class="logo">📊 数据分析智能体</span>
@@ -21,80 +26,92 @@
         <AgentPanel class="panel-left" />
         <InputBar class="input-bar-container" />
       </div>
-      <div class="splitter" @mousedown="startDrag" :class="{ dragging: isDragging }"></div>
-      <ReportPreview class="panel-right" :style="{ width: (100 - leftWidth) + '%' }" />
+      <div
+        class="splitter"
+        @mousedown="startDrag"
+        :class="{ dragging: isDragging }"
+      ></div>
+      <ReportPreview
+        class="panel-right"
+        :style="{ width: 100 - leftWidth + '%' }"
+      />
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted, watch } from 'vue'
-import { useWebSocket } from './composables/useWebSocket.js'
-import { useAgentStore } from './stores/agent.js'
-import Sidebar from './components/layout/Sidebar.vue'
-import AgentPanel from './components/agent/AgentPanel.vue'
-import ReportPreview from './components/report/ReportPreview.vue'
-import InputBar from './components/layout/InputBar.vue'
-import LoginScreen from './components/auth/LoginScreen.vue'
+import { computed, ref, onMounted, watch } from "vue";
+import { useWebSocket } from "./composables/useWebSocket.js";
+import { useAgentStore } from "./stores/agent.js";
+import Sidebar from "./components/layout/Sidebar.vue";
+import AgentPanel from "./components/agent/AgentPanel.vue";
+import ReportPreview from "./components/report/ReportPreview.vue";
+import InputBar from "./components/layout/InputBar.vue";
+import LoginScreen from "./components/auth/LoginScreen.vue";
 
-const { initializeApp } = useWebSocket()
-const store = useAgentStore()
-const leftWidth = ref(50)
-const isDragging = ref(false)
-const isSidebarOpen = ref(true)
-const isAuthenticated = computed(() => !!store.token && !!store.user)
-const isRestoring = computed(() => store.bootstrapState === 'loading')
-const hasRestoreError = computed(() => store.bootstrapState === 'error' && !!store.token)
-const restoreError = computed(() => store.bootstrapError || '请稍后重试。')
+const { initializeApp } = useWebSocket();
+const store = useAgentStore();
+const leftWidth = ref(50);
+const isDragging = ref(false);
+const isSidebarOpen = ref(true);
+const isAuthenticated = computed(() => !!store.token && !!store.user);
+const isRestoring = computed(() => store.bootstrapState === "loading");
+const hasRestoreError = computed(
+  () => store.bootstrapState === "error" && !!store.token,
+);
+const restoreError = computed(() => store.bootstrapError || "请稍后重试。");
 
 onMounted(() => {
   if (store.token) {
-    void initApp()
+    void initApp();
   }
-})
+});
 
-watch(() => store.token, (nextToken, prevToken) => {
-  if (nextToken && nextToken !== prevToken) {
-    void initApp()
-  } else if (!nextToken) {
-    store.setBootstrapState('idle')
-  }
-})
+watch(
+  () => store.token,
+  (nextToken, prevToken) => {
+    if (nextToken && nextToken !== prevToken) {
+      void initApp();
+    } else if (!nextToken) {
+      store.setBootstrapState("idle");
+    }
+  },
+);
 
 function initApp() {
   return initializeApp().catch((err) => {
-    console.error('bootstrap failed:', err)
-  })
+    console.error("bootstrap failed:", err);
+  });
 }
 
 function retryInit() {
-  void initApp()
+  void initApp();
 }
 
 function toggleSidebar() {
-  isSidebarOpen.value = !isSidebarOpen.value
+  isSidebarOpen.value = !isSidebarOpen.value;
 }
 
 function startDrag(e) {
-  isDragging.value = true
-  const startX = e.clientX
-  const startWidth = leftWidth.value
+  isDragging.value = true;
+  const startX = e.clientX;
+  const startWidth = leftWidth.value;
 
   function onMove(e) {
-    const dx = e.clientX - startX
-    const containerWidth = document.querySelector('.main-content').offsetWidth
-    const newWidth = startWidth + (dx / containerWidth) * 100
-    leftWidth.value = Math.max(25, Math.min(75, newWidth))
+    const dx = e.clientX - startX;
+    const containerWidth = document.querySelector(".main-content").offsetWidth;
+    const newWidth = startWidth + (dx / containerWidth) * 100;
+    leftWidth.value = Math.max(25, Math.min(75, newWidth));
   }
 
   function onUp() {
-    isDragging.value = false
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onUp)
+    isDragging.value = false;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
   }
 
-  document.addEventListener('mousemove', onMove)
-  document.addEventListener('mouseup', onUp)
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
 }
 </script>
 
@@ -228,7 +245,8 @@ function startDrag(e) {
   z-index: 10;
 }
 
-.splitter:hover, .splitter.dragging {
+.splitter:hover,
+.splitter.dragging {
   background: var(--accent-blue);
 }
 </style>

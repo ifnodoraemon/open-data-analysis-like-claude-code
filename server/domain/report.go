@@ -19,22 +19,19 @@ type Report struct {
 }
 
 type ReportSnapshot struct {
-	Version     string                `json:"version"`
-	GeneratedAt time.Time             `json:"generatedAt"`
-	Title       string                `json:"title"`
-	Author      string                `json:"author,omitempty"`
-	Layout      ReportSnapshotLayout  `json:"layout,omitempty"`
-	Blocks      []ReportSnapshotBlock `json:"blocks,omitempty"`
-	Charts      []ReportSnapshotChart `json:"charts"`
+	Version       string                `json:"version"`
+	GeneratedAt   time.Time             `json:"generatedAt"`
+	Title         string                `json:"title"`
+	Author        string                `json:"author,omitempty"`
+	NeedsFinalize bool                  `json:"needsFinalize,omitempty"`
+	Layout        ReportSnapshotLayout  `json:"layout,omitempty"`
+	Blocks        []ReportSnapshotBlock `json:"blocks,omitempty"`
+	Charts        []ReportSnapshotChart `json:"charts"`
 }
 
 type ReportSnapshotLayout struct {
-	CustomHTMLShell string `json:"customHtmlShell,omitempty"`
-	CustomCSS       string `json:"customCss,omitempty"`
-	CustomJS        string `json:"customJs,omitempty"`
-	BodyClass       string `json:"bodyClass,omitempty"`
-	HideCover       bool   `json:"hideCover,omitempty"`
-	HideTOC         bool   `json:"hideToc,omitempty"`
+	CustomCSS string `json:"customCss,omitempty"`
+	BodyClass string `json:"bodyClass,omitempty"`
 }
 
 type ReportSnapshotBlock struct {

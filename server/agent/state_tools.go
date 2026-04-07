@@ -189,11 +189,13 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 	}
 	delivery := tools.DescribeReportDeliveryState(t.ReportState)
 	finalizeIssues := tools.ReportFinalizeIssuesForAgent(t.ReportState)
+	renderableBlockCount := tools.RenderableReportBlockCount(t.ReportState)
 
 	payload := map[string]interface{}{
 		"ok":                            true,
 		"tool":                          "state_report_inspect",
 		"block_count":                   len(t.ReportState.Blocks),
+		"renderable_block_count":        renderableBlockCount,
 		"chart_count":                   len(chartIDs),
 		"blocks":                        blocks,
 		"chart_ids":                     chartIDs,
@@ -214,7 +216,7 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		"can_finalize_structurally":     len(finalizeIssues) == 0,
 		"finalize_issue_count":          len(finalizeIssues),
 		"finalize_issues":               finalizeIssues,
-		"ui_summary":                    fmt.Sprintf("当前报告共有 %d 个 block、%d 张图表。", len(t.ReportState.Blocks), len(chartIDs)),
+		"ui_summary":                    fmt.Sprintf("当前报告共有 %d 个可渲染 block、%d 张图表。", renderableBlockCount, len(chartIDs)),
 	}
 	return marshalToolPayload(payload)
 }

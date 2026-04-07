@@ -24,21 +24,21 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useWebSocket } from '../../composables/useWebSocket.js'
-import { useAgentStore } from '../../stores/agent.js'
-import RunTreeNode from './RunTreeNode.vue'
+import { computed, ref } from "vue";
+import { useWebSocket } from "../../composables/useWebSocket.js";
+import { useAgentStore } from "../../stores/agent.js";
+import RunTreeNode from "./RunTreeNode.vue";
 
-const store = useAgentStore()
-const { openRun } = useWebSocket()
-const runs = computed(() => store.runs || [])
-const selectedRunId = computed(() => store.selectedRunId || '')
-const activeRunId = computed(() => store.activeRunId || '')
-const isCollapsed = ref(false)
+const store = useAgentStore();
+const { openRun } = useWebSocket();
+const runs = computed(() => store.runs || []);
+const selectedRunId = computed(() => store.selectedRunId || "");
+const activeRunId = computed(() => store.activeRunId || "");
+const isCollapsed = ref(false);
 
 async function handleSelect(runId) {
-  if (!runId || runId === selectedRunId.value) return
-  await openRun(runId)
+  if (!runId || runId === selectedRunId.value) return;
+  await openRun(runId);
 }
 </script>
 

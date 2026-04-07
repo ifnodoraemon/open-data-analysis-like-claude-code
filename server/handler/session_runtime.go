@@ -39,8 +39,11 @@ func hydrateSessionFromPersistence(ctx context.Context, sess *session.Session) e
 	if sess == nil {
 		return nil
 	}
-	memory, subgoals := loadSessionRuntimeStateFromPersistence(ctx, sess.ID)
+	memory, subgoals, reportSnapshot, _ := loadSessionRuntimeStateFromPersistence(ctx, sess.ID)
 	sess.LoadRuntimeState(memory, subgoals)
+	if reportSnapshot != nil {
+		sess.LoadReportSnapshot(reportSnapshot)
+	}
 	return nil
 }
 
@@ -52,7 +55,7 @@ func recoverStaleSessionRuns(ctx context.Context, sessionID string) error {
 		return nil
 	}
 
-	roots, err := runRepo.ListBySession(ctx, sessionID, 1000)
+	roots, err := runRepo.ListBySession(ctx, sessionID, -1)
 	if err != nil {
 		return err
 	}

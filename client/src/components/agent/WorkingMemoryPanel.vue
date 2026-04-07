@@ -20,12 +20,12 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useAgentStore } from '../../stores/agent.js'
+import { computed, ref } from "vue";
+import { useAgentStore } from "../../stores/agent.js";
 
-const store = useAgentStore()
-const isCollapsed = ref(false)
-const entries = computed(() => Object.entries(store.memoryFacts || {}))
+const store = useAgentStore();
+const isCollapsed = ref(false);
+const entries = computed(() => Object.entries(store.memoryFacts || {}));
 </script>
 
 <style scoped>

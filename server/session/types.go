@@ -134,19 +134,27 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			}
 		}
 	}
-	plannerRegistry := masterReg.CloneFiltered(plannerAllowed)
+	var buildPlannerRegistry func([]string) *tools.Registry
+	buildPlannerRegistry = func(allowed []string) *tools.Registry {
+		reg := tools.NewRegistry()
+		reg.LoadGlobalTools(ctx)
+		if len(allowed) > 0 {
+			reg = reg.CloneFiltered(allowed)
+		}
+		if dt, err := reg.Get("task_delegate"); err == nil {
+			if dtTool, ok := dt.(*agent.DelegateTaskTool); ok {
+				dtTool.RegistryFactory = buildPlannerRegistry
+				dtTool.Subgoals = subgoals
+				dtTool.Memory = memory
+			}
+		}
+		return reg
+	}
+	plannerRegistry := buildPlannerRegistry(plannerAllowed)
 
 	s.Registry = plannerRegistry
 	if ft, err := plannerRegistry.Get("report_finalize"); err == nil {
 		s.FinalizeTool = ft.(*tools.FinalizeReportTool)
-	}
-
-	if dt, err := plannerRegistry.Get("task_delegate"); err == nil {
-		if dtTool, ok := dt.(*agent.DelegateTaskTool); ok {
-			dtTool.BaseRegistry = plannerRegistry
-			dtTool.Subgoals = subgoals
-			dtTool.Memory = memory
-		}
 	}
 
 	policyPrompt := agent.BuildPolicyPrompt()
@@ -376,14 +384,10 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 	s.ReportState.FinalTitle = strings.TrimSpace(snapshot.Title)
 	s.ReportState.FinalAuthor = strings.TrimSpace(snapshot.Author)
 	s.ReportState.Layout = tools.ReportLayout{
-		CustomHTMLShell: snapshot.Layout.CustomHTMLShell,
-		CustomCSS:       snapshot.Layout.CustomCSS,
-		CustomJS:        snapshot.Layout.CustomJS,
-		BodyClass:       snapshot.Layout.BodyClass,
-		HideCover:       snapshot.Layout.HideCover,
-		HideTOC:         snapshot.Layout.HideTOC,
+		CustomCSS: snapshot.Layout.CustomCSS,
+		BodyClass: snapshot.Layout.BodyClass,
 	}
-	s.ReportState.NeedsFinalize = false
+	s.ReportState.NeedsFinalize = snapshot.NeedsFinalize
 	s.ReportState.Blocks = make([]tools.ReportBlock, 0, len(snapshot.Blocks))
 	for _, block := range snapshot.Blocks {
 		rb := tools.ReportBlock{
@@ -520,22 +524,6 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 			Name:    "active_edit_scope",
 			Content: strings.TrimSpace(content),
 		})
-	}
-
-	// 2. Active Subgoals
-	if s.Subgoals != nil {
-		var activeGoals []string
-		for _, g := range s.Subgoals.ListAll() {
-			if g.Status == "pending" || g.Status == "running" {
-				activeGoals = append(activeGoals, fmt.Sprintf("- [%s] %s (%s)", g.ID, g.Description, g.Status))
-			}
-		}
-		if len(activeGoals) > 0 {
-			vars = append(vars, agent.RuntimeContextBlock{
-				Name:    "active_subgoals",
-				Content: strings.Join(activeGoals, "\n"),
-			})
-		}
 	}
 
 	return vars

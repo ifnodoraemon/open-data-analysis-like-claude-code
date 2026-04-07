@@ -26,6 +26,9 @@ func TestRenderReportHTMLConvertsMarkdownHeadings(t *testing.T) {
 	if !strings.Contains(html, "<li><strong>收入</strong> 增长 20%</li>") {
 		t.Fatalf("expected list markdown to render as html, got: %s", html)
 	}
+	if strings.Contains(html, `<div class="cover">`) || strings.Contains(html, `<div class="toc">`) || strings.Contains(html, `<div class="footer">`) {
+		t.Fatalf("expected no runtime-injected cover/toc/footer, got: %s", html)
+	}
 }
 
 func TestRenderReportHTMLUsesContentHeadingAsCanonicalSectionTitle(t *testing.T) {
@@ -42,9 +45,6 @@ func TestRenderReportHTMLUsesContentHeadingAsCanonicalSectionTitle(t *testing.T)
 		},
 	})
 
-	if !strings.Contains(html, `<li><a href="#section-1">2. 销售分布与区域表现</a></li>`) {
-		t.Fatalf("expected toc to follow content heading, got: %s", html)
-	}
 	if strings.Contains(html, "<h2>销售分布与区域表现</h2>") {
 		t.Fatalf("expected markdown block not to render synthetic h2 heading, got: %s", html)
 	}
@@ -70,9 +70,6 @@ func TestRenderReportHTMLAttachesUntitledChartBlocksToNearestSection(t *testing.
 		},
 	})
 
-	if !strings.Contains(html, `<li><a href="#section-2">二、销售分析</a></li>`) {
-		t.Fatalf("expected analysis section to remain in toc, got: %s", html)
-	}
 	if strings.Contains(html, `data-block-id="blk_sales_chart"`) {
 		t.Fatalf("expected untitled chart block to be inlined into nearby section, got: %s", html)
 	}
@@ -99,17 +96,11 @@ func TestRenderReportHTMLSplitsMarkdownBlockByTopLevelHeadings(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, `<li><a href="#section-1">六、建议</a></li>`) {
-		t.Fatalf("expected recommendations section in toc, got: %s", html)
-	}
-	if !strings.Contains(html, `<li><a href="#section-2">七、结论</a></li>`) {
-		t.Fatalf("expected conclusion section in toc, got: %s", html)
-	}
 	if strings.Count(html, `data-block-id="blk_recommendations"`) != 1 {
 		t.Fatalf("expected one wrapper block capturing the split sections, got: %s", html)
 	}
-	if !strings.Contains(html, `class="section conclusion"`) {
-		t.Fatalf("expected conclusion fragment to use conclusion preset, got: %s", html)
+	if !strings.Contains(html, `id="section-2"`) || !strings.Contains(html, "<h3>七、结论</h3>") {
+		t.Fatalf("expected second split section to render as a plain section, got: %s", html)
 	}
 }
 
@@ -146,7 +137,7 @@ func TestRenderReportHTMLDoesNotAppendUnreferencedCharts(t *testing.T) {
 	}
 }
 
-func TestRenderReportHTMLSupportsCustomSectionKinds(t *testing.T) {
+func TestRenderReportHTMLDoesNotInferKeywordSectionPresets(t *testing.T) {
 	t.Parallel()
 
 	html := RenderReportHTML("测试报告", "AI", &ReportState{
@@ -166,11 +157,11 @@ func TestRenderReportHTMLSupportsCustomSectionKinds(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, `class="section risks"`) {
-		t.Fatalf("expected custom risks section preset, got: %s", html)
+	if strings.Contains(html, `class="section risks"`) || strings.Contains(html, `class="section methodology"`) || strings.Contains(html, `class="summary-box"`) || strings.Contains(html, `class="conclusion-box"`) {
+		t.Fatalf("expected no keyword-based section preset inference, got: %s", html)
 	}
-	if !strings.Contains(html, `class="section methodology"`) {
-		t.Fatalf("expected custom methodology section preset, got: %s", html)
+	if strings.Count(html, `class="section"`) < 2 {
+		t.Fatalf("expected blocks to remain plain sections, got: %s", html)
 	}
 }
 
@@ -185,15 +176,6 @@ func TestRenderReportHTMLNormalizesPrefixedSectionTitles(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(html, `<li><a href="#section-1">一、数据概览</a></li>`) {
-		t.Fatalf("expected toc title to retain original prefix, got: %s", html)
-	}
-	if !strings.Contains(html, `<li><a href="#section-2">02 各维度分布</a></li>`) {
-		t.Fatalf("expected toc title numeric space prefix to remain, got: %s", html)
-	}
-	if !strings.Contains(html, `<li><a href="#section-3">第3章 趋势变化</a></li>`) {
-		t.Fatalf("expected chapter prefix to remain, got: %s", html)
-	}
 	if !strings.Contains(html, `<h2>一、数据概览</h2>`) || !strings.Contains(html, `<h2>02 各维度分布</h2>`) || !strings.Contains(html, `<h2>第3章 趋势变化</h2>`) {
 		t.Fatalf("expected markdown blocks to render synthetic h2 headings when content lacks headings, got: %s", html)
 	}
@@ -205,10 +187,7 @@ func TestRenderReportHTMLSupportsLayoutOverrides(t *testing.T) {
 	html := RenderReportHTML("测试报告", "AI", &ReportState{
 		Layout: ReportLayout{
 			CustomCSS: ".hero{color:red;}",
-			CustomJS:  "console.log('layout')",
 			BodyClass: "magazine",
-			HideCover: true,
-			HideTOC:   true,
 		},
 		Blocks: []ReportBlock{
 			{
@@ -220,51 +199,14 @@ func TestRenderReportHTMLSupportsLayoutOverrides(t *testing.T) {
 		},
 	})
 
-	if strings.Contains(html, `<div class="cover">`) {
-		t.Fatalf("expected cover to be hidden")
-	}
-	if strings.Contains(html, `<div class="toc">`) {
-		t.Fatalf("expected toc to be hidden")
+	if strings.Contains(html, `<div class="cover">`) || strings.Contains(html, `<div class="toc">`) || strings.Contains(html, `<div class="footer">`) {
+		t.Fatalf("expected no default cover/toc/footer")
 	}
 	if !strings.Contains(html, `body class="magazine"`) {
 		t.Fatalf("expected body class override")
 	}
 	if !strings.Contains(html, ".hero{color:red;}") {
 		t.Fatalf("expected custom css to be injected")
-	}
-	if strings.Contains(html, "console.log('layout')") {
-		t.Fatalf("expected custom js to be ignored")
-	}
-}
-
-func TestRenderReportHTMLIgnoresCustomShell(t *testing.T) {
-	t.Parallel()
-
-	html := RenderReportHTML("测试报告", "AI", &ReportState{
-		Layout: ReportLayout{
-			CustomHTMLShell: `<!DOCTYPE html><html><head><style>{{custom_css}}</style></head><body class="{{body_class}}"><main>{{content}}</main><aside>{{toc}}</aside><footer>{{author}} {{date}}</footer>{{chart_scripts}}<script>{{custom_js}}</script></body></html>`,
-			CustomCSS:       ".page{padding:24px;}",
-			CustomJS:        "window.__customShell = true;",
-			BodyClass:       "page",
-		},
-		Blocks: []ReportBlock{
-			{
-				ID:      "custom-1",
-				Kind:    "markdown",
-				Title:   "自定义正文",
-				Content: "Hello shell",
-			},
-		},
-	})
-
-	if !strings.Contains(html, "Hello shell") {
-		t.Fatalf("expected report content to render")
-	}
-	if !strings.Contains(html, `body class="page"`) {
-		t.Fatalf("expected body class to remain effective")
-	}
-	if strings.Contains(html, "<main>") || strings.Contains(html, "window.__customShell = true;") {
-		t.Fatalf("expected custom shell/js to be ignored")
 	}
 }
 
@@ -329,11 +271,17 @@ func TestRenderReportHTMLExtractsBlockTitle(t *testing.T) {
 			{ID: "b2", Kind: "html", Title: "", Content: `<h3 id="custom">嵌套 <span style="color:red">HTML</span> 标题</h3>内容`},
 		},
 	})
-	if !strings.Contains(html, `<li><a href="#section-1">纯 Markdown 标题</a></li>`) {
-		t.Fatalf("expected md title to be extracted, got: %s", html)
+	if !strings.Contains(html, `data-block-id="b1" data-block-kind="markdown" data-block-title="纯 Markdown 标题"`) {
+		t.Fatalf("expected markdown wrapper title to be extracted from content heading, got: %s", html)
 	}
-	if !strings.Contains(html, `<li><a href="#section-2">嵌套 HTML 标题</a></li>`) {
-		t.Fatalf("expected html title to be extracted and tags stripped, got: %s", html)
+	if !strings.Contains(html, `data-block-id="b2" data-block-kind="html" data-block-title="嵌套 HTML 标题"`) {
+		t.Fatalf("expected html wrapper title to be extracted and tags stripped, got: %s", html)
+	}
+	if !strings.Contains(html, `<h3>纯 Markdown 标题</h3>`) || !strings.Contains(html, `<h3>嵌套 <span>HTML</span> 标题</h3>`) {
+		t.Fatalf("expected original section headings to be preserved after sanitization, got: %s", html)
+	}
+	if strings.Contains(html, `id="custom"`) || strings.Contains(html, `style="color:red"`) {
+		t.Fatalf("expected unsafe html attributes to be stripped from extracted heading, got: %s", html)
 	}
 }
 
@@ -375,8 +323,5 @@ func TestRenderReportHTMLHistoricalSnapshotFallbackTitle(t *testing.T) {
 
 	if !strings.Contains(html, "<h2>旧版分析模块</h2>") {
 		t.Fatalf("expected historical snapshot rendering regression test to synthesize h2 title from block.Title when content lacks one, got: %s", html)
-	}
-	if !strings.Contains(html, `<li><a href="#section-1">旧版分析模块</a></li>`) {
-		t.Fatalf("expected historical snapshot fallback title to appear in TOC, got: %s", html)
 	}
 }

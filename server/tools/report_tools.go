@@ -30,7 +30,7 @@ type ManageReportBlocksTool struct {
 	EditState   *ReportEditState
 }
 
-// FinalizeReportTool 生成最终报告
+// FinalizeReportTool 校验并更新报告交付状态
 type FinalizeReportTool struct {
 	ReportState *ReportState
 	Subgoals    SubgoalChecker
@@ -38,7 +38,7 @@ type FinalizeReportTool struct {
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
 func (t *ConfigureReportTool) Description() string {
-	return "读取并修改报告布局配置。可用于更新或重置 CSS、body class 和封面/目录显示选项；会修改 report layout 状态，但不会直接修改 block 或 chart。执行后若当前报告已有内容，delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。出于安全原因，不支持注入自定义 HTML 壳或自定义 JS。"
+	return "读取并修改报告布局配置。支持更新或重置 CSS 与 body class；会修改 report layout 状态，但不会直接修改 block 或 chart。返回结果包含更新后的布局事实与 delivery_state。"
 }
 func (t *ConfigureReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -46,15 +46,32 @@ func (t *ConfigureReportTool) Parameters() json.RawMessage {
 		"properties": {
 			"action": {"type": "string", "enum": ["merge", "reset"], "description": "merge（默认）或 reset。"},
 			"custom_css": {"type": "string", "description": "追加到页面中的自定义 CSS。"},
-			"body_class": {"type": "string", "description": "附加到 body 的 class。"},
-			"hide_cover": {"type": "boolean", "description": "是否隐藏默认封面。"},
-			"hide_toc": {"type": "boolean", "description": "是否隐藏默认目录。"}
+			"body_class": {"type": "string", "description": "附加到 body 的 class。"}
 		},
 		"required": []
 	}`)
 }
 
 func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(args, &raw); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+	unsupported := make([]string, 0)
+	for key := range raw {
+		switch key {
+		case "action", "custom_css", "body_class":
+		default:
+			unsupported = append(unsupported, key)
+		}
+	}
+	if len(unsupported) > 0 {
+		return toolFailure("report_configure_layout", "unsupported_layout_fields", "存在不支持的布局字段", map[string]interface{}{
+			"unsupported_fields": unsupported,
+			"ui_summary":         "存在不支持的布局字段。",
+		}), nil
+	}
+
 	var params reportLayoutParams
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("参数解析失败: %w", err)
@@ -62,13 +79,6 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 
 	result, err := applyReportLayoutMutation(t.ReportState, params)
 	if err != nil {
-		var unsafeErr reportLayoutUnsafeError
-		if errors.As(err, &unsafeErr) {
-			return toolFailure("report_configure_layout", "unsafe_layout_option", "出于安全原因，当前版本不支持 custom_html_shell 或 custom_js", map[string]interface{}{
-				"action":     unsafeErr.Action,
-				"ui_summary": "当前版本已禁用自定义 HTML 壳和自定义 JS",
-			}), nil
-		}
 		return "", err
 	}
 
@@ -76,15 +86,13 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 		"action":         result.Action,
 		"has_custom_css": result.HasCustomCSS,
 		"body_class":     result.BodyClass,
-		"hide_cover":     result.HideCover,
-		"hide_toc":       result.HideTOC,
 		"ui_summary":     result.UISummary,
 	}), nil
 }
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
 func (t *ManageReportBlocksTool) Description() string {
-	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 title、markdown、html、chart 四类 block；markdown/html block 的 content 支持使用 `{{chart:chart_id}}` 占位符在正文中内联展示图表，chart block 则用于独立图表段落。会直接修改报告内容结构，但执行后 report delivery_state 仍会保持 draft，只有 report_finalize 才会把当前报告变成最终可交付状态。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
+	return "修改报告中的 block 结构。支持 append、upsert、remove、move，作用对象是 markdown、html、chart 三类 block；markdown/html block 的 content 支持使用 `{{chart:chart_id}}` 占位符在正文中内联展示图表，chart block 用于独立图表段落。会直接修改报告内容结构，并返回 block_id、block_count 与 delivery_state 等事实。在局部编辑范围存在时，此工具只允许修改被授权的 block。"
 }
 func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -92,7 +100,7 @@ func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 		"properties": {
 			"action": {"type": "string", "enum": ["append", "upsert", "remove", "move"], "description": "append（默认）、upsert、remove、move"},
 			"block_id": {"type": "string", "description": "block 稳定 ID。upsert/remove/move 必填；append 可选，不填则自动生成。"},
-			"block_kind": {"type": "string", "enum": ["title", "markdown", "html", "chart"], "description": "block 类型。"},
+			"block_kind": {"type": "string", "enum": ["markdown", "html", "chart"], "description": "block 类型。"},
 			"title": {"type": "string", "description": "标题。"},
 			"content": {"type": "string", "description": "block 内容。markdown/html block 可使用 {{chart:chart_id}} 内联图表；chart block 时作为图下说明。"},
 			"chart_id": {"type": "string", "description": "chart block 引用的图表 ID。"},
@@ -147,7 +155,7 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *FinalizeReportTool) Name() string { return "report_finalize" }
 func (t *FinalizeReportTool) Description() string {
-	return "将当前 report state 从 draft 收尾为 finalized，并写入最终标题/作者。调用时会校验报告结构和未闭环目标；如果状态不合法会拒绝执行。该工具不负责补全缺失内容，只负责在当前状态可落地时完成收尾；未调用时，当前 block/chart 只停留在中间状态，不会落地为最终报告文件。"
+	return "校验当前 report state 与未闭环目标；如果状态合法，则写入最终标题/作者并将 delivery_state 置为 finalized。失败时返回 blockers 或结构问题；不会自动补全缺失内容，也不会静默改写已有 block 或 chart。"
 }
 func (t *FinalizeReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -188,6 +196,6 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		"author":       result.Author,
 		"block_count":  result.BlockCount,
 		"chart_count":  result.ChartCount,
-		"ui_summary":   fmt.Sprintf("研究报告已生成完成（%d 个内容块，%d 个交互式图表）", result.BlockCount, result.ChartCount),
+		"ui_summary":   fmt.Sprintf("delivery_state=finalized；block_count=%d；chart_count=%d", result.BlockCount, result.ChartCount),
 	}), nil
 }

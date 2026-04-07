@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
 	htmlnode "golang.org/x/net/html"
@@ -48,12 +47,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	title = strings.TrimSpace(title)
 	author = strings.TrimSpace(author)
 	safeTitle := escapeHTMLText(title)
-	safeAuthor := escapeHTMLText(author)
 
-	now := time.Now().Format("2006年01月02日")
-	safeDate := escapeHTMLText(now)
-
-	var tocHTML strings.Builder
 	var bodyHTML strings.Builder
 	chapterNum := 0
 
@@ -84,10 +78,6 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		}
 
 		chapterNum++
-		displayTitle := blockDisplayTitle(block)
-		if displayTitle != "" {
-			tocHTML.WriteString(fmt.Sprintf(`<li><a href="#section-%d">%s</a></li>`, chapterNum, escapeHTMLText(displayTitle)))
-		}
 		bodyHTML.WriteString(renderReportBlockHTML(block, chapterNum, state.Charts, unit.AttachedCharts))
 	}
 
@@ -98,24 +88,6 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	chartScripts := buildChartScripts(state.Charts)
 	customCSS := sanitizeCSS(state.Layout.CustomCSS)
 	bodyClass := sanitizeBodyClass(state.Layout.BodyClass)
-	coverHTML := ""
-	if !state.Layout.HideCover {
-		coverHTML = fmt.Sprintf(`<div class="cover">
-  <h1>%s</h1>
-  <div class="divider"></div>
-  <div class="meta">
-    <span>📊 %s</span>
-    <span>📅 %s</span>
-  </div>
-</div>`, safeTitle, safeAuthor, safeDate)
-	}
-	tocBlockHTML := ""
-	if !state.Layout.HideTOC {
-		tocBlockHTML = fmt.Sprintf(`<div class="toc">
-  <h2>目录</h2>
-  <ol>%s</ol>
-</div>`, tocHTML.String())
-	}
 
 	customCSSBlock := ""
 	if customCSS != "" {
@@ -166,108 +138,6 @@ body {
   background: var(--bg-alt);
   -webkit-font-smoothing: antialiased;
 }
-
-/* === 封面 === */
-.cover {
-  min-height: 70vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  background: linear-gradient(160deg, var(--primary) 0%%, var(--primary-light) 50%%, #2563eb 100%%);
-  color: white;
-  text-align: center;
-  padding: 5rem 2rem;
-  position: relative;
-  overflow: hidden;
-  page-break-after: always;
-}
-.cover::before {
-  content: '';
-  position: absolute;
-  top: -50%%; left: -50%%;
-  width: 200%%; height: 200%%;
-  background: radial-gradient(circle at 30%% 70%%, rgba(255,255,255,0.06) 0%%, transparent 50%%),
-              radial-gradient(circle at 70%% 30%%, rgba(232,168,56,0.1) 0%%, transparent 40%%);
-  animation: coverShift 20s ease-in-out infinite alternate;
-}
-@keyframes coverShift {
-  0%% { transform: translate(0, 0) rotate(0deg); }
-  100%% { transform: translate(-2%%, 2%%) rotate(1deg); }
-}
-.cover h1 {
-  font-size: 2.8rem;
-  margin-bottom: 1rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  position: relative;
-  z-index: 1;
-  text-shadow: 0 2px 20px rgba(0,0,0,0.15);
-}
-.cover .subtitle {
-  font-size: 1.15rem;
-  opacity: 0.8;
-  max-width: 600px;
-  position: relative;
-  z-index: 1;
-}
-.cover .divider {
-  width: 60px;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent), #f7c948);
-  margin: 2rem auto;
-  border-radius: 2px;
-  position: relative;
-  z-index: 1;
-}
-.cover .meta {
-  font-size: 1rem;
-  opacity: 0.75;
-  position: relative;
-  z-index: 1;
-  display: flex;
-  gap: 2rem;
-  align-items: center;
-}
-.cover .meta span {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-/* === 目录 === */
-.toc {
-  max-width: 780px;
-  margin: 3rem auto;
-  padding: 2.5rem;
-  background: var(--bg);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
-  page-break-after: always;
-}
-.toc h2 {
-  color: var(--primary);
-  font-size: 1.35rem;
-  font-weight: 700;
-  padding-bottom: 0.75rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 3px solid var(--accent);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.toc h2::before { content: '📑'; }
-.toc ol { padding-left: 1.5rem; }
-.toc li {
-  list-style: none;
-  padding: 0.5rem 0.5rem;
-  border-bottom: 1px solid var(--border-light);
-  transition: all 0.2s ease;
-  border-radius: 6px;
-}
-.toc li:hover { background: var(--bg-alt); padding-left: 1rem; }
-.toc a { color: var(--text); text-decoration: none; font-weight: 500; min-width: 1.8rem; }
-.toc a:hover { color: var(--primary-light); }
 
 /* === 章节 === */
 .section {
@@ -334,29 +204,6 @@ body {
   color: var(--text);
 }
 
-/* === 摘要框 === */
-.summary-box {
-  background: linear-gradient(135deg, var(--bg-warm) 0%%, var(--accent-light) 100%%);
-  border-left: 4px solid var(--accent);
-  padding: 1.75rem 2rem;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  margin: 1rem 0;
-  font-size: 0.95rem;
-  line-height: 1.9;
-  box-shadow: var(--shadow-sm);
-}
-
-/* === 结论框 === */
-.conclusion-box {
-  background: linear-gradient(135deg, #f0f9ff 0%%, #ecfdf5 100%%);
-  border: 1px solid #bae6fd;
-  border-left: 4px solid #0ea5e9;
-  padding: 1.75rem 2rem;
-  border-radius: var(--radius-sm);
-  margin: 1rem 0;
-  box-shadow: var(--shadow-sm);
-}
-
 /* === 图表 === */
 .chart-box {
   width: 100%%;
@@ -399,39 +246,16 @@ tr:nth-child(even) { background: var(--bg-alt); }
 tr:hover td { background: var(--primary-soft); }
 strong { color: var(--primary); font-weight: 600; }
 
-/* === 页脚 === */
-.footer {
-  max-width: 780px;
-  margin: 2rem auto 3rem;
-  padding: 2rem;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  position: relative;
-}
-.footer::before {
-  content: '';
-  display: block;
-  width: 60px;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--border), transparent);
-  margin: 0 auto 1.5rem;
-}
-.footer p { line-height: 1.6; }
-
 /* === 打印样式 === */
 @media print {
   body { background: white; }
-  .cover { min-height: 100vh; }
   .section { box-shadow: none; page-break-inside: avoid; margin: 1rem auto; }
-  .toc { box-shadow: none; }
   .chart-box { box-shadow: none; }
   table { box-shadow: none; }
 }
 /* === 响应式 === */
 @media (max-width: 860px) {
-  .section, .toc, .footer { margin-left: 1rem; margin-right: 1rem; }
-  .cover h1 { font-size: 2rem; }
+  .section { margin-left: 1rem; margin-right: 1rem; }
 }
 %s
 </style>
@@ -440,40 +264,8 @@ strong { color: var(--primary); font-weight: 600; }
 <body class="%s">
 %s
 %s
-%s
-<div class="footer">
-  <p>本报告由 AI 数据分析智能体自动生成 | %s</p>
-</div>
-%s
 </body>
-</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, coverHTML, tocBlockHTML, bodyHTML.String(), safeDate, chartScripts)
-}
-
-type reportShellData struct {
-	Title        string
-	Author       string
-	Date         string
-	TOC          string
-	Content      string
-	ChartScripts string
-	CustomCSS    string
-	CustomJS     string
-	BodyClass    string
-}
-
-type sectionRenderPreset struct {
-	classes   []string
-	bodyClass string
-	rawTitle  bool
-}
-
-var sectionRenderPresets = map[string]sectionRenderPreset{
-	"summary":           {classes: []string{"section", "summary"}, bodyClass: "summary-box", rawTitle: true},
-	"executive_summary": {classes: []string{"section", "summary"}, bodyClass: "summary-box", rawTitle: true},
-	"conclusion":        {classes: []string{"section", "conclusion"}, bodyClass: "conclusion-box"},
-	"appendix":          {classes: []string{"section", "appendix"}, bodyClass: "content"},
-	"risks":             {classes: []string{"section", "risks"}, bodyClass: "content"},
-	"methodology":       {classes: []string{"section", "methodology"}, bodyClass: "content"},
+</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, bodyHTML.String(), chartScripts)
 }
 
 func buildChartScripts(charts []ChartData) string {
@@ -512,27 +304,6 @@ func buildChartScripts(charts []ChartData) string {
 	return chartScripts.String()
 }
 
-func renderCustomShell(shell string, data reportShellData) string {
-	replacements := strings.NewReplacer(
-		"{{title}}", data.Title,
-		"{{author}}", data.Author,
-		"{{date}}", data.Date,
-		"{{toc}}", data.TOC,
-		"{{content}}", data.Content,
-		"{{chart_scripts}}", data.ChartScripts,
-		"{{custom_css}}", data.CustomCSS,
-		"{{custom_js}}", data.CustomJS,
-		"{{body_class}}", data.BodyClass,
-	)
-	rendered := replacements.Replace(shell)
-	if !strings.Contains(rendered, "{{content}}") && !strings.Contains(shell, "{{content}}") && !strings.Contains(rendered, data.Content) {
-		rendered += data.Content
-	}
-	return rendered
-}
-
- 
-
 func collectReferencedCharts(blocks []ReportBlock) map[string]struct{} {
 	re := regexp.MustCompile(`\{\{chart:(\w+)\}\}`)
 	refs := make(map[string]struct{})
@@ -552,8 +323,6 @@ func collectReferencedCharts(blocks []ReportBlock) map[string]struct{} {
 func isTitleBlock(block ReportBlock) bool {
 	return strings.EqualFold(strings.TrimSpace(block.Kind), "title")
 }
-
- 
 
 func blockDisplayTitle(block ReportBlock) string {
 	if title := extractContentHeadingTitle(block.Content); title != "" {
@@ -593,7 +362,7 @@ var reportBlockRenderers = map[string]reportBlockRenderer{
 }
 
 type reportRenderUnit struct {
-	Block         ReportBlock
+	Block          ReportBlock
 	AttachedCharts []ReportBlock
 }
 
@@ -618,7 +387,6 @@ func renderMarkdownBlockHTMLStandalone(block ReportBlock, chapterNum int, charts
 }
 
 func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartData, attachedCharts []ReportBlock) string {
-	preset := inferMarkdownBlockPreset(block)
 	displayTitle := blockDisplayTitle(block)
 
 	headingHTML := ""
@@ -629,33 +397,9 @@ func renderMarkdownBlockHTML(block ReportBlock, chapterNum int, charts []ChartDa
 	contentHTML := headingHTML + processContent(block.Content, charts) + renderAttachedChartsInline(attachedCharts, charts)
 
 	return fmt.Sprintf(`
-		<div class="%s" id="section-%d">
-			<div class="%s">%s</div>
-		</div>`, strings.Join(preset.classes, " "), chapterNum, escapeHTMLAttr(preset.bodyClass), contentHTML)
-}
-
-func inferMarkdownBlockPreset(block ReportBlock) sectionRenderPreset {
-	defaultPreset := sectionRenderPreset{classes: []string{"section"}, bodyClass: "content"}
-	hint := strings.ToLower(strings.TrimSpace(block.ID + " " + block.Title + " " + blockDisplayTitle(block)))
-	switch {
-	case strings.Contains(hint, "summary"), strings.Contains(hint, "摘要"):
-		if preset, ok := sectionRenderPresets["summary"]; ok {
-			return preset
-		}
-	case strings.Contains(hint, "conclusion"), strings.Contains(hint, "结论"):
-		if preset, ok := sectionRenderPresets["conclusion"]; ok {
-			return preset
-		}
-	case strings.Contains(hint, "risk"), strings.Contains(hint, "风险"):
-		if preset, ok := sectionRenderPresets["risks"]; ok {
-			return preset
-		}
-	case strings.Contains(hint, "method"), strings.Contains(hint, "方法"):
-		if preset, ok := sectionRenderPresets["methodology"]; ok {
-			return preset
-		}
-	}
-	return defaultPreset
+			<div class="section" id="section-%d">
+				<div class="content">%s</div>
+			</div>`, chapterNum, contentHTML)
 }
 
 func renderHTMLBlock(block ReportBlock, chapterNum int, charts []ChartData, attachedCharts []ReportBlock) string {

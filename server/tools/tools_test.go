@@ -402,6 +402,7 @@ func TestManageReportBlocksAndFinalizeReturnStructuredPayloads(t *testing.T) {
 		ReportTitle string `json:"report_title"`
 		BlockCount  int    `json:"block_count"`
 		ChartCount  int    `json:"chart_count"`
+		UISummary   string `json:"ui_summary"`
 	}
 	if err := json.Unmarshal([]byte(finalizeResult), &finalizePayload); err != nil {
 		t.Fatalf("expected finalize json payload: %v", err)
@@ -409,8 +410,22 @@ func TestManageReportBlocksAndFinalizeReturnStructuredPayloads(t *testing.T) {
 	if !finalizePayload.OK || finalizePayload.ReportTitle != "销售分析" || finalizePayload.BlockCount != 1 || finalizePayload.ChartCount != 0 {
 		t.Fatalf("unexpected finalize payload: %#v", finalizePayload)
 	}
+	if finalizePayload.UISummary != "delivery_state=finalized；block_count=1；chart_count=0" {
+		t.Fatalf("unexpected finalize ui_summary: %#v", finalizePayload.UISummary)
+	}
 	if state.NeedsFinalize {
 		t.Fatal("expected finalize to clear draft flag")
+	}
+}
+
+func TestManageReportBlocksRejectsTitleBlockKind(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{}
+	blockTool := &ManageReportBlocksTool{ReportState: state}
+
+	if _, err := blockTool.Execute(json.RawMessage(`{"block_id":"heading","block_kind":"title","title":"只写标题"}`)); err == nil {
+		t.Fatal("expected title block_kind to be rejected")
 	}
 }
 
@@ -487,6 +502,35 @@ func TestFinalizeReportRejectsInvalidReportState(t *testing.T) {
 	}
 }
 
+func TestFinalizeReportRejectsTitleOnlyBlocks(t *testing.T) {
+	t.Parallel()
+
+	tool := &FinalizeReportTool{
+		ReportState: &ReportState{
+			Blocks: []ReportBlock{
+				{ID: "heading", Kind: "title", Title: "只有标题"},
+			},
+		},
+	}
+
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("expected structured tool failure instead of error, got %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize failure json payload: %v", err)
+	}
+	if payload["ok"] != false || payload["error_code"] != "report_state_invalid" {
+		t.Fatalf("unexpected finalize failure payload: %#v", payload)
+	}
+	issues, ok := payload["finalize_issues"].([]interface{})
+	if !ok || len(issues) != 1 || issues[0] != "report_has_no_blocks" {
+		t.Fatalf("expected report_has_no_blocks issue, got %#v", payload["finalize_issues"])
+	}
+}
+
 func TestFinalizeReportAllowsDuplicateBlockHeadingAndMissingChartCaption(t *testing.T) {
 	t.Parallel()
 
@@ -523,9 +567,7 @@ func TestConfigureReportToolMergeAndReset(t *testing.T) {
 
 	result, err := tool.Execute(json.RawMessage(`{
 		"custom_css":".hero{color:red;}",
-		"body_class":"magazine",
-		"hide_cover":true,
-		"hide_toc":true
+		"body_class":"magazine"
 	}`))
 	if err != nil {
 		t.Fatalf("merge execute: %v", err)
@@ -538,23 +580,23 @@ func TestConfigureReportToolMergeAndReset(t *testing.T) {
 	if payload["ok"] != true {
 		t.Fatalf("expected ok=true, got %#v", payload["ok"])
 	}
-	if !state.Layout.HideCover || !state.Layout.HideTOC || state.Layout.BodyClass != "magazine" {
+	if state.Layout.BodyClass != "magazine" || state.Layout.CustomCSS != ".hero{color:red;}" {
 		t.Fatalf("unexpected layout after merge: %#v", state.Layout)
 	}
 	if !state.NeedsFinalize {
 		t.Fatal("expected layout merge to require finalize")
 	}
 
-	rejected, err := tool.Execute(json.RawMessage(`{"custom_js":"console.log('x')"}`))
+	rejected, err := tool.Execute(json.RawMessage(`{"unknown_field":"x"}`))
 	if err != nil {
-		t.Fatalf("unsafe merge execute: %v", err)
+		t.Fatalf("unsupported merge execute: %v", err)
 	}
 	var rejectedPayload map[string]interface{}
 	if err := json.Unmarshal([]byte(rejected), &rejectedPayload); err != nil {
 		t.Fatalf("expected failure payload: %v", err)
 	}
 	if rejectedPayload["ok"] != false {
-		t.Fatalf("expected ok=false for unsafe options, got %#v", rejectedPayload["ok"])
+		t.Fatalf("expected ok=false for unsupported options, got %#v", rejectedPayload["ok"])
 	}
 
 	if _, err := tool.Execute(json.RawMessage(`{"action":"reset"}`)); err != nil {

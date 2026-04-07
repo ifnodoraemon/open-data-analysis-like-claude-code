@@ -34,12 +34,8 @@ type ReportBlock struct {
 }
 
 type ReportLayout struct {
-	CustomHTMLShell string `json:"customHtmlShell,omitempty"`
-	CustomCSS       string `json:"customCss,omitempty"`
-	CustomJS        string `json:"customJs,omitempty"`
-	BodyClass       string `json:"bodyClass,omitempty"`
-	HideCover       bool   `json:"hideCover,omitempty"`
-	HideTOC         bool   `json:"hideToc,omitempty"`
+	CustomCSS string `json:"customCss,omitempty"`
+	BodyClass string `json:"bodyClass,omitempty"`
 }
 
 type ReportEditState struct {

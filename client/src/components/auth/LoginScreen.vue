@@ -7,14 +7,24 @@
       <form class="form" @submit.prevent="handleLogin">
         <label class="field">
           <span>账号</span>
-          <input v-model.trim="email" type="text" autocomplete="username" placeholder="请输入账号" />
+          <input
+            v-model.trim="email"
+            type="text"
+            autocomplete="username"
+            placeholder="请输入账号"
+          />
         </label>
         <label class="field">
           <span>密码</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="请输入密码" />
+          <input
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="请输入密码"
+          />
         </label>
         <button class="submit" :disabled="loading || !email || !password">
-          {{ loading ? '登录中...' : '登录' }}
+          {{ loading ? "登录中..." : "登录" }}
         </button>
       </form>
       <p v-if="error" class="error">{{ error }}</p>
@@ -23,27 +33,27 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { useWebSocket } from '../../composables/useWebSocket.js'
+import { ref } from "vue";
+import { useWebSocket } from "../../composables/useWebSocket.js";
 
-const emit = defineEmits(['success'])
-const { login } = useWebSocket()
-const email = ref('')
-const password = ref('')
-const loading = ref(false)
-const error = ref('')
+const emit = defineEmits(["success"]);
+const { login } = useWebSocket();
+const email = ref("");
+const password = ref("");
+const loading = ref(false);
+const error = ref("");
 
 async function handleLogin() {
-  if (loading.value) return
-  loading.value = true
-  error.value = ''
+  if (loading.value) return;
+  loading.value = true;
+  error.value = "";
   try {
-    await login(email.value, password.value)
-    emit('success')
+    await login(email.value, password.value);
+    emit("success");
   } catch (err) {
-    error.value = err.message || '登录失败'
+    error.value = err.message || "登录失败";
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 </script>

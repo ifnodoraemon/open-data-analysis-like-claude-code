@@ -86,7 +86,7 @@ func TestCompactToolResult(t *testing.T) {
 	runPythonResult := `{
   "ok": false,
   "tool": "code_run_python",
-  "summary_text": "Python 执行失败 (12ms)",
+  "ui_summary": "Python 执行失败 (12ms)",
   "error_code": "execution_failed",
   "detail": "NameError"
 }`
@@ -94,8 +94,8 @@ func TestCompactToolResult(t *testing.T) {
 	if strings.Contains(compactedPython, "\n") {
 		t.Fatalf("expected minified code_run_python result, got %q", compactedPython)
 	}
-	if strings.Contains(compactedPython, "summary_text") {
-		t.Fatalf("expected compacted code_run_python result to drop summary_text, got %q", compactedPython)
+	if strings.Contains(compactedPython, "ui_summary") {
+		t.Fatalf("expected compacted code_run_python result to drop ui_summary, got %q", compactedPython)
 	}
 }
 
@@ -105,12 +105,12 @@ func TestExtractToolSummaryPrefersStructuredFacts(t *testing.T) {
 	raw := `{
   "ok": false,
   "tool": "code_run_python",
-  "summary_text": "Python 执行失败 (12ms)",
+  "ui_summary": "Python 执行失败 (12ms)",
   "error_code": "execution_failed"
 }`
 	summary := extractToolSummary(raw)
 	if strings.Contains(summary, "Python 执行失败") {
-		t.Fatalf("expected structured summary instead of summary_text, got %q", summary)
+		t.Fatalf("expected structured summary instead of ui_summary, got %q", summary)
 	}
 	if !strings.Contains(summary, "tool=code_run_python") || !strings.Contains(summary, "error_code=execution_failed") {
 		t.Fatalf("expected structured fields in summary, got %q", summary)
@@ -243,6 +243,9 @@ func TestInspectReportStateToolReturnsFactsOnly(t *testing.T) {
 	if payload["chart_count"].(float64) != 2 {
 		t.Fatalf("unexpected chart count: %#v", payload["chart_count"])
 	}
+	if payload["renderable_block_count"].(float64) != 2 {
+		t.Fatalf("unexpected renderable block count: %#v", payload["renderable_block_count"])
+	}
 	if len(payload["missing_chart_references"].([]interface{})) != 1 {
 		t.Fatalf("expected one missing chart ref, got %#v", payload["missing_chart_references"])
 	}
@@ -261,7 +264,7 @@ func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {
 	t.Parallel()
 
 	engine := &Engine{
-		policy: "system",
+		policy:  "system",
 		history: []ConversationItem{},
 	}
 

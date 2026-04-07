@@ -348,16 +348,29 @@ func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.Anal
 }
 
 func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, limit int) ([]domain.AnalysisRun, error) {
-	if limit <= 0 {
+	if limit == 0 {
 		limit = 20
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? AND (parent_run_id IS NULL OR parent_run_id = '') ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	query := `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE session_id = ? AND (parent_run_id IS NULL OR parent_run_id = '') ORDER BY created_at DESC`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if limit < 0 {
+		rows, err = r.db.QueryContext(ctx, query, sessionID)
+	} else {
+		rows, err = r.db.QueryContext(ctx, query+` LIMIT ?`, sessionID, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	runs := make([]domain.AnalysisRun, 0, limit)
+	initialCap := limit
+	if initialCap < 0 {
+		initialCap = 0
+	}
+	runs := make([]domain.AnalysisRun, 0, initialCap)
 	for rows.Next() {
 		var run domain.AnalysisRun
 		var status, runKind string

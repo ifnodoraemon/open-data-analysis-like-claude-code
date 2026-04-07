@@ -74,6 +74,24 @@ func referencedChartsOutsideChartBlocks(blocks []ReportBlock) map[string]struct{
 	return refs
 }
 
+func renderableReportBlockCount(blocks []ReportBlock) int {
+	count := 0
+	for _, block := range blocks {
+		switch strings.ToLower(strings.TrimSpace(block.Kind)) {
+		case "markdown", "html", "chart":
+			count++
+		}
+	}
+	return count
+}
+
+func RenderableReportBlockCount(state *ReportState) int {
+	if state == nil {
+		return 0
+	}
+	return renderableReportBlockCount(state.Blocks)
+}
+
 func reportFinalizeIssues(state *ReportState) []string {
 	if state == nil {
 		return []string{"report_state_missing"}
@@ -98,7 +116,7 @@ func reportFinalizeIssues(state *ReportState) []string {
 	}
 
 	var issues []string
-	if len(state.Blocks) == 0 {
+	if renderableReportBlockCount(state.Blocks) == 0 {
 		issues = append(issues, "report_has_no_blocks")
 	}
 

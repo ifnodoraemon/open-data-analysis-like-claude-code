@@ -9,7 +9,7 @@
         <span class="arrow" :class="{ collapsed: isCollapsed }">▼</span>
       </button>
     </div>
-    
+
     <div class="tree-content" v-show="!isCollapsed">
       <transition-group name="list" tag="div" class="goal-list">
         <SubgoalTreeNode
@@ -24,18 +24,20 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useAgentStore } from '../../stores/agent.js'
-import SubgoalTreeNode from './SubgoalTreeNode.vue'
+import { computed, ref } from "vue";
+import { useAgentStore } from "../../stores/agent.js";
+import SubgoalTreeNode from "./SubgoalTreeNode.vue";
 
-const store = useAgentStore()
-const subgoals = computed(() => store.subgoals || [])
-const isCollapsed = ref(false)
+const store = useAgentStore();
+const subgoals = computed(() => store.subgoals || []);
+const isCollapsed = ref(false);
 
 const completedCount = computed(() => {
-  return subgoals.value.filter(g => g.status === 'complete').length
-})
-const rootGoals = computed(() => subgoals.value.filter(goal => !goal.parentGoalId))
+  return subgoals.value.filter((g) => g.status === "complete").length;
+});
+const rootGoals = computed(() =>
+  subgoals.value.filter((goal) => !goal.parentGoalId),
+);
 </script>
 
 <style scoped>
@@ -45,7 +47,7 @@ const rootGoals = computed(() => subgoals.value.filter(goal => !goal.parentGoalI
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .tree-header {

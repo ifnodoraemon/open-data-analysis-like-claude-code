@@ -192,3 +192,65 @@ func TestRunLoggingHookWritesEventLogs(t *testing.T) {
 		t.Fatalf("expected failure log, got %q", output)
 	}
 }
+
+func TestRuntimeEventDispatcherRoutesChildRunEventsWithoutRootHooks(t *testing.T) {
+	t.Parallel()
+
+	delivered := make([]string, 0, 2)
+	hooked := false
+	dispatcher := runtimeEventDispatcher{
+		deliver: func(ev agent.WSEvent) {
+			delivered = append(delivered, "root:"+ev.Type)
+		},
+		deliverToRun: func(runID string, ev agent.WSEvent) {
+			delivered = append(delivered, runID+":"+ev.Type)
+		},
+		scope: runtimeEventScope{
+			runID: "root_run",
+		},
+		hooks: []runtimeEventHook{
+			func(runtimeEventScope, agent.WSEvent) {
+				hooked = true
+			},
+		},
+	}
+
+	dispatcher.Emit(agent.WSEvent{
+		Type:  agent.EventThinking,
+		RunID: "child_run",
+		Data:  agent.ThinkingData{Content: "child"},
+	})
+
+	if len(delivered) != 1 || delivered[0] != "child_run:thinking" {
+		t.Fatalf("unexpected deliveries: %v", delivered)
+	}
+	if hooked {
+		t.Fatal("expected child run events to bypass root hooks")
+	}
+}
+
+func TestRuntimeEventDispatcherStillEmitsChildReportPreview(t *testing.T) {
+	t.Parallel()
+
+	previewRuns := make([]string, 0, 1)
+	dispatcher := runtimeEventDispatcher{
+		deliver:      func(agent.WSEvent) {},
+		deliverToRun: func(string, agent.WSEvent) {},
+		emitChildPreview: func(runID string) {
+			previewRuns = append(previewRuns, runID)
+		},
+		scope: runtimeEventScope{
+			runID: "root_run",
+		},
+	}
+
+	dispatcher.Emit(agent.WSEvent{
+		Type:  agent.EventToolResult,
+		RunID: "child_run",
+		Data:  agent.ToolResultData{Name: "report_manage_blocks", Success: true},
+	})
+
+	if len(previewRuns) != 1 || previewRuns[0] != "child_run" {
+		t.Fatalf("expected child preview emission, got %v", previewRuns)
+	}
+}

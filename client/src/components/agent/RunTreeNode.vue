@@ -11,7 +11,9 @@
         <span class="run-title">{{ runTitle }}</span>
       </span>
       <span class="run-badges">
-        <span v-if="run.runKind === 'delegate'" class="run-kind delegate">子任务</span>
+        <span v-if="run.runKind === 'delegate'" class="run-kind delegate"
+          >子任务</span
+        >
         <span v-if="run.id === activeRunId" class="run-kind live">实时</span>
       </span>
     </button>
@@ -45,11 +47,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed } from "vue";
 
 defineOptions({
-  name: 'RunTreeNode',
-})
+  name: "RunTreeNode",
+});
 
 const props = defineProps({
   run: {
@@ -58,44 +60,57 @@ const props = defineProps({
   },
   selectedRunId: {
     type: String,
-    default: '',
+    default: "",
   },
   activeRunId: {
     type: String,
-    default: '',
+    default: "",
   },
-})
+});
 
-defineEmits(['select'])
+defineEmits(["select"]);
 
-const children = computed(() => props.run.childRuns || [])
+const children = computed(() => props.run.childRuns || []);
 
 const runTitle = computed(() => {
-  return props.run.delegateRole || props.run.summary || props.run.inputMessage || props.run.id
-})
+  return (
+    props.run.delegateRole ||
+    props.run.summary ||
+    props.run.inputMessage ||
+    props.run.id
+  );
+});
 
 const runMetaText = computed(() => {
-  if (props.run.errorMessage) return props.run.errorMessage
-  if (props.run.summary && props.run.summary !== runTitle.value) return props.run.summary
-  if (props.run.inputMessage && props.run.inputMessage !== runTitle.value) return props.run.inputMessage
-  return ''
-})
+  if (props.run.errorMessage) return props.run.errorMessage;
+  if (props.run.summary && props.run.summary !== runTitle.value)
+    return props.run.summary;
+  if (props.run.inputMessage && props.run.inputMessage !== runTitle.value)
+    return props.run.inputMessage;
+  return "";
+});
 
-const previewMessages = computed(() => props.run.previewMessages || [])
+const previewMessages = computed(() => props.run.previewMessages || []);
 
 const nodeClasses = computed(() => ({
   active: props.run.id === props.selectedRunId,
   live: props.run.id === props.activeRunId,
-}))
+}));
 
 function previewType(item) {
   switch (item?.type) {
-    case 'thinking': return '思考'
-    case 'tool_call': return '调用'
-    case 'tool_result': return '结果'
-    case 'error': return '错误'
-    case 'run_completed': return '完成'
-    default: return '事件'
+    case "thinking":
+      return "思考";
+    case "tool_call":
+      return "调用";
+    case "tool_result":
+      return "结果";
+    case "error":
+      return "错误";
+    case "run_completed":
+      return "完成";
+    default:
+      return "事件";
   }
 }
 </script>
@@ -145,11 +160,21 @@ function previewType(item) {
   flex-shrink: 0;
 }
 
-.status-running { background: var(--accent-blue); }
-.status-completed { background: var(--accent-green); }
-.status-cancelled { background: var(--accent-orange); }
-.status-failed { background: var(--accent-red); }
-.status-queued { background: var(--text-muted); }
+.status-running {
+  background: var(--accent-blue);
+}
+.status-completed {
+  background: var(--accent-green);
+}
+.status-cancelled {
+  background: var(--accent-orange);
+}
+.status-failed {
+  background: var(--accent-red);
+}
+.status-queued {
+  background: var(--text-muted);
+}
 
 .run-title {
   font-size: 0.82rem;

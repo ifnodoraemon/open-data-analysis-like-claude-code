@@ -8,103 +8,122 @@ import (
 
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/session"
 )
 
-func serializeRuntimeState(memory map[string]string, subgoals []agent.Subgoal) map[string]interface{} {
-	return map[string]interface{}{
-		"memory":   memory,
-		"subgoals": subgoals,
-	}
+func serializeRuntimeState(memory map[string]string, subgoals []agent.Subgoal, reportHTML string) map[string]interface{} {
+	return serializeRuntimeStateWithSnapshot(memory, subgoals, nil, reportHTML)
 }
 
-func getSessionRuntimeState(ctx context.Context, workspaceID, userID, sessionID string) (map[string]string, []agent.Subgoal) {
+func serializeRuntimeStateWithSnapshot(memory map[string]string, subgoals []agent.Subgoal, reportSnapshot *domain.ReportSnapshot, reportHTML string) map[string]interface{} {
+	resp := map[string]interface{}{
+		"memory":      memory,
+		"subgoals":    subgoals,
+		"report_html": strings.TrimSpace(reportHTML),
+	}
+	if reportSnapshot != nil {
+		resp["report_snapshot"] = reportSnapshot
+	}
+	return resp
+}
+
+func getSessionRuntimeState(ctx context.Context, workspaceID, userID, sessionID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
 	if sessionManager != nil {
 		if sess, ok, err := sessionManager.Peek(sessionID, workspaceID, userID); err == nil && ok && sess != nil {
-			return sess.RuntimeState()
+			memory, subgoals := sess.RuntimeState()
+			reportSnapshot, reportHTML := renderLiveSessionRuntimeReport(sess)
+			if reportSnapshot != nil || reportHTML != "" {
+				return memory, subgoals, reportSnapshot, reportHTML
+			}
+			_, _, persistedSnapshot, persistedReportHTML := loadSessionRuntimeStateFromPersistence(ctx, sessionID)
+			return memory, subgoals, persistedSnapshot, persistedReportHTML
 		}
 	}
 
 	return loadSessionRuntimeStateFromPersistence(ctx, sessionID)
 }
 
-func loadSessionRuntimeStateFromPersistence(ctx context.Context, sessionID string) (map[string]string, []agent.Subgoal) {
-	if strings.TrimSpace(sessionID) == "" {
-		return map[string]string{}, []agent.Subgoal{}
+func loadSessionRuntimeStateFromPersistence(ctx context.Context, sessionID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
+	messages := collectSessionMessages(ctx, sessionID)
+	if len(messages) == 0 {
+		return map[string]string{}, []agent.Subgoal{}, nil, ""
 	}
-
-	runs, err := runRepo.ListBySession(ctx, sessionID, 1000)
-	if err != nil || len(runs) == 0 {
-		return map[string]string{}, []agent.Subgoal{}
-	}
-
-	memory := map[string]string{}
-	var subgoals []agent.Subgoal
-
-	// 历史状态由最新到最旧（DESC排），因此从最后一个（最古老）正向重置确保新状态覆盖老状态（Finding 2 Review）
-	for i := len(runs) - 1; i >= 0; i-- {
-		runMemory, runSubgoals := deriveRuntimeStateFromRun(ctx, runs[i].ID)
-		for k, v := range runMemory {
-			memory[k] = v
-		}
-		for _, sg := range runSubgoals {
-			found := false
-			for j := range subgoals {
-				if subgoals[j].ID == sg.ID {
-					found = true
-					if sg.Status != agent.StatusPending {
-						subgoals[j].Status = sg.Status
-						subgoals[j].Result = sg.Result
-					}
-					break
-				}
-			}
-			if !found {
-				subgoals = append(subgoals, sg)
-			}
-		}
-	}
-	return memory, subgoals
+	return deriveRuntimeStateFromMessages(messages)
 }
 
-func deriveRuntimeStateFromRun(ctx context.Context, runID string) (map[string]string, []agent.Subgoal) {
-	if messageRepo == nil {
-		return map[string]string{}, []agent.Subgoal{}
+func deriveRuntimeStateFromRun(ctx context.Context, runID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
+	messages := collectRunTreeMessages(ctx, runID)
+	if len(messages) == 0 {
+		return map[string]string{}, []agent.Subgoal{}, nil, ""
 	}
+	return deriveRuntimeStateFromMessages(messages)
+}
 
+func collectSessionMessages(ctx context.Context, sessionID string) []domain.RunMessage {
+	if runRepo == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	runs, err := runRepo.ListBySession(ctx, sessionID, -1)
+	if err != nil || len(runs) == 0 {
+		return nil
+	}
+	var messages []domain.RunMessage
+	for _, run := range runs {
+		messages = append(messages, collectRunTreeMessages(ctx, run.ID)...)
+	}
+	sortRunMessages(messages)
+	return messages
+}
+
+func collectRunTreeMessages(ctx context.Context, runID string) []domain.RunMessage {
+	if messageRepo == nil || strings.TrimSpace(runID) == "" {
+		return nil
+	}
 	messages, err := messageRepo.ListByRun(ctx, runID)
 	if err != nil {
-		return map[string]string{}, []agent.Subgoal{}
+		return nil
+	}
+	if runRepo == nil {
+		sortRunMessages(messages)
+		return messages
 	}
 
-	// 聚合所有层级后代 run 的消息，并按时间排序，以防共享状态被旧值覆盖（Finding 1 Final）
-	if runRepo != nil {
-		queue := []string{runID}
-		visited := map[string]bool{runID: true}
+	queue := []string{runID}
+	visited := map[string]bool{runID: true}
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
 
-		for len(queue) > 0 {
-			curr := queue[0]
-			queue = queue[1:]
-
-			if childRuns, err := runRepo.ListByParent(ctx, curr); err == nil {
-				for _, childRun := range childRuns {
-					if !visited[childRun.ID] {
-						visited[childRun.ID] = true
-						queue = append(queue, childRun.ID)
-						if childMsgs, err := messageRepo.ListByRun(ctx, childRun.ID); err == nil {
-							messages = append(messages, childMsgs...)
-						}
-					}
-				}
+		childRuns, err := runRepo.ListByParent(ctx, curr)
+		if err != nil {
+			continue
+		}
+		for _, childRun := range childRuns {
+			if visited[childRun.ID] {
+				continue
+			}
+			visited[childRun.ID] = true
+			queue = append(queue, childRun.ID)
+			if childMsgs, err := messageRepo.ListByRun(ctx, childRun.ID); err == nil {
+				messages = append(messages, childMsgs...)
 			}
 		}
 	}
+	sortRunMessages(messages)
+	return messages
+}
 
+func sortRunMessages(messages []domain.RunMessage) {
 	sort.SliceStable(messages, func(i, j int) bool {
 		return messages[i].CreatedAt.Before(messages[j].CreatedAt)
 	})
+}
 
+func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
 	memory := map[string]string{}
 	subgoals := []agent.Subgoal{}
+	var reportSnapshot *domain.ReportSnapshot
+	reportHTML := ""
 	pendingCalls := map[string]json.RawMessage{} // toolCallID -> arguments
 
 	for _, msg := range messages {
@@ -120,6 +139,16 @@ func deriveRuntimeStateFromRun(ctx context.Context, runID string) (map[string]st
 			}
 			if err := json.Unmarshal([]byte(msg.Content), &payload); err == nil {
 				subgoals = payload.Goals
+			}
+		case string(agent.EventReportUpdate), string(agent.EventReportFinal):
+			var payload agent.ReportUpdateData
+			if err := json.Unmarshal([]byte(msg.Content), &payload); err == nil {
+				if payload.ReportSnapshot != nil {
+					reportSnapshot = payload.ReportSnapshot
+				}
+				if strings.TrimSpace(payload.HTML) != "" {
+					reportHTML = payload.HTML
+				}
 			}
 		case string(agent.EventToolCall):
 			if msg.ToolCallID != nil && *msg.ToolCallID != "" {
@@ -190,7 +219,13 @@ func deriveRuntimeStateFromRun(ctx context.Context, runID string) (map[string]st
 		}
 	}
 
-	return memory, subgoals
+	if strings.TrimSpace(reportHTML) == "" && reportSnapshot != nil {
+		if html, ok := renderReportHTMLFromSnapshotData(reportSnapshot); ok {
+			reportHTML = html
+		}
+	}
+
+	return memory, subgoals, reportSnapshot, reportHTML
 }
 
 // extractGoalIDFromResult 从 goal_manage tool result 的 JSON 中提取真实的 goal_id。
@@ -205,11 +240,23 @@ func extractGoalIDFromResult(resultContent string) string {
 }
 
 func attachRuntimeState(ctx context.Context, resp map[string]interface{}, workspaceID, userID, sessionID string) {
-	memory, subgoals := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
-	resp["runtimeState"] = serializeRuntimeState(memory, subgoals)
+	memory, subgoals, reportSnapshot, reportHTML := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
+	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML)
 }
 
 func attachRunRuntimeState(ctx context.Context, resp map[string]interface{}, run domain.AnalysisRun) {
-	memory, subgoals := deriveRuntimeStateFromRun(ctx, run.ID)
-	resp["runtimeState"] = serializeRuntimeState(memory, subgoals)
+	memory, subgoals, reportSnapshot, reportHTML := getSessionRuntimeState(ctx, run.WorkspaceID, run.UserID, run.SessionID)
+	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML)
+}
+
+func renderLiveSessionRuntimeReport(sess *session.Session) (*domain.ReportSnapshot, string) {
+	if sess == nil || sess.ReportState == nil {
+		return nil, ""
+	}
+	if len(sess.ReportState.Blocks) == 0 && len(sess.ReportState.Charts) == 0 {
+		return nil, ""
+	}
+	snapshot := buildReportSnapshot(sess.ReportState)
+	html, _ := renderReportHTMLFromSnapshotData(&snapshot)
+	return &snapshot, html
 }

@@ -2,10 +2,25 @@
   <div class="agent-panel">
     <div v-if="activeRun || selectedRun" class="run-summary">
       <span v-if="activeRun" class="summary-pill live">
-        正在执行 {{ truncate(activeRun.summary || activeRun.inputMessage || activeRun.id, 36) }}
+        正在执行
+        {{
+          truncate(
+            activeRun.summary || activeRun.inputMessage || activeRun.id,
+            36,
+          )
+        }}
       </span>
-      <span v-if="selectedRun && selectedRun.id !== activeRun?.id" class="summary-pill history">
-        当前查看历史任务 {{ truncate(selectedRun.summary || selectedRun.inputMessage || selectedRun.id, 36) }}
+      <span
+        v-if="selectedRun && selectedRun.id !== activeRun?.id"
+        class="summary-pill history"
+      >
+        当前查看历史任务
+        {{
+          truncate(
+            selectedRun.summary || selectedRun.inputMessage || selectedRun.id,
+            36,
+          )
+        }}
       </span>
     </div>
     <RunTree />
@@ -15,16 +30,24 @@
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">🔍</div>
         <p>上传数据文件，输入分析需求</p>
-        <p class="empty-hint">Agent 会自动分析数据并生成研报</p>
+        <p class="empty-hint">Agent 会基于目标与状态自主分析并组织输出</p>
       </div>
       <TransitionGroup name="fade">
-        <div v-for="msg in messages" :key="msg.id" class="message" :class="'msg-' + msg.type">
+        <div
+          v-for="msg in messages"
+          :key="msg.id"
+          class="message"
+          :class="'msg-' + msg.type"
+        >
           <!-- 用户消息 -->
           <template v-if="msg.type === 'user'">
             <div class="msg-icon">👤</div>
             <div class="msg-body">
               <div class="msg-label">用户指令</div>
-              <div class="msg-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+              <div
+                class="msg-content markdown-body"
+                v-html="renderMarkdown(msg.content)"
+              ></div>
             </div>
           </template>
 
@@ -33,7 +56,10 @@
             <div class="msg-icon">🧠</div>
             <div class="msg-body">
               <div class="msg-label">思考中</div>
-              <div class="msg-content markdown-body thinking" v-html="renderMarkdown(msg.content)"></div>
+              <div
+                class="msg-content markdown-body thinking"
+                v-html="renderMarkdown(msg.content)"
+              ></div>
             </div>
           </template>
 
@@ -41,7 +67,8 @@
           <template v-else-if="msg.type === 'tool_call'">
             <div class="msg-icon">🔧</div>
             <div class="msg-body">
-              <div class="msg-label">工具调用
+              <div class="msg-label">
+                工具调用
                 <span class="tool-name">{{ msg.name }}</span>
               </div>
               <details class="tool-details">
@@ -55,33 +82,49 @@
             <div class="msg-icon">🙋</div>
             <div class="msg-body">
               <div class="msg-label ask-user-label">需要您确认</div>
-              <div class="msg-content markdown-body ask-user-question" v-html="renderMarkdown(msg.question)"></div>
-              <div v-if="msg.options && msg.options.length > 0" class="ask-options" :class="{ 'multi-select': msg.allow_multiple }">
-                <button 
-                  v-for="(opt, idx) in msg.options" 
-                  :key="idx" 
+              <div
+                class="msg-content markdown-body ask-user-question"
+                v-html="renderMarkdown(msg.question)"
+              ></div>
+              <div
+                v-if="msg.options && msg.options.length > 0"
+                class="ask-options"
+                :class="{ 'multi-select': msg.allow_multiple }"
+              >
+                <button
+                  v-for="(opt, idx) in msg.options"
+                  :key="idx"
                   class="ask-option-btn"
-                  :class="{ selected: msg.allow_multiple && multiSelectDrafts[msg.id]?.includes(opt.id || opt.label) }"
+                  :class="{
+                    selected:
+                      msg.allow_multiple &&
+                      multiSelectDrafts[msg.id]?.includes(opt.id || opt.label),
+                  }"
                   @click="handleOptionClick(msg, opt.id || opt.label)"
                 >
                   {{ opt.label || opt.id }}
                 </button>
               </div>
               <div v-if="msg.allow_multiple" class="ask-submit">
-                <button class="ask-submit-btn" @click="submitMultiSelect(msg)">确认选择</button>
+                <button class="ask-submit-btn" @click="submitMultiSelect(msg)">
+                  确认选择
+                </button>
               </div>
             </div>
           </template>
 
           <!-- 工具结果 -->
           <template v-else-if="msg.type === 'tool_result'">
-            <div class="msg-icon">{{ msg.success ? '✅' : '❌' }}</div>
+            <div class="msg-icon">{{ msg.success ? "✅" : "❌" }}</div>
             <div class="msg-body">
               <div class="msg-label">
                 {{ msg.name }} 结果
                 <span class="duration">{{ msg.duration }}ms</span>
               </div>
-              <div v-if="toolResultSummary(msg)" class="msg-content tool-result-summary">
+              <div
+                v-if="toolResultSummary(msg)"
+                class="msg-content tool-result-summary"
+              >
                 {{ toolResultSummary(msg) }}
               </div>
               <details class="tool-details">
@@ -96,7 +139,10 @@
             <div class="msg-icon">🎉</div>
             <div class="msg-body">
               <div class="msg-label complete-label">分析完成</div>
-              <div class="msg-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+              <div
+                class="msg-content markdown-body"
+                v-html="renderMarkdown(msg.content)"
+              ></div>
             </div>
           </template>
 
@@ -104,7 +150,10 @@
             <div class="msg-icon">⏹</div>
             <div class="msg-body">
               <div class="msg-label">任务已停止</div>
-              <div class="msg-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+              <div
+                class="msg-content markdown-body"
+                v-html="renderMarkdown(msg.content)"
+              ></div>
             </div>
           </template>
 
@@ -113,7 +162,10 @@
             <div class="msg-icon">❌</div>
             <div class="msg-body">
               <div class="msg-label error-label">错误</div>
-              <div class="msg-content markdown-body error-content" v-html="renderMarkdown(msg.content)"></div>
+              <div
+                class="msg-content markdown-body error-content"
+                v-html="renderMarkdown(msg.content)"
+              ></div>
             </div>
           </template>
 
@@ -131,122 +183,135 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, nextTick } from 'vue'
-import { marked } from 'marked'
-import hljs from 'highlight.js/lib/core'
-import bash from 'highlight.js/lib/languages/bash'
-import go from 'highlight.js/lib/languages/go'
-import javascript from 'highlight.js/lib/languages/javascript'
-import json from 'highlight.js/lib/languages/json'
-import plaintext from 'highlight.js/lib/languages/plaintext'
-import python from 'highlight.js/lib/languages/python'
-import sql from 'highlight.js/lib/languages/sql'
-import xml from 'highlight.js/lib/languages/xml'
-import { useWebSocket } from '../../composables/useWebSocket.js'
-import { useAgentStore } from '../../stores/agent.js'
-import { sanitizeMarkdownHTML } from '../../utils/sanitize.js'
-import RunTree from './RunTree.vue'
-import SubgoalTree from './SubgoalTree.vue'
-import WorkingMemoryPanel from './WorkingMemoryPanel.vue'
+import { computed, ref, watch, nextTick } from "vue";
+import { marked } from "marked";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import go from "highlight.js/lib/languages/go";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import plaintext from "highlight.js/lib/languages/plaintext";
+import python from "highlight.js/lib/languages/python";
+import sql from "highlight.js/lib/languages/sql";
+import xml from "highlight.js/lib/languages/xml";
+import { useWebSocket } from "../../composables/useWebSocket.js";
+import { useAgentStore } from "../../stores/agent.js";
+import { sanitizeMarkdownHTML } from "../../utils/sanitize.js";
+import RunTree from "./RunTree.vue";
+import SubgoalTree from "./SubgoalTree.vue";
+import WorkingMemoryPanel from "./WorkingMemoryPanel.vue";
 
-const store = useAgentStore()
-const { openRun } = useWebSocket()
-const messages = computed(() => store.messages)
-const isRunning = computed(() => store.isRunning)
-const selectedRunId = computed(() => store.selectedRunId)
-const activeRunId = computed(() => store.activeRunId)
-const selectedRun = computed(() => store.getRun(selectedRunId.value))
-const activeRun = computed(() => store.getRun(activeRunId.value))
-const messagesEl = ref(null)
-const multiSelectDrafts = ref({})
+const store = useAgentStore();
+const { openRun } = useWebSocket();
+const messages = computed(() => store.messages);
+const isRunning = computed(() => store.isRunning);
+const selectedRunId = computed(() => store.selectedRunId);
+const activeRunId = computed(() => store.activeRunId);
+const selectedRun = computed(() => store.getRun(selectedRunId.value));
+const activeRun = computed(() => store.getRun(activeRunId.value));
+const messagesEl = ref(null);
+const multiSelectDrafts = ref({});
 
-hljs.registerLanguage('bash', bash)
-hljs.registerLanguage('sh', bash)
-hljs.registerLanguage('go', go)
-hljs.registerLanguage('javascript', javascript)
-hljs.registerLanguage('js', javascript)
-hljs.registerLanguage('json', json)
-hljs.registerLanguage('plaintext', plaintext)
-hljs.registerLanguage('text', plaintext)
-hljs.registerLanguage('python', python)
-hljs.registerLanguage('py', python)
-hljs.registerLanguage('sql', sql)
-hljs.registerLanguage('xml', xml)
-hljs.registerLanguage('html', xml)
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("sh", bash);
+hljs.registerLanguage("go", go);
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("js", javascript);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("plaintext", plaintext);
+hljs.registerLanguage("text", plaintext);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("py", python);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("html", xml);
 
 marked.setOptions({
   gfm: true,
   breaks: true,
   highlight(code, language) {
     if (language && hljs.getLanguage(language)) {
-      return hljs.highlight(code, { language }).value
+      return hljs.highlight(code, { language }).value;
     }
-    return hljs.highlightAuto(code).value
+    return hljs.highlightAuto(code).value;
   },
-})
+});
 
-watch(messages, async () => {
-  await nextTick()
-  if (messagesEl.value) {
-    messagesEl.value.scrollTop = messagesEl.value.scrollHeight
-  }
-}, { deep: true })
+watch(
+  messages,
+  async () => {
+    await nextTick();
+    if (messagesEl.value) {
+      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+    }
+  },
+  { deep: true },
+);
 
 function formatJSON(obj) {
   try {
-    return typeof obj === 'string' ? JSON.stringify(JSON.parse(obj), null, 2) : JSON.stringify(obj, null, 2)
-  } catch { return String(obj) }
+    return typeof obj === "string"
+      ? JSON.stringify(JSON.parse(obj), null, 2)
+      : JSON.stringify(obj, null, 2);
+  } catch {
+    return String(obj);
+  }
 }
 
 function truncate(str, max) {
-  if (!str) return ''
-  return str.length > max ? str.slice(0, max) + '\n... (已截断)' : str
+  if (!str) return "";
+  return str.length > max ? str.slice(0, max) + "\n... (已截断)" : str;
 }
 
 function toolResultSummary(msg) {
-  const payload = msg?.parsedResult
-  if (!payload || typeof payload !== 'object') return ''
-  if (typeof payload.ui_summary === 'string' && payload.ui_summary.trim()) return payload.ui_summary
-  if (typeof payload.summary_text === 'string' && payload.summary_text.trim()) return payload.summary_text
-  if (typeof payload.delegate_summary === 'string' && payload.delegate_summary.trim()) return payload.delegate_summary
-  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  return ''
+  const payload = msg?.parsedResult;
+  if (!payload || typeof payload !== "object") return "";
+  if (typeof payload.ui_summary === "string" && payload.ui_summary.trim())
+    return payload.ui_summary;
+  if (
+    typeof payload.delegate_summary === "string" &&
+    payload.delegate_summary.trim()
+  )
+    return payload.delegate_summary;
+  if (typeof payload.message === "string" && payload.message.trim())
+    return payload.message;
+  return "";
 }
 
 function renderMarkdown(content) {
-  return sanitizeMarkdownHTML(marked.parse(String(content || '')))
+  return sanitizeMarkdownHTML(marked.parse(String(content || "")));
 }
 
 async function handleRunClick(runId) {
-  if (!runId || runId === selectedRunId.value) return
+  if (!runId || runId === selectedRunId.value) return;
   try {
-    await openRun(runId)
+    await openRun(runId);
   } catch (err) {
-    console.error('open run failed:', err)
+    console.error("open run failed:", err);
   }
 }
 
 function handleOptionClick(msg, optValue) {
   if (msg.allow_multiple) {
     if (!multiSelectDrafts.value[msg.id]) {
-      multiSelectDrafts.value[msg.id] = []
+      multiSelectDrafts.value[msg.id] = [];
     }
-    const idx = multiSelectDrafts.value[msg.id].indexOf(optValue)
+    const idx = multiSelectDrafts.value[msg.id].indexOf(optValue);
     if (idx > -1) {
-      multiSelectDrafts.value[msg.id].splice(idx, 1)
+      multiSelectDrafts.value[msg.id].splice(idx, 1);
     } else {
-      multiSelectDrafts.value[msg.id].push(optValue)
+      multiSelectDrafts.value[msg.id].push(optValue);
     }
   } else {
-    const { sendMessage } = useWebSocket()
-    sendMessage(optValue)
+    const { sendMessage } = useWebSocket();
+    sendMessage(optValue);
   }
 }
 
 function submitMultiSelect(msg) {
-  const { sendMessage } = useWebSocket()
-  const selected = multiSelectDrafts.value[msg.id] || []
-  sendMessage(JSON.stringify(selected))
+  const { sendMessage } = useWebSocket();
+  const selected = multiSelectDrafts.value[msg.id] || [];
+  sendMessage(JSON.stringify(selected));
 }
 </script>
 
@@ -297,8 +362,14 @@ function submitMultiSelect(msg) {
   color: var(--text-muted);
 }
 
-.empty-icon { font-size: 3rem; margin-bottom: 1rem; }
-.empty-hint { font-size: 0.8rem; margin-top: 0.5rem; }
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+.empty-hint {
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
 
 .message {
   display: flex;
@@ -310,9 +381,16 @@ function submitMultiSelect(msg) {
   animation: slideIn 0.3s ease;
 }
 
-.msg-icon { font-size: 1rem; flex-shrink: 0; margin-top: 2px; }
+.msg-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
 
-.msg-body { flex: 1; min-width: 0; }
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
 
 .msg-label {
   font-size: 0.75rem;
@@ -357,7 +435,7 @@ function submitMultiSelect(msg) {
 }
 
 .markdown-body :deep(code) {
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: "SF Mono", "Fira Code", monospace;
   font-size: 0.8em;
   background: rgba(139, 148, 158, 0.14);
   padding: 0.1rem 0.35rem;
@@ -406,14 +484,25 @@ function submitMultiSelect(msg) {
   max-width: 85%;
 }
 
-.msg-thinking, .msg-tool_call, .msg-tool_result, .msg-complete, .msg-error {
+.msg-thinking,
+.msg-tool_call,
+.msg-tool_result,
+.msg-complete,
+.msg-error {
   background: transparent;
   border-left: none;
 }
 
-.msg-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 2px; }
+.msg-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
 
-.thinking { color: var(--text-muted); font-style: italic; }
+.thinking {
+  color: var(--text-muted);
+  font-style: italic;
+}
 
 .tool-name {
   background: var(--bg-hover);
@@ -440,8 +529,12 @@ function submitMultiSelect(msg) {
   animation: pulse 1.4s infinite ease-in-out;
 }
 
-.running-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
-.running-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+.running-indicator .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.running-indicator .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
 
 .msg-user_request_input {
   background: rgba(255, 152, 0, 0.08);

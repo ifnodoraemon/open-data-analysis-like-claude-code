@@ -2,7 +2,7 @@ package tools
 
 import "strconv"
 
-const reportDraftMessage = "当前报告仍处于草稿态，尚未生成最终报告文件。"
+const reportDraftMessage = "delivery_state=draft；尚无 finalized report file。"
 
 func reportDraftSuccess(toolName string, state *ReportState, fields map[string]interface{}) string {
 	payload := reportDraftPayload(state, fields)
@@ -28,38 +28,38 @@ func reportEditScopeFailure(toolName, targetKey, targetID, targetLabel, uiSummar
 }
 
 func reportFinalizeBlockedFailure(state *ReportState, blockers []string) string {
-	return toolFailure("report_finalize", "active_goals_block_finalize", "当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。", mergePayloads(
+	return toolFailure("report_finalize", "active_goals_block_finalize", "检测到未闭环的根目标 / active branch；delivery_state 保持 draft。", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
 			"active_branch_count": len(blockers),
 			"active_branches":     blockers,
 			"can_finalize":        false,
-			"message":             "当前仍有未闭环的根目标 / active branch，暂不允许生成最终报告。",
+			"message":             "检测到未闭环的根目标 / active branch；delivery_state 保持 draft。",
 			"ui_summary":          formatFinalizeBlockedSummary(len(blockers)),
 		},
 	))
 }
 
 func reportFinalizeIssuesFailure(state *ReportState, issues []string) string {
-	return toolFailure("report_finalize", "report_state_invalid", "当前报告状态未通过最终收尾校验。", mergePayloads(
+	return toolFailure("report_finalize", "report_state_invalid", "报告结构校验未通过；delivery_state 保持 draft。", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
 			"can_finalize":         false,
 			"finalize_issue_count": len(issues),
 			"finalize_issues":      issues,
-			"message":              "当前报告状态未通过最终收尾校验。",
+			"message":              "报告结构校验未通过；delivery_state 保持 draft。",
 			"ui_summary":           formatFinalizeIssuesSummary(len(issues)),
 		},
 	))
 }
 
 func reportAlreadyFinalizedFailure(state *ReportState) string {
-	return toolFailure("report_finalize", "report_already_finalized", "当前报告已经是最终状态；未发生新的草稿修改时不允许重复 finalize。", mergePayloads(
+	return toolFailure("report_finalize", "report_already_finalized", "delivery_state 已为 finalized；未检测到新的 draft 变更。", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
 			"can_finalize": false,
-			"message":      "当前报告已经是最终状态；未发生新的草稿修改时不允许重复 finalize。",
-			"ui_summary":   "报告已是 finalized 状态，未检测到新的草稿改动。",
+			"message":      "delivery_state 已为 finalized；未检测到新的 draft 变更。",
+			"ui_summary":   "delivery_state=finalized；未检测到新的草稿改动。",
 		},
 	))
 }
@@ -69,7 +69,7 @@ func reportFinalizeSuccess(fields map[string]interface{}) string {
 	payload["delivery_state"] = "finalized"
 	payload["is_finalized"] = true
 	payload["needs_finalize"] = false
-	payload["message"] = "当前报告已完成最终收尾，并可作为最终报告交付。"
+	payload["message"] = "delivery_state 已更新为 finalized。"
 	return toolSuccess("report_finalize", payload)
 }
 
@@ -93,9 +93,9 @@ func mergePayloads(base map[string]interface{}, extra map[string]interface{}) ma
 }
 
 func formatFinalizeBlockedSummary(count int) string {
-	return "报告暂不能 finalize：仍有 " + strconv.Itoa(count) + " 条活跃分支。"
+	return "finalize blocked：active_branch_count=" + strconv.Itoa(count)
 }
 
 func formatFinalizeIssuesSummary(count int) string {
-	return "报告暂不能 finalize：还有 " + strconv.Itoa(count) + " 个结构问题。"
+	return "finalize blocked：finalize_issue_count=" + strconv.Itoa(count)
 }

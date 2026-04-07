@@ -208,9 +208,6 @@ func extractToolSummary(content string) string {
 		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
 			return summary
 		}
-		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
-			return summary
-		}
 		if tool, ok := payload["tool"].(string); ok {
 			return fmt.Sprintf("tool=%s", tool)
 		}
@@ -361,12 +358,24 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 				// LLM 可能发送了字符串数组作为 options，尝试降级兼容
 				var raw map[string]interface{}
 				if err2 := json.Unmarshal([]byte(toolCall.Function.Arguments), &raw); err2 == nil {
-					if q, ok := raw["question"].(string); ok { payload.Question = q }
-					if r, ok := raw["reason"].(string); ok { payload.Reason = r }
-					if s, ok := raw["scope"].(string); ok { payload.Scope = s }
-					if c, ok := raw["context_ref"].(string); ok { payload.ContextRef = c }
-					if req, ok := raw["required"].(bool); ok { payload.Required = req }
-					if am, ok := raw["allow_multiple"].(bool); ok { payload.AllowMultiple = am }
+					if q, ok := raw["question"].(string); ok {
+						payload.Question = q
+					}
+					if r, ok := raw["reason"].(string); ok {
+						payload.Reason = r
+					}
+					if s, ok := raw["scope"].(string); ok {
+						payload.Scope = s
+					}
+					if c, ok := raw["context_ref"].(string); ok {
+						payload.ContextRef = c
+					}
+					if req, ok := raw["required"].(bool); ok {
+						payload.Required = req
+					}
+					if am, ok := raw["allow_multiple"].(bool); ok {
+						payload.AllowMultiple = am
+					}
 					if opts, ok := raw["options"].([]interface{}); ok {
 						for _, o := range opts {
 							if strOpt, ok2 := o.(string); ok2 {
@@ -382,7 +391,7 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 			return "", nil, true
 		},
 		"report_finalize": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
-			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "开始生成最终报告..."}})
+			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "正在执行 report_finalize..."}})
 			result, err := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 			if err == nil && result != "" {
 				result = applyReportHTMLGuardrail(result)
@@ -737,7 +746,7 @@ func stripHistorySummaryFields(payload map[string]interface{}) map[string]interf
 	}
 	cloned := make(map[string]interface{}, len(payload))
 	for key, value := range payload {
-		if key == "summary_text" || key == "ui_summary" {
+		if key == "ui_summary" {
 			continue
 		}
 		cloned[key] = value

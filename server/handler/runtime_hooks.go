@@ -45,16 +45,19 @@ type runtimeEventScope struct {
 }
 
 type runtimeEventDispatcher struct {
-	deliver func(agent.WSEvent)
-	scope   runtimeEventScope
-	hooks   []runtimeEventHook
+	deliver          func(agent.WSEvent)
+	deliverToRun     func(string, agent.WSEvent)
+	emitChildPreview func(string)
+	scope            runtimeEventScope
+	hooks            []runtimeEventHook
 }
 
 func newRuntimeEventDispatcher(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) runtimeEventDispatcher {
-	deliver := func(ev agent.WSEvent) {
-		sendSessionEvent(conn, writeMu, sess.ID, runID, ev)
-		saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, ev)
+	deliverToRun := func(targetRunID string, ev agent.WSEvent) {
+		sendSessionEvent(conn, writeMu, sess.ID, targetRunID, ev)
+		saveEventToDB(ctx, sess.WorkspaceID, sess.ID, targetRunID, ev)
 	}
+	deliver := func(ev agent.WSEvent) { deliverToRun(runID, ev) }
 
 	scope := runtimeEventScope{
 		session: sess,
@@ -79,8 +82,12 @@ func newRuntimeEventDispatcher(ctx context.Context, conn *websocket.Conn, writeM
 	}
 
 	return runtimeEventDispatcher{
-		deliver: deliver,
-		scope:   scope,
+		deliver:      deliver,
+		deliverToRun: deliverToRun,
+		emitChildPreview: func(targetRunID string) {
+			emitReportPreviewUpdate(ctx, conn, writeMu, sess.ID, sess.WorkspaceID, targetRunID, sess.ReportState)
+		},
+		scope: scope,
 		hooks: []runtimeEventHook{
 			reportLifecycleHook,
 			runLifecycleHook,
@@ -90,6 +97,26 @@ func newRuntimeEventDispatcher(ctx context.Context, conn *websocket.Conn, writeM
 }
 
 func (d runtimeEventDispatcher) Emit(ev agent.WSEvent) {
+	if runID := strings.TrimSpace(ev.RunID); runID != "" && runID != strings.TrimSpace(d.scope.runID) {
+		if d.deliverToRun != nil {
+			d.deliverToRun(runID, ev)
+		}
+		childScope := d.scope
+		childScope.runID = runID
+		childScope.finalizeReport = nil
+		childScope.setRunStatus = nil
+		childScope.setRunSummary = nil
+		if d.emitChildPreview != nil {
+			childScope.emitReportPreview = func() {
+				d.emitChildPreview(runID)
+			}
+		} else {
+			childScope.emitReportPreview = nil
+		}
+		reportLifecycleHook(childScope, ev)
+		runLoggingHook(childScope, ev)
+		return
+	}
 	d.deliver(ev)
 	for _, hook := range d.hooks {
 		hook(d.scope, ev)

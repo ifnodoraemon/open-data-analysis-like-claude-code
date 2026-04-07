@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -104,5 +105,45 @@ func TestWriteRepoLookupErrorRecognizesInternalError(t *testing.T) {
 	}
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", recorder.Code)
+	}
+}
+
+func TestSaveEventToDBSyncPersistsReportUpdatePayload(t *testing.T) {
+	previous := messageRepo
+	repo := &captureMessageRepo{}
+	messageRepo = repo
+	t.Cleanup(func() {
+		messageRepo = previous
+	})
+
+	saveEventToDBSync("ws_1", "sess_1", "run_1", agent.WSEvent{
+		Type: agent.EventReportUpdate,
+		Data: agent.ReportUpdateData{
+			HTML:  "<p>draft</p>",
+			Title: "Draft",
+			ReportSnapshot: &domain.ReportSnapshot{
+				Title:         "Draft",
+				NeedsFinalize: true,
+				Blocks: []domain.ReportSnapshotBlock{
+					{ID: "blk_1", Kind: "markdown", Content: "draft body"},
+				},
+			},
+		},
+	})
+
+	created, _ := repo.snapshot()
+	if len(created) != 1 {
+		t.Fatalf("expected one persisted message, got %d", len(created))
+	}
+
+	var payload agent.ReportUpdateData
+	if err := json.Unmarshal([]byte(created[0].Content), &payload); err != nil {
+		t.Fatalf("expected report update payload JSON, got err=%v content=%q", err, created[0].Content)
+	}
+	if payload.HTML != "<p>draft</p>" || payload.Title != "Draft" {
+		t.Fatalf("unexpected persisted report payload: %#v", payload)
+	}
+	if payload.ReportSnapshot == nil || !payload.ReportSnapshot.NeedsFinalize || len(payload.ReportSnapshot.Blocks) != 1 {
+		t.Fatalf("expected structured report snapshot to be persisted, got %#v", payload.ReportSnapshot)
 	}
 }

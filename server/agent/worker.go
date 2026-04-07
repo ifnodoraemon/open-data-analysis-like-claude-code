@@ -193,11 +193,12 @@ func (t *ManageSubgoalsTool) emitUpdate() {
 }
 
 type DelegateTaskTool struct {
-	BaseRegistry  *tools.Registry
-	EmitFunc      func(WSEvent)
-	ParentContext context.Context
-	Memory        *WorkingMemory
-	Subgoals      *SubgoalManager
+	BaseRegistry    *tools.Registry
+	RegistryFactory func([]string) *tools.Registry
+	EmitFunc        func(WSEvent)
+	ParentContext   context.Context
+	Memory          *WorkingMemory
+	Subgoals        *SubgoalManager
 }
 
 type delegateTraceItem struct {
@@ -218,7 +219,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return "创建一个受限子代理并执行指定任务。读取 role_name、task_instruction、allowed_tools 与可选 goal_id/policy_appendix；成功时返回 child_run_id、delegate_summary、trace，失败时返回结构化错误与 child_run_status。"
+	return "创建一个受限子代理并执行指定任务。读取 role_name、task_instruction、allowed_tools 与可选 goal_id/policy_appendix；allowed_tools 只描述子代理可见的工具边界，`user_request_input` 与 `report_finalize` 不能下放。成功时返回 child_run_id、delegate_summary、trace，失败时返回结构化错误、child_run_status 与可选 disallowed_tools。"
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -240,7 +241,7 @@ func (t *DelegateTaskTool) Parameters() json.RawMessage {
 			"allowed_tools": {
 				"type": "array",
 				"items": {"type": "string"},
-				"description": "子代理允许使用的工具列表。"
+				"description": "子代理允许使用的工具列表。该列表不能包含 user_request_input 或 report_finalize。"
 			},
 			"goal_id": {
 				"type": "string",
@@ -252,7 +253,7 @@ func (t *DelegateTaskTool) Parameters() json.RawMessage {
 }
 
 func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
-	if t.BaseRegistry == nil {
+	if t.BaseRegistry == nil && t.RegistryFactory == nil {
 		return delegateToolFailure("", "", "", nil, "", "delegate_registry_missing", "delegate base registry is not configured", nil), nil
 	}
 
@@ -275,8 +276,16 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	if len(payload.AllowedTools) == 0 {
 		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, nil, payload.GoalID, "missing_allowed_tools", "allowed_tools is required", nil), nil
 	}
+	if forbidden := disallowedDelegateTools(payload.AllowedTools); len(forbidden) > 0 {
+		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "disallowed_delegate_tools", "delegate 不能使用这些工具: "+strings.Join(forbidden, ", "), map[string]interface{}{
+			"disallowed_tools": forbidden,
+		}), nil
+	}
+	if err := validatePolicyAppendix(payload.PolicyAppendix); err != nil {
+		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "policy_appendix_invalid", err.Error(), nil), nil
+	}
 
-	subReg := t.BaseRegistry.CloneFiltered(payload.AllowedTools)
+	subReg := t.buildDelegateRegistry(payload.AllowedTools)
 	if len(subReg.ListTools()) == 0 {
 		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "no_allowed_tools_resolved", "no allowed tools resolved for delegate", nil), nil
 	}
@@ -312,17 +321,24 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		meta.TraceID = childRunID
 		childCtx = WithTraceMetadata(ctx, meta)
 	}
+	childEmit := func(ev WSEvent) {
+		if strings.TrimSpace(childRunID) != "" && strings.TrimSpace(ev.RunID) == "" {
+			ev.RunID = childRunID
+		}
+		emit(ev)
+	}
+	prepareRegistryRuntimeTools(subReg, childCtx, childEmit)
 
 	if t.Subgoals != nil && payload.GoalID != "" {
 		if err := t.Subgoals.UpdateGoalStatus(payload.GoalID, StatusRunning, ""); err == nil {
-			emit(WSEvent{
+			childEmit(WSEvent{
 				Type: EventStateSubgoalsUpdated,
 				Data: map[string]interface{}{"goals": t.Subgoals.ListAll()},
 			})
 		}
 	}
 
-	emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 启动] 已派生子 Agent，工具边界: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
+	childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 启动] 已派生子 Agent，工具边界: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
 
 	childPrompt := BuildPolicyPrompt()
 	if extra := strings.TrimSpace(payload.PolicyAppendix); extra != "" {
@@ -344,7 +360,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		if childCtx.Err() != nil {
 			if t.Subgoals != nil && payload.GoalID != "" {
 				_ = t.Subgoals.UpdateGoalStatus(payload.GoalID, StatusPending, "任务被取消")
-				emit(WSEvent{
+				childEmit(WSEvent{
 					Type: EventStateSubgoalsUpdated,
 					Data: map[string]interface{}{"goals": t.Subgoals.ListAll()},
 				})
@@ -383,7 +399,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		if err != nil {
 			if t.Subgoals != nil && payload.GoalID != "" {
 				_ = t.Subgoals.UpdateGoalStatus(payload.GoalID, StatusPending, err.Error())
-				emit(WSEvent{
+				childEmit(WSEvent{
 					Type: EventStateSubgoalsUpdated,
 					Data: map[string]interface{}{"goals": t.Subgoals.ListAll()},
 				})
@@ -412,18 +428,15 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			content := strings.TrimSpace(choice.Message.Content)
 			trace = append(trace, delegateTraceItem{Kind: "thinking", Summary: clipText(content, 160)})
 			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: fmt.Sprintf("[%s 思考] %s", payload.RoleName, content)}}
-			emit(ev)
-			if persistence != nil && childRunID != "" {
-				_ = persistence.AppendChildEvent(childCtx, childRunID, WSEvent{Type: EventThinking, Data: ThinkingData{Content: content}})
-			}
+			childEmit(ev)
 		}
 
 		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
 			result := strings.TrimSpace(choice.Message.Content)
-			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 完成] %s", payload.RoleName, result)}})
+			childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 完成] %s", payload.RoleName, result)}})
+			childEmit(WSEvent{Type: EventRunCompleted, RunID: childRunID, Data: CompleteData{Summary: result}})
 			if persistence != nil && childRunID != "" {
 				_ = persistence.UpdateChildRunSummary(childCtx, childRunID, result)
-				_ = persistence.AppendChildEvent(childCtx, childRunID, WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: result}})
 				_ = persistence.UpdateChildRunStatus(childCtx, childRunID, string(domain.RunStatusCompleted), nil)
 				_ = persistence.UpdateChildRunTokens(childCtx, childRunID, totalPromptTokens, totalCompletionTokens)
 			}
@@ -449,10 +462,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 					Arguments: json.RawMessage(toolCall.Function.Arguments),
 				},
 			}
-			emit(callEv)
-			if persistence != nil && childRunID != "" {
-				_ = persistence.AppendChildEvent(childCtx, childRunID, callEv)
-			}
+			childEmit(callEv)
 
 			start := time.Now()
 			// 修复 #13：子代理工具调用与主代理保持一致，走 retryableToolExec 指数退避重试
@@ -471,10 +481,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 					Success:  false,
 					Duration: duration,
 				}}
-				emit(resultEv)
-				if persistence != nil && childRunID != "" {
-					_ = persistence.AppendChildEvent(childCtx, childRunID, resultEv)
-				}
+				childEmit(resultEv)
 				bundle.History = append(bundle.History, ConversationItem{
 					Role:       openai.ChatMessageRoleTool,
 					Content:    delegateChildToolFailure(toolCall.Function.Name, execErr.Error()),
@@ -494,10 +501,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				Success:  true,
 				Duration: duration,
 			}}
-			emit(resultEv)
-			if persistence != nil && childRunID != "" {
-				_ = persistence.AppendChildEvent(childCtx, childRunID, resultEv)
-			}
+			childEmit(resultEv)
 			bundle.History = append(bundle.History, ConversationItem{
 				Role:       openai.ChatMessageRoleTool,
 				Content:    result,
@@ -569,6 +573,76 @@ func delegateToolFailure(childRunID, roleName, taskInstruction string, allowedTo
 	return string(encoded)
 }
 
+func (t *DelegateTaskTool) buildDelegateRegistry(allowed []string) *tools.Registry {
+	if t.RegistryFactory != nil {
+		return t.RegistryFactory(allowed)
+	}
+	if t.BaseRegistry == nil {
+		return tools.NewRegistry()
+	}
+	return t.BaseRegistry.CloneFiltered(allowed)
+}
+
+func prepareRegistryRuntimeTools(reg *tools.Registry, ctx context.Context, emit func(WSEvent)) {
+	if reg == nil {
+		return
+	}
+	for _, tool := range reg.ListTools() {
+		if next, ok := tool.(eventEmitterAware); ok {
+			next.SetEventEmitter(emit)
+		}
+		if next, ok := tool.(executionContextAware); ok {
+			next.SetExecutionContext(ctx)
+		}
+	}
+}
+
+func validatePolicyAppendix(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	if len([]rune(trimmed)) > 280 {
+		return fmt.Errorf("policy_appendix 过长；它只能包含简短约束，不能作为上下文转储")
+	}
+	lines := strings.Split(trimmed, "\n")
+	nonEmpty := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty > 6 {
+		return fmt.Errorf("policy_appendix 行数过多；它只能包含少量约束规则")
+	}
+	lower := strings.ToLower(trimmed)
+	suspiciousTokens := []string{
+		"```", "{\"", "\"tool\"", "|---", "context:", "history:", "runtime:", "schema:",
+		"背景：", "背景:", "上下文：", "上下文:", "历史：", "历史:", "已知事实", "用户原话", "表结构", "列如下",
+	}
+	for _, token := range suspiciousTokens {
+		if strings.Contains(lower, strings.ToLower(token)) {
+			return fmt.Errorf("policy_appendix 只能写约束，不能包含背景事实、历史记录或结构化上下文转储")
+		}
+	}
+	return nil
+}
+
+func disallowedDelegateTools(allowed []string) []string {
+	disallowedSet := map[string]struct{}{
+		"user_request_input": {},
+		"report_finalize":    {},
+	}
+	var forbidden []string
+	for _, name := range allowed {
+		trimmed := strings.TrimSpace(name)
+		if _, ok := disallowedSet[trimmed]; ok {
+			forbidden = append(forbidden, trimmed)
+		}
+	}
+	return forbidden
+}
+
 func delegateChildToolFailure(toolName, message string) string {
 	payload := map[string]interface{}{
 		"ok":         false,
@@ -587,9 +661,6 @@ func clipDelegateToolResult(raw string, max int) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err == nil {
 		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
-			return clipText(summary, max)
-		}
-		if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
 			return clipText(summary, max)
 		}
 		if message, ok := payload["message"].(string); ok && strings.TrimSpace(message) != "" {

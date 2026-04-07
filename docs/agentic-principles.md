@@ -75,7 +75,8 @@ Runtime 不应代替 Judge。
 - `state_memory_inspect`
 - `state_goal_inspect`
 - `state_report_inspect`
-- `state_context_inspect`
+- `state_report_edit_inspect`
+- `state_session_files_inspect`
 
 不要优先在 system prompt 或 runtime 注入“你现在应该如何行动”的判断文本。
 

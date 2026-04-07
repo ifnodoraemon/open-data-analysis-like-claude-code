@@ -22,7 +22,7 @@ func clipText(input string, max int) string {
 // digestSummary 为 LLM 历史摘要提取最有价值的文本片段，避免无意义的硬截断。
 //
 // 策略（按优先级）：
-//  1. 若文本可解析为 JSON 且含 ui_summary / summary_text / message / result 字段，
+//  1. 若文本可解析为 JSON 且含 ui_summary / message / result 字段，
 //     直接返回该字段（工具刻意设计为简短摘要，不应再截断）。
 //  2. 若输入为多段文字，取最后一段非空内容（LLM thinking 结论往往在末尾）。
 //  3. 回退：对最后一段做截断。
@@ -36,7 +36,7 @@ func digestSummary(input string, max int) string {
 	if len(trimmed) > 0 && trimmed[0] == '{' {
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-			for _, key := range []string{"ui_summary", "summary_text", "message", "result"} {
+			for _, key := range []string{"ui_summary", "message", "result"} {
 				if v, ok := payload[key].(string); ok && strings.TrimSpace(v) != "" {
 					return strings.TrimSpace(v)
 				}

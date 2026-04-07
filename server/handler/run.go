@@ -178,18 +178,26 @@ func renderReportHTMLFromSnapshot(report *domain.Report) (string, bool) {
 		return "", false
 	}
 
+	html, ok := renderReportHTMLFromSnapshotData(&snapshot)
+	if !ok {
+		return "", false
+	}
+	return html, true
+}
+
+func renderReportHTMLFromSnapshotData(snapshot *domain.ReportSnapshot) (string, bool) {
+	if snapshot == nil {
+		return "", false
+	}
+
 	state := &tools.ReportState{
 		FinalTitle:  strings.TrimSpace(snapshot.Title),
 		FinalAuthor: strings.TrimSpace(snapshot.Author),
 		Layout: tools.ReportLayout{
-			CustomHTMLShell: snapshot.Layout.CustomHTMLShell,
-			CustomCSS:       snapshot.Layout.CustomCSS,
-			CustomJS:        snapshot.Layout.CustomJS,
-			BodyClass:       snapshot.Layout.BodyClass,
-			HideCover:       snapshot.Layout.HideCover,
-			HideTOC:         snapshot.Layout.HideTOC,
+			CustomCSS: snapshot.Layout.CustomCSS,
+			BodyClass: snapshot.Layout.BodyClass,
 		},
-		NeedsFinalize: false,
+		NeedsFinalize: snapshot.NeedsFinalize,
 		Blocks:        make([]tools.ReportBlock, 0, len(snapshot.Blocks)),
 		Charts:        make([]tools.ChartData, 0, len(snapshot.Charts)),
 	}
@@ -304,9 +312,6 @@ func summarizeRunMessage(msg domain.RunMessage) string {
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(content), &payload); err == nil {
 			if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
-				return clipPreviewText(summary, 120)
-			}
-			if summary, ok := payload["summary_text"].(string); ok && strings.TrimSpace(summary) != "" {
 				return clipPreviewText(summary, 120)
 			}
 			if summary, ok := payload["delegate_summary"].(string); ok && strings.TrimSpace(summary) != "" {

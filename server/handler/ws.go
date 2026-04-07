@@ -268,10 +268,13 @@ func getRunWithPersistence(ctx context.Context, runID string) (*domain.AnalysisR
 }
 
 func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sessID, workspaceID, runID string, state *tools.ReportState) {
+	snapshot := buildReportSnapshot(state)
 	updateEv := agent.WSEvent{
 		Type: agent.EventReportUpdate,
 		Data: agent.ReportUpdateData{
-			HTML: tools.RenderReportHTML("", "", state),
+			HTML:           tools.RenderReportHTML("", "", state),
+			Title:          strings.TrimSpace(snapshot.Title),
+			ReportSnapshot: &snapshot,
 		},
 	}
 	sendSessionEvent(conn, writeMu, sessID, runID, updateEv)
@@ -322,6 +325,10 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 			HTML:         finalHTML,
 			Title:        strings.TrimSpace(sess.ReportState.FinalTitle),
 			ReportFileID: finalReportFileID,
+			ReportSnapshot: func() *domain.ReportSnapshot {
+				snapshot := buildReportSnapshot(sess.ReportState)
+				return &snapshot
+			}(),
 		},
 	}
 	sendSessionEvent(conn, writeMu, sess.ID, runID, finalEv)
@@ -343,14 +350,19 @@ func (handlerReportSnapshotLoader) LoadReportSnapshot(ctx context.Context, sessi
 		return nil, fmt.Errorf("目标任务不属于当前会话")
 	}
 	report, err := reportRepo.GetByRunID(ctx, runID)
-	if err != nil {
-		return nil, fmt.Errorf("目标任务尚未生成可编辑报告")
+	if err == nil {
+		var snapshot domain.ReportSnapshot
+		if err := json.Unmarshal([]byte(report.SnapshotJSON), &snapshot); err != nil {
+			return nil, fmt.Errorf("解析报告快照失败: %w", err)
+		}
+		return &snapshot, nil
 	}
-	var snapshot domain.ReportSnapshot
-	if err := json.Unmarshal([]byte(report.SnapshotJSON), &snapshot); err != nil {
-		return nil, fmt.Errorf("解析报告快照失败: %w", err)
+
+	_, _, sessionReportSnapshot, _ := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
+	if sessionReportSnapshot != nil {
+		return sessionReportSnapshot, nil
 	}
-	return &snapshot, nil
+	return nil, fmt.Errorf("目标任务尚未生成可编辑报告")
 }
 
 func buildRunUserContent(sess *session.Session, userMsg agent.UserMessage) (string, error) {
@@ -401,27 +413,20 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ws disconnected session_id=%s workspace_id=%s user_id=%s", sess.ID, sess.WorkspaceID, identity.UserID)
 	}()
 
-	memory, subgoals := sess.RuntimeState()
 	requestCtx := detachedContext(r.Context())
+	memory, subgoals, reportSnapshot, reportHTML := getSessionRuntimeState(requestCtx, sess.WorkspaceID, identity.UserID, sess.ID)
 
 	sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 		Type: agent.EventSessionReady,
 		Data: agent.SessionReadyData{
-			SessionID: sess.ID,
-			Files:     sess.FilesForClient(),
-			Subgoals:  subgoals,
-			Memory:    memory,
+			SessionID:      sess.ID,
+			Files:          sess.FilesForClient(),
+			Subgoals:       subgoals,
+			Memory:         memory,
+			ReportHTML:     reportHTML,
+			ReportSnapshot: reportSnapshot,
 		},
 	})
-
-	if len(sess.ReportState.Blocks) > 0 {
-		sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
-			Type: agent.EventReportUpdate,
-			Data: agent.ReportUpdateData{
-				HTML: tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState),
-			},
-		})
-	}
 
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -479,7 +484,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					return runRepo.UpdateStatus(persistCtx, activeRunID, domain.RunStatusRunning, nil)
 				})
 
-				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "已收到反馈，继续分析..."}})
+				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "已收到用户反馈。"}})
 
 				// 恢复执行 (传入空 userInput，因为问题已作为 tool result)
 				resumeCtx := agent.WithTraceMetadata(requestCtx, agent.TraceMetadata{
@@ -734,7 +739,10 @@ func saveEventToDBSync(workspaceID, sessionID, runID string, ev agent.WSEvent) {
 	case agent.CompleteData:
 		msg.Content = data.Summary
 	case agent.ReportUpdateData:
-		msg.Content = "Report updating..."
+		contentBytes, err := json.Marshal(data)
+		if err == nil {
+			msg.Content = string(contentBytes)
+		}
 	default:
 		// Attempt to marshal any other unhandled types as JSON
 		contentBytes, err := json.Marshal(ev.Data)
@@ -775,8 +783,9 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 
 func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
 	snapshot := domain.ReportSnapshot{
-		Version:     "v3",
-		GeneratedAt: time.Now(),
+		Version:       "v3",
+		GeneratedAt:   time.Now(),
+		NeedsFinalize: state != nil && state.NeedsFinalize,
 	}
 	if state == nil {
 		return snapshot
@@ -785,12 +794,8 @@ func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
 	snapshot.Title = strings.TrimSpace(state.FinalTitle)
 	snapshot.Author = strings.TrimSpace(state.FinalAuthor)
 	snapshot.Layout = domain.ReportSnapshotLayout{
-		CustomHTMLShell: state.Layout.CustomHTMLShell,
-		CustomCSS:       state.Layout.CustomCSS,
-		CustomJS:        state.Layout.CustomJS,
-		BodyClass:       state.Layout.BodyClass,
-		HideCover:       state.Layout.HideCover,
-		HideTOC:         state.Layout.HideTOC,
+		CustomCSS: state.Layout.CustomCSS,
+		BodyClass: state.Layout.BodyClass,
 	}
 	if snapshot.Title == "" {
 		snapshot.Title = tools.ResolveReportTitleFromState(state)

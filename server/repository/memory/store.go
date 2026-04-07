@@ -221,10 +221,14 @@ func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.Anal
 func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, limit int) ([]domain.AnalysisRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if limit <= 0 {
+	if limit == 0 {
 		limit = 20
 	}
-	runs := make([]domain.AnalysisRun, 0, limit)
+	initialCap := limit
+	if initialCap < 0 {
+		initialCap = 0
+	}
+	runs := make([]domain.AnalysisRun, 0, initialCap)
 	for _, run := range r.runs {
 		if run.SessionID == sessionID && (run.ParentRunID == nil || *run.ParentRunID == "") {
 			runs = append(runs, *run)
@@ -235,7 +239,7 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 			return runs[i].CreatedAt.After(runs[j].CreatedAt)
 		})
 	}
-	if len(runs) > limit {
+	if limit > 0 && len(runs) > limit {
 		runs = runs[:limit]
 	}
 	return runs, nil

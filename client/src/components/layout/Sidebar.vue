@@ -23,7 +23,10 @@
             class="session-item-wrapper"
           >
             <!-- Editing State -->
-            <div v-if="editingSessionId === session.id" class="session-item editing">
+            <div
+              v-if="editingSessionId === session.id"
+              class="session-item editing"
+            >
               <span class="session-icon">💬</span>
               <input
                 ref="editInput"
@@ -42,11 +45,25 @@
               @click="handleSessionClick(session.id)"
             >
               <span class="session-icon">💬</span>
-              <span class="session-title" :title="session.title">{{ session.title || session.id }}</span>
-              
+              <span class="session-title" :title="session.title">{{
+                session.title || session.id
+              }}</span>
+
               <div class="session-actions" @click.stop>
-                <button class="action-btn" @click.stop="startRename(session)" title="重命名">✏️</button>
-                <button class="action-btn delete" @click.stop="confirmDelete(session.id)" title="删除">🗑️</button>
+                <button
+                  class="action-btn"
+                  @click.stop="startRename(session)"
+                  title="重命名"
+                >
+                  ✏️
+                </button>
+                <button
+                  class="action-btn delete"
+                  @click.stop="confirmDelete(session.id)"
+                  title="删除"
+                >
+                  🗑️
+                </button>
               </div>
             </button>
           </div>
@@ -62,7 +79,11 @@
           :value="workspaceId"
           @change="handleWorkspaceChange"
         >
-          <option v-for="item in workspaceOptions" :key="item.id" :value="item.id">
+          <option
+            v-for="item in workspaceOptions"
+            :key="item.id"
+            :value="item.id"
+          >
             {{ item.name }}
           </option>
         </select>
@@ -71,7 +92,12 @@
       <div class="user-profile">
         <div class="avatar">{{ userInitial }}</div>
         <div class="user-info">
-          <span class="user-name">{{ store.user?.name || store.user?.username || store.user?.email || 'User' }}</span>
+          <span class="user-name">{{
+            store.user?.name ||
+            store.user?.username ||
+            store.user?.email ||
+            "User"
+          }}</span>
           <div class="status-indicator">
             <span class="dot" :class="connected ? 'online' : 'offline'"></span>
             <span class="text">{{ statusText }}</span>
@@ -84,117 +110,130 @@
 </template>
 
 <script setup>
-import { computed, ref, nextTick } from 'vue'
-import { useWebSocket } from '../../composables/useWebSocket.js'
-import { useAgentStore } from '../../stores/agent.js'
+import { computed, ref, nextTick } from "vue";
+import { useWebSocket } from "../../composables/useWebSocket.js";
+import { useAgentStore } from "../../stores/agent.js";
 
-defineEmits(['toggle'])
+defineEmits(["toggle"]);
 
-const { connected, createNewSession, disconnect, switchWorkspace, openSession, renameSession, deleteSession } = useWebSocket()
-const store = useAgentStore()
+const {
+  connected,
+  createNewSession,
+  disconnect,
+  switchWorkspace,
+  openSession,
+  renameSession,
+  deleteSession,
+} = useWebSocket();
+const store = useAgentStore();
 
-const workspaceOptions = computed(() => store.workspaces || [])
-const workspaceId = computed(() => store.workspace?.id || '')
-const sessions = computed(() => store.sessions || [])
-const currentSessionId = computed(() => store.sessionId || '')
+const workspaceOptions = computed(() => store.workspaces || []);
+const workspaceId = computed(() => store.workspace?.id || "");
+const sessions = computed(() => store.sessions || []);
+const currentSessionId = computed(() => store.sessionId || "");
 
 // Rename logic
-const editingSessionId = ref('')
-const editingTitle = ref('')
-const editInput = ref(null)
+const editingSessionId = ref("");
+const editingTitle = ref("");
+const editInput = ref(null);
 
 // Computed user initials
 const userInitial = computed(() => {
-  const name = store.user?.name || store.user?.username || store.user?.email || 'U'
-  return name.charAt(0).toUpperCase()
-})
+  const name =
+    store.user?.name || store.user?.username || store.user?.email || "U";
+  return name.charAt(0).toUpperCase();
+});
 
 const statusText = computed(() => {
   switch (store.connectionState) {
-    case 'connected': return '已连接'
-    case 'reconnecting': return '重连中...'
-    case 'disconnected': return '未连接'
-    default: return '连接中...'
+    case "connected":
+      return "已连接";
+    case "reconnecting":
+      return "重连中...";
+    case "disconnected":
+      return "未连接";
+    default:
+      return "连接中...";
   }
-})
+});
 
 async function handleSessionClick(sessionId) {
-  if (!sessionId || sessionId === currentSessionId.value) return
-  if (editingSessionId.value === sessionId) return
+  if (!sessionId || sessionId === currentSessionId.value) return;
+  if (editingSessionId.value === sessionId) return;
   try {
-    await openSession(sessionId)
+    await openSession(sessionId);
   } catch (err) {
-    console.error('open session failed:', err)
+    console.error("open session failed:", err);
   }
 }
 
 async function handleWorkspaceChange(event) {
-  const nextWorkspaceId = event.target.value
-  if (!nextWorkspaceId || nextWorkspaceId === workspaceId.value) return
+  const nextWorkspaceId = event.target.value;
+  if (!nextWorkspaceId || nextWorkspaceId === workspaceId.value) return;
   try {
-    await switchWorkspace(nextWorkspaceId)
+    await switchWorkspace(nextWorkspaceId);
   } catch (err) {
-    console.error('switch workspace failed:', err)
+    console.error("switch workspace failed:", err);
   }
 }
 
 function startRename(session) {
-  editingSessionId.value = session.id
-  editingTitle.value = session.title || ''
+  editingSessionId.value = session.id;
+  editingTitle.value = session.title || "";
   nextTick(() => {
     if (editInput.value && editInput.value.length > 0) {
-      editInput.value[0].focus()
+      editInput.value[0].focus();
     } else if (editInput.value && editInput.value.focus) {
-      editInput.value.focus()
+      editInput.value.focus();
     }
-  })
+  });
 }
 
 function cancelRename() {
-  editingSessionId.value = ''
-  editingTitle.value = ''
+  editingSessionId.value = "";
+  editingTitle.value = "";
 }
 
 async function saveRename(sessionId) {
-  if (!editingSessionId.value || editingSessionId.value !== sessionId) return
-  const newTitle = editingTitle.value.trim()
-  const oldTitle = sessions.value.find(s => s.id === sessionId)?.title || ''
-  
-  editingSessionId.value = ''
-  editingTitle.value = ''
-  
+  if (!editingSessionId.value || editingSessionId.value !== sessionId) return;
+  const newTitle = editingTitle.value.trim();
+  const oldTitle = sessions.value.find((s) => s.id === sessionId)?.title || "";
+
+  editingSessionId.value = "";
+  editingTitle.value = "";
+
   if (newTitle && newTitle !== oldTitle) {
     try {
-      await renameSession(sessionId, newTitle)
+      await renameSession(sessionId, newTitle);
     } catch (err) {
-      console.error('rename failed', err)
+      console.error("rename failed", err);
     }
   }
 }
 
 async function confirmDelete(sessionId) {
-  if (confirm('确定要删除这条对话记录吗？此操作无法恢复。')) {
+  if (confirm("确定要删除这条对话记录吗？此操作无法恢复。")) {
     try {
-      await deleteSession(sessionId)
+      await deleteSession(sessionId);
     } catch (err) {
-      console.error('delete failed', err)
+      console.error("delete failed", err);
     }
   }
 }
 
 function formatDate(dateStr) {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  const now = new Date()
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  const now = new Date();
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function logout() {
-  disconnect()
-  store.logout()
+  disconnect();
+  store.logout();
 }
 </script>
 

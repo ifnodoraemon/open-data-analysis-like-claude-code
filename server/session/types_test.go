@@ -35,8 +35,9 @@ func TestPrepareUserRunLoadsSnapshotThroughLoader(t *testing.T) {
 	}
 	loader := &stubSnapshotLoader{
 		snapshot: &domain.ReportSnapshot{
-			Title:  "旧报告",
-			Author: "tester",
+			Title:         "旧报告",
+			Author:        "tester",
+			NeedsFinalize: true,
 			Blocks: []domain.ReportSnapshotBlock{
 				{ID: "b1", Kind: "chart", Title: "趋势", ChartID: "chart_1"},
 			},
@@ -63,6 +64,9 @@ func TestPrepareUserRunLoadsSnapshotThroughLoader(t *testing.T) {
 	}
 	if sess.ReportState.FinalTitle != "旧报告" || len(sess.ReportState.Blocks) != 1 {
 		t.Fatalf("expected snapshot to be loaded into report state: %#v", sess.ReportState)
+	}
+	if !sess.ReportState.NeedsFinalize {
+		t.Fatalf("expected draft snapshot to preserve needs_finalize, got %#v", sess.ReportState)
 	}
 	if sess.EditState.TargetBlockID != "b1" || len(sess.EditState.AllowedChartIDs) != 1 {
 		t.Fatalf("expected edit state to refresh from loaded snapshot: %#v", sess.EditState)
@@ -114,21 +118,6 @@ func TestSessionRuntimeVars(t *testing.T) {
 	}
 	if strings.Contains(vars[0].Content, "请仅在允许的边界") {
 		t.Errorf("imperative hint should not be present in edit scope")
-	}
-
-	// 2. Test Subgoals
-	sess.EditState = nil
-	sess.Subgoals = agent.NewSubgoalManager()
-	sess.Subgoals.AddGoal("do work", "")
-	vars = sess.RuntimeVars()
-	if len(vars) != 1 || vars[0].Name != "active_subgoals" {
-		t.Fatalf("expected 1 active_subgoals, got %v", vars)
-	}
-	if !strings.Contains(vars[0].Content, "] do work (pending)") {
-		t.Errorf("missing subgoal in fact: %s", vars[0].Content)
-	}
-	if strings.Contains(vars[0].Content, "请记得更新状态") {
-		t.Errorf("imperative hint should not be present in subgoals")
 	}
 }
 

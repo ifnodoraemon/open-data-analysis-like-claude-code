@@ -79,14 +79,14 @@ func upsertReportBlock(state *ReportState, editState *ReportEditState, params re
 
 	existingIndex := findReportBlockIndex(state.Blocks, block.ID)
 	insertHintIndex := -1
-	summaryText := fmt.Sprintf("已将 block [%s] %s 写入报告草稿", block.Kind, block.ID)
+	summaryText := fmt.Sprintf("已将 block [%s] %s 写入 report state；delivery_state=draft", block.Kind, block.ID)
 	if existingIndex >= 0 {
 		if len(block.Sources) == 0 && len(state.Blocks[existingIndex].Sources) > 0 {
 			block.Sources = state.Blocks[existingIndex].Sources
 		}
 		state.Blocks = append(state.Blocks[:existingIndex], state.Blocks[existingIndex+1:]...)
 		insertHintIndex = existingIndex
-		summaryText = fmt.Sprintf("已更新报告草稿中的 block [%s] %s", block.Kind, block.ID)
+		summaryText = fmt.Sprintf("已更新 report state 中的 block [%s] %s；delivery_state=draft", block.Kind, block.ID)
 	}
 
 	insertAt := len(state.Blocks)
@@ -128,7 +128,7 @@ func removeReportBlock(state *ReportState, editState *ReportEditState, params re
 		BlockID:    params.BlockID,
 		BlockKind:  removed.Kind,
 		BlockCount: len(state.Blocks),
-		UISummary:  fmt.Sprintf("已从报告草稿删除 block [%s] %s", removed.Kind, removed.ID),
+		UISummary:  fmt.Sprintf("已从 report state 删除 block [%s] %s；delivery_state=draft", removed.Kind, removed.ID),
 	}, nil
 }
 
@@ -157,7 +157,7 @@ func moveReportBlock(state *ReportState, editState *ReportEditState, params repo
 		BlockID:    params.BlockID,
 		BlockKind:  block.Kind,
 		BlockCount: len(state.Blocks),
-		UISummary:  fmt.Sprintf("已重排报告草稿中的 block [%s] %s", block.Kind, block.ID),
+		UISummary:  fmt.Sprintf("已重排 report state 中的 block [%s] %s；delivery_state=draft", block.Kind, block.ID),
 	}, nil
 }
 
@@ -194,10 +194,6 @@ func buildReportBlock(kind, blockID, title, content, chartID string, sources []E
 		Sources: sources,
 	}
 	switch kind {
-	case "title":
-		if strings.TrimSpace(title) == "" {
-			return ReportBlock{}, fmt.Errorf("title is required for title block")
-		}
 	case "markdown", "html":
 		if strings.TrimSpace(content) == "" {
 			return ReportBlock{}, fmt.Errorf("content is required for %s block", kind)

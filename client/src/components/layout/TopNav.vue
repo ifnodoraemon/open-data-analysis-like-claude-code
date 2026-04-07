@@ -9,7 +9,11 @@
         :value="workspaceId"
         @change="handleWorkspaceChange"
       >
-        <option v-for="item in workspaceOptions" :key="item.id" :value="item.id">
+        <option
+          v-for="item in workspaceOptions"
+          :key="item.id"
+          :value="item.id"
+        >
           {{ item.name }}
         </option>
       </select>
@@ -22,52 +26,51 @@
       <button class="nav-btn" @click="clearAll" title="新建分析">
         ✨ 新建
       </button>
-      <button class="nav-btn" @click="logout">
-        退出
-      </button>
+      <button class="nav-btn" @click="logout">退出</button>
     </div>
   </nav>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useWebSocket } from '../../composables/useWebSocket.js'
-import { useAgentStore } from '../../stores/agent.js'
+import { computed } from "vue";
+import { useWebSocket } from "../../composables/useWebSocket.js";
+import { useAgentStore } from "../../stores/agent.js";
 
-const { connected, createNewSession, disconnect, switchWorkspace } = useWebSocket()
-const store = useAgentStore()
-const workspaceOptions = computed(() => store.workspaces || [])
-const workspaceId = computed(() => store.workspace?.id || '')
+const { connected, createNewSession, disconnect, switchWorkspace } =
+  useWebSocket();
+const store = useAgentStore();
+const workspaceOptions = computed(() => store.workspaces || []);
+const workspaceId = computed(() => store.workspace?.id || "");
 const statusText = computed(() => {
   switch (store.connectionState) {
-    case 'connected':
-      return '已连接'
-    case 'reconnecting':
-      return '重连中...'
-    case 'disconnected':
-      return '未连接'
+    case "connected":
+      return "已连接";
+    case "reconnecting":
+      return "重连中...";
+    case "disconnected":
+      return "未连接";
     default:
-      return '连接中...'
+      return "连接中...";
   }
-})
+});
 
 function clearAll() {
-  createNewSession()
+  createNewSession();
 }
 
 async function handleWorkspaceChange(event) {
-  const nextWorkspaceId = event.target.value
-  if (!nextWorkspaceId || nextWorkspaceId === workspaceId.value) return
+  const nextWorkspaceId = event.target.value;
+  if (!nextWorkspaceId || nextWorkspaceId === workspaceId.value) return;
   try {
-    await switchWorkspace(nextWorkspaceId)
+    await switchWorkspace(nextWorkspaceId);
   } catch (err) {
-    console.error('switch workspace failed:', err)
+    console.error("switch workspace failed:", err);
   }
 }
 
 function logout() {
-  disconnect()
-  store.logout()
+  disconnect();
+  store.logout();
 }
 </script>
 
@@ -90,7 +93,9 @@ function logout() {
   gap: 8px;
 }
 
-.logo { font-size: 1.2rem; }
+.logo {
+  font-size: 1.2rem;
+}
 
 .title {
   font-size: 0.85rem;
@@ -122,8 +127,14 @@ function logout() {
   border-radius: 50%;
 }
 
-.status-dot.online { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
-.status-dot.offline { background: var(--accent-orange); animation: pulse 1.5s infinite; }
+.status-dot.online {
+  background: var(--accent-green);
+  box-shadow: 0 0 4px var(--accent-green);
+}
+.status-dot.offline {
+  background: var(--accent-orange);
+  animation: pulse 1.5s infinite;
+}
 
 .nav-right {
   display: flex;

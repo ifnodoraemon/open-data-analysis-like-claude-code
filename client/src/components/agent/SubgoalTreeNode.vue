@@ -26,11 +26,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed } from "vue";
 
 defineOptions({
-  name: 'SubgoalTreeNode',
-})
+  name: "SubgoalTreeNode",
+});
 
 const props = defineProps({
   goal: {
@@ -41,27 +41,37 @@ const props = defineProps({
     type: Array,
     required: true,
   },
-})
+});
 
 const children = computed(() => {
-  return props.allGoals.filter(item => (item.parentGoalId || '') === props.goal.id)
-})
+  return props.allGoals.filter(
+    (item) => (item.parentGoalId || "") === props.goal.id,
+  );
+});
 
 function getStatusIcon(status) {
   switch (status) {
-    case 'complete': return '✅'
-    case 'running': return '⏳'
-    case 'rejected': return '❌'
-    default: return '⚪'
+    case "complete":
+      return "✅";
+    case "running":
+      return "⏳";
+    case "rejected":
+      return "❌";
+    default:
+      return "⚪";
   }
 }
 
 function getStatusText(status) {
   switch (status) {
-    case 'complete': return '已完成'
-    case 'running': return '进行中'
-    case 'rejected': return '已放弃'
-    default: return '待处理'
+    case "complete":
+      return "已完成";
+    case "running":
+      return "进行中";
+    case "rejected":
+      return "已放弃";
+    default:
+      return "待处理";
   }
 }
 </script>

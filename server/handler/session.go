@@ -96,7 +96,7 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 		"session":      serializeSession(*session),
 		"files":        []map[string]interface{}{},
 		"runs":         []map[string]interface{}{},
-		"runtimeState": serializeRuntimeState(map[string]string{}, []agent.Subgoal{}),
+		"runtimeState": serializeRuntimeState(map[string]string{}, []agent.Subgoal{}, ""),
 	})
 }
 

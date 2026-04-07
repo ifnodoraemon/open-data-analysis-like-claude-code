@@ -1,5 +1,7 @@
 package agent
 
+import "github.com/ifnodoraemon/openDataAnalysis/domain"
+
 // WSEvent WebSocket 事件类型
 type WSEvent struct {
 	Type      string      `json:"type"`
@@ -53,10 +55,12 @@ type ResetSessionRequest struct {
 }
 
 type SessionReadyData struct {
-	SessionID string            `json:"sessionId"`
-	Files     []UploadedFile    `json:"files,omitempty"`
-	Subgoals  []Subgoal         `json:"subgoals,omitempty"`
-	Memory    map[string]string `json:"memory,omitempty"`
+	SessionID      string                 `json:"sessionId"`
+	Files          []UploadedFile         `json:"files,omitempty"`
+	Subgoals       []Subgoal              `json:"subgoals,omitempty"`
+	Memory         map[string]string      `json:"memory,omitempty"`
+	ReportHTML     string                 `json:"report_html,omitempty"`
+	ReportSnapshot *domain.ReportSnapshot `json:"report_snapshot,omitempty"`
 }
 
 type SessionResetData struct {
@@ -124,10 +128,11 @@ type ChildRunsUpdatedData struct {
 
 // ReportUpdateData 研报更新事件
 type ReportUpdateData struct {
-	HTML         string `json:"html"`
-	SectionID    string `json:"sectionId,omitempty"`
-	Title        string `json:"title,omitempty"`
-	ReportFileID string `json:"reportFileId,omitempty"`
+	HTML           string                 `json:"html"`
+	SectionID      string                 `json:"sectionId,omitempty"`
+	Title          string                 `json:"title,omitempty"`
+	ReportFileID   string                 `json:"reportFileId,omitempty"`
+	ReportSnapshot *domain.ReportSnapshot `json:"report_snapshot,omitempty"`
 }
 
 // ErrorData 错误事件
