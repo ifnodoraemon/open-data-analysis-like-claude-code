@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -12,13 +17,11 @@ import (
 )
 
 func main() {
-	// 加载配置
 	config.Load()
 	handler.Initialize()
 
 	r := chi.NewRouter()
 
-	// 中间件
 	r.Use(middleware.RequestID)
 	r.Use(handler.RequestLoggingMiddleware)
 	r.Use(middleware.Recoverer)
@@ -29,13 +32,11 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// 公开接口
 	r.Post("/api/auth/login", handler.LoginHandler)
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// 鉴权接口
 	r.Group(func(protected chi.Router) {
 		protected.Use(handler.AuthMiddleware)
 		protected.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
@@ -55,13 +56,32 @@ func main() {
 	})
 
 	port := config.Cfg.ServerPort
-	log.Printf("server started addr=0.0.0.0:%s ws_path=/ws model=%s endpoint=%s llm_debug=%t llm_debug_dir=%s",
-		port,
-		config.Cfg.LLMModel,
-		config.Cfg.LLMAPIEndpoint,
-		config.Cfg.LLMDebug,
-		config.Cfg.LLMDebugDir,
-	)
+	srv := &http.Server{Addr: ":" + port, Handler: r}
 
-	log.Fatal(http.ListenAndServe(":"+port, r))
+	go func() {
+		log.Printf("server started addr=0.0.0.0:%s ws_path=/ws model=%s endpoint=%s llm_debug=%t llm_debug_dir=%s",
+			port,
+			config.Cfg.LLMModel,
+			config.Cfg.LLMAPIEndpoint,
+			config.Cfg.LLMDebug,
+			config.Cfg.LLMDebugDir,
+		)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("server forced shutdown: %v", err)
+	}
+
+	log.Println("server exited")
 }

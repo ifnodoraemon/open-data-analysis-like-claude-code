@@ -405,7 +405,7 @@ func (r *RunRepository) ListBySession(ctx context.Context, sessionID string, lim
 }
 
 func (r *RunRepository) ListByParent(ctx context.Context, parentRunID string) ([]domain.AnalysisRun, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE parent_run_id = ? ORDER BY created_at ASC`, parentRunID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, workspace_id, user_id, parent_run_id, run_kind, delegate_role, goal_id, status, input_message, summary, error_message, report_file_id, started_at, finished_at, created_at, updated_at FROM analysis_runs WHERE parent_run_id = ? ORDER BY created_at ASC LIMIT 200`, parentRunID)
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +482,7 @@ func (r *MessageRepository) ListByRun(ctx context.Context, runID string) ([]doma
 		FROM run_messages
 		WHERE run_id = ?
 		ORDER BY created_at ASC
+		LIMIT 5000
 	`, runID)
 	if err != nil {
 		return nil, err

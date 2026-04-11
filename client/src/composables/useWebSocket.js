@@ -175,13 +175,23 @@ export function useWebSocket() {
     return { ...data.session, latestRun };
   }
 
+let sessionCreatePromise = null;
+
   async function ensureSession() {
     if (store.sessionId) return store.sessionId;
-    const session = await createSession({ refreshSessions: true });
-    if (!session?.id) {
-      throw new Error("创建会话失败");
-    }
-    return session.id;
+    if (sessionCreatePromise) return sessionCreatePromise;
+    sessionCreatePromise = (async () => {
+      try {
+        const session = await createSession({ refreshSessions: true });
+        if (!session?.id) {
+          throw new Error("创建会话失败");
+        }
+        return session.id;
+      } finally {
+        sessionCreatePromise = null;
+      }
+    })();
+    return sessionCreatePromise;
   }
 
   async function loadSessions() {
@@ -246,16 +256,22 @@ export function useWebSocket() {
             if (msg.type === "tool_call") {
               try {
                 parsedArgs = JSON.parse(msg.content);
-              } catch (e) {}
+              } catch {
+                parsedArgs = msg.content;
+              }
             } else if (msg.type === "user_request_input") {
               try {
                 parsedArgs = JSON.parse(msg.content);
-              } catch (e) {}
+              } catch {
+                parsedArgs = { question: msg.content };
+              }
             }
             if (msg.type === "tool_result") {
               try {
                 parsedResult = JSON.parse(msg.content);
-              } catch (e) {}
+              } catch {
+                parsedResult = null;
+              }
             }
             return {
               id: msg.id,
@@ -363,7 +379,13 @@ export function useWebSocket() {
         if (wsInstance !== socket) {
           return;
         }
-        const data = JSON.parse(event.data);
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (err) {
+          console.warn("WebSocket message parse error:", err);
+          return;
+        }
         handleEvent(data, store);
       };
 

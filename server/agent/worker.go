@@ -24,7 +24,12 @@ func init() {
 			}
 		}
 		return &ManageSubgoalsTool{
-			Subgoals: ctx.Subgoals.(*SubgoalManager),
+			Subgoals: func() *SubgoalManager {
+				if sm, ok := ctx.Subgoals.(*SubgoalManager); ok {
+					return sm
+				}
+				return nil
+			}(),
 			EmitFunc: func(event WSEvent) {
 				if ctx.EmitFunc != nil {
 					ctx.EmitFunc(event)
@@ -42,7 +47,9 @@ func init() {
 		}
 		var subgoals *SubgoalManager
 		if ctx.Subgoals != nil {
-			subgoals = ctx.Subgoals.(*SubgoalManager)
+			if sm, ok := ctx.Subgoals.(*SubgoalManager); ok {
+				subgoals = sm
+			}
 		}
 		return &DelegateTaskTool{
 			BaseRegistry: ctx.DelegateRegistry,

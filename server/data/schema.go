@@ -73,6 +73,9 @@ type normalizedTimeValue struct {
 
 // ExtractSchema 提取表的 Schema 和统计摘要
 func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
+	if err := validateSQLIdent(tableName); err != nil {
+		return nil, fmt.Errorf("invalid table name: %w", err)
+	}
 	schema := &SchemaInfo{TableName: tableName}
 
 	// 获取行数
@@ -104,6 +107,9 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 
 	// 分析每一列
 	for _, col := range columns {
+		if err := validateSQLIdent(col); err != nil {
+			continue
+		}
 		colInfo := ColumnInfo{Name: col, Type: "TEXT"}
 
 		// 非空率

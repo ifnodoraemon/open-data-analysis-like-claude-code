@@ -22,6 +22,7 @@ server/.env
 
 # IDE
 .vscode/
+.codex
 .idea/
 *.swp
 *.swo

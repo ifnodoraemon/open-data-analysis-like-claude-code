@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -26,6 +27,7 @@ func writeRepoLookupError(w http.ResponseWriter, err error, notFoundMessage stri
 		http.Error(w, notFoundMessage, http.StatusNotFound)
 		return true
 	}
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	log.Printf("internal repo error: %v", err)
+	http.Error(w, "内部服务错误", http.StatusInternalServerError)
 	return true
 }

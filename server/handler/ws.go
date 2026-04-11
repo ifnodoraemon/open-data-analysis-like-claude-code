@@ -26,8 +26,21 @@ var reportPreviewTools = map[string]struct{}{
 	"report_manage_blocks":    {},
 }
 
+var allowedOrigins = map[string]bool{
+	"http://localhost:5173": true,
+	"http://127.0.0.1:5173": true,
+	"http://localhost":      true,
+	"http://127.0.0.1":      true,
+}
+
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return true
+		}
+		return allowedOrigins[origin]
+	},
 }
 
 const persistenceTimeout = 10 * time.Second

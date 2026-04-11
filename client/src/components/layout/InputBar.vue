@@ -54,9 +54,20 @@ const isRunning = computed(() => store.isRunning);
 const uploadedFiles = computed(() => store.uploadedFiles);
 const isUploading = ref(false);
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
 async function handleFile(e) {
   const file = e.target.files[0];
   if (!file) return;
+
+  if (file.size > MAX_FILE_SIZE) {
+    store.addMessage({
+      type: "error",
+      content: `文件过大（${formatSize(file.size)}），最大支持 ${formatSize(MAX_FILE_SIZE)}`,
+    });
+    e.target.value = "";
+    return;
+  }
 
   const formData = new FormData();
   formData.append("file", file);

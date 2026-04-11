@@ -22,13 +22,14 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	proxyToken := os.Getenv("PROXY_TOKEN")
 	if proxyToken == "" {
-		proxyToken = "internal-secret-token"
+		http.Error(w, "文件代理服务未配置", http.StatusServiceUnavailable)
+		return
 	}
 
 	url := fmt.Sprintf("%s/files/%s", endpoint, filename)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("X-Proxy-Token", proxyToken)

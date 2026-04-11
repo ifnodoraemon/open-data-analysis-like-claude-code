@@ -154,7 +154,9 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 
 	s.Registry = plannerRegistry
 	if ft, err := plannerRegistry.Get("report_finalize"); err == nil {
-		s.FinalizeTool = ft.(*tools.FinalizeReportTool)
+		if ftt, ok := ft.(*tools.FinalizeReportTool); ok {
+			s.FinalizeTool = ftt
+		}
 	}
 
 	policyPrompt := agent.BuildPolicyPrompt()

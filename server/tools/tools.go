@@ -63,7 +63,7 @@ type LoadDataTool struct {
 
 func (t *LoadDataTool) Name() string { return "data_load_file" }
 func (t *LoadDataTool) Description() string {
-	return "加载用户上传的 CSV 或 Excel 文件到内部数据库，并返回表名、行数和列数。"
+	return "将用户上传的 CSV 或 Excel 文件导入到内部 SQLite 数据库，并返回表名、行数和列数。适用场景：当用户要求分析某个已上传文件，且该文件尚未导入时可调用。不适合用于查询或描述已导入的表（应使用 data_query_sql 或 data_describe_table）。副作用：会在内部数据库中创建一张新表；如果同名表已存在则会覆盖。读取上传文件列表状态；写入数据库状态。返回 file_id、table_name、row_count、column_count。失败条件：文件 ID 不存在、文件格式不受支持、文件内容无法解析。限制：仅支持 CSV 和 Excel 格式。"
 }
 
 func (t *InspectSessionFilesTool) Name() string { return "state_session_files_inspect" }
@@ -137,7 +137,7 @@ type ListTablesTool struct {
 
 func (t *ListTablesTool) Name() string { return "data_list_tables" }
 func (t *ListTablesTool) Description() string {
-	return "返回当前数据库中的已导入表。"
+	return "返回当前内部数据库中所有已导入表的名称列表。适用场景：当需要了解当前有哪些可查询的表、或确认文件是否已成功导入时调用。不适合用于获取表的列结构或统计摘要（应使用 data_describe_table）。不修改任何状态。返回 table_count、tables 列表和 empty 标志。失败条件：数据库未初始化。"
 }
 func (t *ListTablesTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{"type": "object", "properties": {}}`)
@@ -331,7 +331,7 @@ type QueryDataTool struct {
 
 func (t *QueryDataTool) Name() string { return "data_query_sql" }
 func (t *QueryDataTool) Description() string {
-	return "执行单条只读 SQL 查询。仅允许 SELECT 或 WITH，结果最多返回 200 行。"
+	return "在内部数据库上执行单条只读 SQL 查询。仅允许 SELECT 或 WITH 语句；禁止 INSERT/UPDATE/DELETE/DDL。适用场景：当需要对已导入的表执行数据提取、聚合、筛选、排序等分析操作时调用。不适合用于修改数据或查看表结构（应使用 data_describe_table）。不修改任何状态。返回 sql、row_count、columns 和 rows。最多返回 200 行结果；超出部分不会被截断提示，需在 SQL 中自行使用 LIMIT。失败条件：SQL 语法错误、引用不存在的表或列、执行超时。限制：仅支持 SQLite 方言。"
 }
 func (t *QueryDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{

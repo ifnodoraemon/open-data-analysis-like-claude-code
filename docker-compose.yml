@@ -27,6 +27,8 @@ services:
     build: ./python-executor
     container_name: data-analysis-python
     restart: unless-stopped
+    environment:
+      PROXY_TOKEN: "${PROXY_TOKEN:-oda-proxy-$(date +%s)}"
     ports:
       - "8081:8081"
     volumes:

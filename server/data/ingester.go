@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
-	"regexp"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -456,6 +456,14 @@ func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
 
 // createTableTyped 创建带类型的 SQLite 表
 func (ing *Ingester) createTableTyped(tableName string, columns []string, types []ColumnType) error {
+	if err := validateSQLIdent(tableName); err != nil {
+		return fmt.Errorf("invalid table name: %w", err)
+	}
+	for _, col := range columns {
+		if err := validateSQLIdent(col); err != nil {
+			return fmt.Errorf("invalid column name: %w", err)
+		}
+	}
 	_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
 
 	var colDefs []string
@@ -479,6 +487,14 @@ func (ing *Ingester) createTableTyped(tableName string, columns []string, types 
 func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types []ColumnType, rows [][]string) error {
 	if len(rows) == 0 {
 		return nil
+	}
+	if err := validateSQLIdent(tableName); err != nil {
+		return fmt.Errorf("invalid table name: %w", err)
+	}
+	for _, col := range columns {
+		if err := validateSQLIdent(col); err != nil {
+			return fmt.Errorf("invalid column name: %w", err)
+		}
 	}
 
 	tx, err := ing.db.Begin()
@@ -545,6 +561,21 @@ func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types 
 
 var invalidSQLIdent = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
+// validateSQLIdent ensures a name only contains safe characters for SQL identifiers.
+// This is a defense-in-depth check before interpolating names into DDL/DML statements.
+func validateSQLIdent(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty SQL identifier")
+	}
+	if len(name) > 128 {
+		return fmt.Errorf("SQL identifier too long: %s", name[:20])
+	}
+	if invalidSQLIdent.MatchString(name) {
+		return fmt.Errorf("invalid characters in SQL identifier: %s", name)
+	}
+	return nil
+}
+
 // sanitizeTableName 清理表名
 func sanitizeTableName(name string) string {
 	name = strings.TrimSpace(name)
@@ -607,6 +638,9 @@ func (ing *Ingester) ensureMetadataTable() {
 func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 	if ing.db == nil {
 		return fmt.Errorf("数据库未初始化")
+	}
+	if err := validateSQLIdent(tableName); err != nil {
+		return fmt.Errorf("invalid table name for schema generation: %w", err)
 	}
 
 	// 1. 生成系统级统计 (用于 SQL Query Planner)
@@ -812,7 +846,7 @@ func (ing *Ingester) GetTableMetadata(tableName string) (string, error) {
 			var schemaMap, semanticMap map[string]interface{}
 			if json.Unmarshal([]byte(schemaJSON.String), &schemaMap) == nil &&
 				json.Unmarshal([]byte(semanticJSON.String), &semanticMap) == nil {
-				
+
 				// 1. 合并 columns 数组内的新字段
 				if semColsRaw, ok := semanticMap["columns"].([]interface{}); ok {
 					if schColsRaw, ok := schemaMap["columns"].([]interface{}); ok {

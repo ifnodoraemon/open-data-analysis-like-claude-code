@@ -92,10 +92,12 @@ export const useAgentStore = defineStore("agent", () => {
     });
   }
 
+let _msgSeq = 0;
+
   function addMessage(msg) {
     messages.value.push({
       ...msg,
-      id: Date.now() + Math.random(),
+      id: `msg_${Date.now()}_${++_msgSeq}`,
       timestamp: new Date().toLocaleTimeString(),
     });
   }

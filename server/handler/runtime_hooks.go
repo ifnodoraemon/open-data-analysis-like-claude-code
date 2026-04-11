@@ -69,15 +69,19 @@ func newRuntimeEventDispatcher(ctx context.Context, conn *websocket.Conn, writeM
 			return finalizeAndPersistReport(ctx, conn, writeMu, sess, identity, runID)
 		},
 		setRunStatus: func(status domain.RunStatus, errMsg *string) {
-			_ = withPersistenceContext(ctx, func(persistCtx context.Context) error {
+			if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
 				return runRepo.UpdateStatus(persistCtx, runID, status, errMsg)
-			})
+			}); err != nil {
+				log.Printf("failed to persist run status run_id=%s status=%s err=%v", runID, status, err)
+			}
 		},
 		setRunSummary: func(summary string) {
 			trimmed := strings.TrimSpace(summary)
-			_ = withPersistenceContext(ctx, func(persistCtx context.Context) error {
+			if err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
 				return runRepo.UpdateSummary(persistCtx, runID, trimmed)
-			})
+			}); err != nil {
+				log.Printf("failed to persist run summary run_id=%s err=%v", runID, err)
+			}
 		},
 	}
 

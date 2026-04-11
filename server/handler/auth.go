@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/auth"
@@ -22,6 +23,35 @@ type switchWorkspaceRequest struct {
 	WorkspaceID string `json:"workspaceId"`
 }
 
+var (
+	loginRateMu     sync.Mutex
+	loginAttempts   = make(map[string][]time.Time)
+	loginRateLimit  = 5
+	loginRateWindow = 5 * time.Minute
+)
+
+func checkLoginRate(email string) bool {
+	loginRateMu.Lock()
+	defer loginRateMu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-loginRateWindow)
+	attempts := loginAttempts[email]
+	valid := make([]time.Time, 0, len(attempts))
+	for _, t := range attempts {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+	loginAttempts[email] = valid
+	return len(valid) < loginRateLimit
+}
+
+func recordLoginAttempt(email string) {
+	loginRateMu.Lock()
+	defer loginRateMu.Unlock()
+	loginAttempts[email] = append(loginAttempts[email], time.Now())
+}
+
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -35,24 +65,31 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !checkLoginRate(req.Email) {
+		http.Error(w, "登录尝试过于频繁，请稍后重试", http.StatusTooManyRequests)
+		return
+	}
+
 	user, err := userRepo.GetByEmail(r.Context(), req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			recordLoginAttempt(req.Email)
 			http.Error(w, "邮箱或密码错误", http.StatusUnauthorized)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 
 	if !auth.VerifyPassword(req.Password, user.PasswordHash) {
+		recordLoginAttempt(req.Email)
 		http.Error(w, "邮箱或密码错误", http.StatusUnauthorized)
 		return
 	}
 
 	workspaces, err := workspaceRepo.ListByUser(r.Context(), user.ID)
 	if err != nil || len(workspaces) == 0 {
-		http.Error(w, "用户没有可用工作区", http.StatusForbidden)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 
@@ -70,7 +107,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := tokenManager.Sign(identity, 7*24*time.Hour)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 
@@ -127,7 +164,7 @@ func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := workspaceRepo.IsMember(r.Context(), req.WorkspaceID, identity.UserID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
@@ -137,7 +174,7 @@ func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	workspace, err := workspaceRepo.GetByID(r.Context(), req.WorkspaceID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 
@@ -150,7 +187,7 @@ func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := tokenManager.Sign(newIdentity, 7*24*time.Hour)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "内部服务错误", http.StatusInternalServerError)
 		return
 	}
 

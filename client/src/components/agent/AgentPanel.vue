@@ -238,14 +238,17 @@ marked.setOptions({
 });
 
 watch(
-  messages,
+  () => messages.value.length,
   async () => {
     await nextTick();
     if (messagesEl.value) {
-      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+      const el = messagesEl.value;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+      if (nearBottom) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
   },
-  { deep: true },
 );
 
 function formatJSON(obj) {

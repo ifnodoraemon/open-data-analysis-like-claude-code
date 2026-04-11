@@ -107,7 +107,7 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	var result pyExecResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("解析 Python 执行结果失败: %w", err)

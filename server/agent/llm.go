@@ -242,7 +242,7 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 		return nil, fmt.Errorf("OpenAI Responses API 调用失败: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("读取 Responses 响应失败: %w", err)
 	}
@@ -253,18 +253,18 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 		return nil, fmt.Errorf("解析 Responses 响应失败: %w", err)
 	}
 	l.debugLog(span, "llm.response", map[string]interface{}{
-		"duration_ms":        time.Since(start).Milliseconds(),
-		"output_preview":     clipText(apiResp.OutputText, 300),
-		"output_chars":       len([]rune(apiResp.OutputText)),
-		"item_count":         len(apiResp.Output),
-		"tool_call_count":    countResponsesToolCalls(apiResp.Output),
-		"tool_calls":         responseToolNames(apiResp.Output),
-		"usage_input_tokens": apiResp.Usage.InputTokens,
+		"duration_ms":         time.Since(start).Milliseconds(),
+		"output_preview":      clipText(apiResp.OutputText, 300),
+		"output_chars":        len([]rune(apiResp.OutputText)),
+		"item_count":          len(apiResp.Output),
+		"tool_call_count":     countResponsesToolCalls(apiResp.Output),
+		"tool_calls":          responseToolNames(apiResp.Output),
+		"usage_input_tokens":  apiResp.Usage.InputTokens,
 		"usage_output_tokens": apiResp.Usage.OutputTokens,
-		"usage_total_tokens": apiResp.Usage.TotalTokens,
-		"response_bytes":     len(respBytes),
-		"response_sha256":    blobSHA256(respBytes),
-		"response_path":      responsePath,
+		"usage_total_tokens":  apiResp.Usage.TotalTokens,
+		"response_bytes":      len(respBytes),
+		"response_sha256":     blobSHA256(respBytes),
+		"response_path":       responsePath,
 	})
 	return l.convertResponsesResponse(&apiResp), nil
 }
@@ -634,18 +634,18 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 	if respBytes, marshalErr := json.Marshal(resp); marshalErr == nil {
 		responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
 		l.debugLog(span, "llm.response", map[string]interface{}{
-			"duration_ms":        time.Since(start).Milliseconds(),
-			"output_preview":     clipText(firstAnthropicText(resp.Content), 300),
-			"output_chars":       len([]rune(firstAnthropicText(resp.Content))),
-			"item_count":         len(resp.Content),
-			"tool_call_count":    countAnthropicToolUses(resp.Content),
-			"tool_calls":         anthropicToolNames(resp.Content),
-			"usage_input_tokens": resp.Usage.InputTokens,
+			"duration_ms":         time.Since(start).Milliseconds(),
+			"output_preview":      clipText(firstAnthropicText(resp.Content), 300),
+			"output_chars":        len([]rune(firstAnthropicText(resp.Content))),
+			"item_count":          len(resp.Content),
+			"tool_call_count":     countAnthropicToolUses(resp.Content),
+			"tool_calls":          anthropicToolNames(resp.Content),
+			"usage_input_tokens":  resp.Usage.InputTokens,
 			"usage_output_tokens": resp.Usage.OutputTokens,
-			"usage_total_tokens": resp.Usage.InputTokens + resp.Usage.OutputTokens,
-			"response_bytes":     len(respBytes),
-			"response_sha256":    blobSHA256(respBytes),
-			"response_path":      responsePath,
+			"usage_total_tokens":  resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			"response_bytes":      len(respBytes),
+			"response_sha256":     blobSHA256(respBytes),
+			"response_path":       responsePath,
 		})
 	}
 

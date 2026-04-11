@@ -1,37 +1,34 @@
 const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+
 const MARKDOWN_ALLOWED_TAGS = new Set([
-  "A",
-  "BLOCKQUOTE",
-  "BR",
-  "CODE",
-  "DIV",
-  "EM",
-  "H1",
-  "H2",
-  "H3",
-  "H4",
-  "H5",
-  "H6",
-  "LI",
-  "OL",
-  "P",
-  "PRE",
-  "SPAN",
-  "STRONG",
-  "TABLE",
-  "TBODY",
-  "TD",
-  "TH",
-  "THEAD",
-  "TR",
-  "UL",
+  "A", "BLOCKQUOTE", "BR", "CODE", "DIV", "EM",
+  "H1", "H2", "H3", "H4", "H5", "H6",
+  "LI", "OL", "P", "PRE", "SPAN", "STRONG",
+  "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL",
 ]);
+
+const REPORT_ALLOWED_TAGS = new Set([
+  "HTML", "HEAD", "BODY", "META", "LINK", "TITLE", "STYLE",
+  "DIV", "SPAN", "P", "BR", "HR", "H1", "H2", "H3", "H4", "H5", "H6",
+  "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD", "CAPTION",
+  "UL", "OL", "LI", "DL", "DT", "DD",
+  "A", "STRONG", "EM", "B", "I", "U", "S", "MARK", "SMALL", "SUB", "SUP",
+  "BLOCKQUOTE", "PRE", "CODE",
+  "IMG", "FIGURE", "FIGCAPTION",
+  "SECTION", "ARTICLE", "ASIDE", "HEADER", "FOOTER", "MAIN", "NAV",
+  "DETAILS", "SUMMARY",
+  "SCRIPT",
+]);
+
+const REPORT_REMOVE_TAGS = new Set(["IFRAME", "OBJECT", "EMBED", "BASE", "FORM", "INPUT", "BUTTON", "SELECT", "TEXTAREA"]);
+
+const DANGEROUS_ATTRS = new Set(["id", "content"]);
 
 function sanitizeClassList(value) {
   return String(value || "")
     .split(/\s+/)
     .map((item) => item.trim())
-    .filter((item) => item && /^[A-Za-z0-9:_-]+$/.test(item))
+    .filter((item) => item && /^[A-Za-z0-9_-]+$/.test(item))
     .join(" ");
 }
 
@@ -47,9 +44,17 @@ function sanitizeURL(value) {
   }
 }
 
+function sanitizeStyleValue(value) {
+  const lower = String(value || "").toLowerCase();
+  if (/[<]/.test(value)) return "";
+  if (/(?:expression|javascript|vbscript|behavior|@import)\s*\(/i.test(value)) return "";
+  if (/url\s*\(\s*["']?(?:javascript|vbscript|data|blob)\s*:/i.test(value)) return "";
+  return value;
+}
+
 function cleanAttributes(
   node,
-  { allowMarkdownClasses = false, allowChartStyle = false } = {},
+  { allowMarkdownClasses = false, allowChartStyle = false, allowReportAttrs = false } = {},
 ) {
   const attrs = Array.from(node.attributes || []);
   for (const attr of attrs) {
@@ -72,36 +77,45 @@ function cleanAttributes(
       }
       continue;
     }
+    if (name === "style") {
+      if (allowChartStyle || allowReportAttrs) {
+        const safe = sanitizeStyleValue(value);
+        if (safe) {
+          node.setAttribute(attr.name, safe);
+        } else {
+          node.removeAttribute(attr.name);
+        }
+      } else {
+        node.removeAttribute(attr.name);
+      }
+      continue;
+    }
     if (name === "class") {
       const safe = sanitizeClassList(value);
-      if (!safe || (!allowMarkdownClasses && node.tagName !== "BODY")) {
+      if (!safe || (!allowMarkdownClasses && !allowReportAttrs && node.tagName !== "BODY")) {
         node.removeAttribute("class");
       } else {
         node.setAttribute("class", safe);
       }
       continue;
     }
-    if (name === "style") {
-      if (!allowChartStyle) {
-        node.removeAttribute("style");
-      }
+    if (name === "target" || name === "rel" || name === "charset" || name === "name") {
       continue;
     }
-    if (name === "target" || name === "rel") {
+    if (name.startsWith("data-")) {
+      if (allowReportAttrs) continue;
+      node.removeAttribute(attr.name);
       continue;
     }
     if (
-      name.startsWith("data-") ||
-      [
-        "id",
-        "title",
-        "colspan",
-        "rowspan",
-        "charset",
-        "name",
-        "content",
-      ].includes(name)
+      allowReportAttrs &&
+      ["title", "colspan", "rowspan", "width", "height", "alt", "role", "aria-", "lang", "dir"].some(
+        (ok) => name === ok || name.startsWith(ok)
+      )
     ) {
+      continue;
+    }
+    if (!allowReportAttrs && ["title", "colspan", "rowspan"].includes(name)) {
       continue;
     }
     node.removeAttribute(attr.name);
@@ -113,6 +127,10 @@ function sanitizeTree(root, options = {}) {
   const toRemove = [];
   while (walker.nextNode()) {
     const node = walker.currentNode;
+    if (options.removeTags && options.removeTags.has(node.tagName)) {
+      toRemove.push(node);
+      continue;
+    }
     if (options.allowedTags && !options.allowedTags.has(node.tagName)) {
       toRemove.push(node);
       continue;
@@ -139,39 +157,60 @@ export function sanitizeMarkdownHTML(html) {
   return doc.body.innerHTML;
 }
 
+const ECHARTS_CDN_HOSTS = ["cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"];
+
 export function sanitizeReportHTML(html) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(String(html || ""), "text/html");
 
-  doc
-    .querySelectorAll("iframe, object, embed, base, meta[http-equiv]")
-    .forEach((node) => node.remove());
-  doc.querySelectorAll("link").forEach((node) => {
-    const href = node.getAttribute("href") || "";
-    if (!href.startsWith("https://fonts.")) {
-      node.remove();
-    }
+  sanitizeTree(doc.documentElement, {
+    allowedTags: REPORT_ALLOWED_TAGS,
+    removeTags: REPORT_REMOVE_TAGS,
+    allowChartStyle: true,
+    allowReportAttrs: true,
   });
 
-  // 在 DOMParser 处理前先保存白名单脚本的原始 textContent。
-  // DOMParser 序列化 script raw text 时会把内部的 < > 转为 HTML 实体，
-  // 导致 chart runtime 的 innerHTML 赋值字符串损坏，图表无法渲染。
   const scriptSnapshots = new Map();
   doc.querySelectorAll("script").forEach((node) => {
     const src = node.getAttribute("src") || "";
     const id = node.getAttribute("id") || "";
-    const isSafeLoader =
-      src.includes("echarts.min.js") && id === "oda-echarts-loader";
-    const isSafeRuntime =
-      !src &&
-      id === "oda-chart-runtime" &&
-      node.textContent.includes("echarts.init(");
+
+    let isSafeLoader = false;
+    if (id === "oda-echarts-loader" && src) {
+      try {
+        const url = new URL(src, "https://example.com");
+        const path = url.pathname.toLowerCase();
+        if (ECHARTS_CDN_HOSTS.includes(url.hostname) && path.endsWith("echarts.min.js")) {
+          isSafeLoader = true;
+        }
+      } catch {
+        isSafeLoader = false;
+      }
+    }
+
+    let isSafeRuntime = false;
+    if (!src && id === "oda-chart-runtime") {
+      const text = node.textContent || "";
+      const lines = text.split("\n").filter((l) => l.trim() && !l.trim().startsWith("//"));
+      if (
+        lines.length <= 20 &&
+        text.includes("echarts.init(") &&
+        !text.includes("fetch(") &&
+        !text.includes("XMLHttpRequest") &&
+        !text.includes("import(") &&
+        !text.includes("require(") &&
+        !/document\./.test(text.replace(/document\.getElementById/, ""))
+      ) {
+        isSafeRuntime = true;
+      }
+    }
+
     if (!isSafeLoader && !isSafeRuntime) {
       node.remove();
     } else if (isSafeRuntime && !scriptSnapshots.has(id)) {
       scriptSnapshots.set(id, node.textContent);
     } else if (isSafeRuntime) {
-      node.remove(); // Only keep the first valid runtime script to prevent duplicate injection
+      node.remove();
     }
   });
 
@@ -182,12 +221,6 @@ export function sanitizeReportHTML(html) {
     doc.body.removeAttribute("class");
   }
 
-  sanitizeTree(doc.documentElement, {
-    allowMarkdownClasses: true,
-    allowChartStyle: true,
-  });
-
-  // 序列化后，用字符串替换还原脚本内容（绕过 outerHTML 的实体转义问题）
   let serialized = `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
   scriptSnapshots.forEach((originalText, scriptId) => {
     if (!originalText) return;
