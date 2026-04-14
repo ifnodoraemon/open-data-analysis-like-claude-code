@@ -202,7 +202,7 @@ import SubgoalTree from "./SubgoalTree.vue";
 import WorkingMemoryPanel from "./WorkingMemoryPanel.vue";
 
 const store = useAgentStore();
-const { openRun } = useWebSocket();
+const { openRun, sendMessage } = useWebSocket();
 const messages = computed(() => store.messages);
 const isRunning = computed(() => store.isRunning);
 const selectedRunId = computed(() => store.selectedRunId);
@@ -233,9 +233,24 @@ marked.setOptions({
     if (language && hljs.getLanguage(language)) {
       return hljs.highlight(code, { language }).value;
     }
-    return hljs.highlightAuto(code).value;
+    return hljs.highlightAuto(code, ["python", "sql", "json", "javascript", "bash"]).value;
   },
 });
+
+const markdownCache = new Map();
+const MARKDOWN_CACHE_MAX = 200;
+
+function renderMarkdown(content) {
+  const key = content;
+  if (markdownCache.has(key)) return markdownCache.get(key);
+  const result = sanitizeMarkdownHTML(marked.parse(String(content || "")));
+  if (markdownCache.size >= MARKDOWN_CACHE_MAX) {
+    const firstKey = markdownCache.keys().next().value;
+    markdownCache.delete(firstKey);
+  }
+  markdownCache.set(key, result);
+  return result;
+}
 
 watch(
   () => messages.value.length,
@@ -244,9 +259,7 @@ watch(
     if (messagesEl.value) {
       const el = messagesEl.value;
       const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-      if (nearBottom) {
-        el.scrollTop = el.scrollHeight;
-      }
+      if (nearBottom) el.scrollTop = el.scrollHeight;
     }
   },
 );
@@ -269,36 +282,15 @@ function truncate(str, max) {
 function toolResultSummary(msg) {
   const payload = msg?.parsedResult;
   if (!payload || typeof payload !== "object") return "";
-  if (typeof payload.ui_summary === "string" && payload.ui_summary.trim())
-    return payload.ui_summary;
-  if (
-    typeof payload.delegate_summary === "string" &&
-    payload.delegate_summary.trim()
-  )
-    return payload.delegate_summary;
-  if (typeof payload.message === "string" && payload.message.trim())
-    return payload.message;
+  if (typeof payload.ui_summary === "string" && payload.ui_summary.trim()) return payload.ui_summary;
+  if (typeof payload.delegate_summary === "string" && payload.delegate_summary.trim()) return payload.delegate_summary;
+  if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
   return "";
-}
-
-function renderMarkdown(content) {
-  return sanitizeMarkdownHTML(marked.parse(String(content || "")));
-}
-
-async function handleRunClick(runId) {
-  if (!runId || runId === selectedRunId.value) return;
-  try {
-    await openRun(runId);
-  } catch (err) {
-    console.error("open run failed:", err);
-  }
 }
 
 function handleOptionClick(msg, optValue) {
   if (msg.allow_multiple) {
-    if (!multiSelectDrafts.value[msg.id]) {
-      multiSelectDrafts.value[msg.id] = [];
-    }
+    if (!multiSelectDrafts.value[msg.id]) multiSelectDrafts.value[msg.id] = [];
     const idx = multiSelectDrafts.value[msg.id].indexOf(optValue);
     if (idx > -1) {
       multiSelectDrafts.value[msg.id].splice(idx, 1);
@@ -306,13 +298,11 @@ function handleOptionClick(msg, optValue) {
       multiSelectDrafts.value[msg.id].push(optValue);
     }
   } else {
-    const { sendMessage } = useWebSocket();
     sendMessage(optValue);
   }
 }
 
 function submitMultiSelect(msg) {
-  const { sendMessage } = useWebSocket();
   const selected = multiSelectDrafts.value[msg.id] || [];
   sendMessage(JSON.stringify(selected));
 }

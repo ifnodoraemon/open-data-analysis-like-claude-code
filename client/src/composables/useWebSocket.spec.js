@@ -35,8 +35,6 @@ describe("useWebSocket deduplication", () => {
 
     global.location = { protocol: "http:", host: "localhost" };
 
-    global.location = { protocol: "http:", host: "localhost" };
-
     // Mock WebSocket
     let activeSocket = null;
     class MockWebSocket {

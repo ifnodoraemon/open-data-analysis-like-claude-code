@@ -4,19 +4,22 @@ Python Executor MCP Server
 通过 HTTP API 接收代码，在受限环境中执行，返回 stdout/stderr/文件输出。
 
 安全策略（纵深防御）：
-1. 进程级隔离：每个请求在独立子进程中执行
-2. AST 预检：在执行前静态拒绝危险语法（importlib/ctypes/dunder属性链等）
-3. Import 白名单：仅允许预声明安全的模块
-4. 属性访问拦截：阻止 __class__/__bases__/__subclasses__/__globals__ 等逃逸链
-5. 资源限制：超时上限、进程数限制、SIGKILL 后备
-6. 文件系统隔离：open() 限制在工作目录内
+1. 令牌认证：/execute 和 /files 端点均需 PROXY_TOKEN 认证
+2. 进程级隔离：每个请求在独立子进程中执行
+3. AST 预检：在执行前静态拒绝危险语法（importlib/ctypes/dunder属性链等）
+4. Import 白名单：仅允许预声明安全的模块
+5. 内建函数拦截：移除 eval/exec/compile/globals/locals/type/breakpoint 等
+6. 属性访问拦截：阻止 __class__/__bases__/__subclasses__/__globals__ 等逃逸链
+7. 资源限制：超时上限、进程数限制、内存限制、SIGKILL 后备
+8. 文件系统隔离：open() 限制在工作目录内，路径使用 is_relative_to 校验
 """
 
 import ast
+import hmac
 import io
 import logging
 import os
-import json
+import queue
 import time
 import traceback
 import contextlib
@@ -24,87 +27,207 @@ import resource
 import shutil
 import uuid
 import multiprocessing
-import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
-app = FastAPI(title="Python Executor MCP", version="2.0.0")
 logger = logging.getLogger("python-executor")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
 
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/app/workspace"))
-WORK_DIR.mkdir(parents=True, exist_ok=True)
+MAX_TIMEOUT = int(os.environ.get("MAX_TIMEOUT", "120"))
+MAX_CODE_SIZE = int(os.environ.get("MAX_CODE_SIZE", "65536"))
+MEMORY_LIMIT_MB = int(os.environ.get("MEMORY_LIMIT_MB", "512"))
+FILE_SIZE_LIMIT_MB = int(os.environ.get("FILE_SIZE_LIMIT_MB", "50"))
+STDOUT_LIMIT = int(os.environ.get("STDOUT_LIMIT", "10000"))
+STDERR_LIMIT = int(os.environ.get("STDERR_LIMIT", "5000"))
 
-MAX_TIMEOUT = 120
-MAX_CODE_SIZE = 65536
+FORBIDDEN_IMPORTS = frozenset(
+    {
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "socket",
+        "urllib",
+        "requests",
+        "pty",
+        "builtins",
+        "importlib",
+        "ctypes",
+        "signal",
+        "multiprocessing",
+        "threading",
+        "pickle",
+        "shelve",
+        "marshal",
+        "code",
+        "codeop",
+        "compileall",
+        "runpy",
+        "webbrowser",
+        "antigravity",
+        "site",
+        "pkgutil",
+        "xmlrpc",
+        "http",
+        "ftplib",
+        "smtplib",
+        "telnetlib",
+        "tempfile",
+        "glob",
+        "io",
+        "pathlib",
+        "posixpath",
+        "ntpath",
+        "genericpath",
+    }
+)
 
-FORBIDDEN_IMPORTS = frozenset({
-    'os', 'sys', 'subprocess', 'shutil', 'socket', 'urllib', 'requests',
-    'pty', 'builtins', 'importlib', 'ctypes', 'signal', 'multiprocessing',
-    'threading', 'pickle', 'shelve', 'marshal', 'code', 'codeop',
-    'compileall', 'runpy', 'webbrowser', 'antigravity', 'site', 'pkgutil',
-    'xmlrpc', 'http', 'ftplib', 'smtplib', 'telnetlib', 'tempfile',
-    'glob', 'io', 'pathlib', 'posixpath', 'ntpath', 'genericpath',
-})
+ALLOWED_IMPORTS = frozenset(
+    {
+        "pandas",
+        "numpy",
+        "matplotlib",
+        "scipy",
+        "sklearn",
+        "scikit-learn",
+        "json",
+        "csv",
+        "math",
+        "statistics",
+        "re",
+        "datetime",
+        "collections",
+        "openpyxl",
+        "numbers",
+        "decimal",
+        "fractions",
+        "itertools",
+        "functools",
+        "operator",
+        "copy",
+        "enum",
+        "typing",
+        "dataclasses",
+        "string",
+        "textwrap",
+        "difflib",
+        "hashlib",
+        "base64",
+        "random",
+        "uuid",
+        "pprint",
+        "traceback",
+        "warnings",
+        "contextlib",
+        "unittest.mock",
+    }
+)
 
-ALLOWED_IMPORTS = frozenset({
-    'pandas', 'numpy', 'matplotlib', 'scipy', 'sklearn', 'scikit-learn',
-    'json', 'csv', 'math', 'statistics', 're', 'datetime', 'collections',
-    'openpyxl', 'numbers', 'decimal', 'fractions', 'itertools',
-    'functools', 'operator', 'copy', 'enum', 'typing', 'dataclasses',
-    'string', 'textwrap', 'difflib', 'hashlib', 'base64', 'random',
-    'uuid', 'pprint', 'traceback', 'warnings', 'contextlib',
-    'unittest.mock',
-})
+DANGEROUS_ATTR_NAMES = frozenset(
+    {
+        "__class__",
+        "__bases__",
+        "__base__",
+        "__mro__",
+        "__subclasses__",
+        "__globals__",
+        "__builtins__",
+        "__code__",
+        "__func__",
+        "__self__",
+        "__dict__",
+        "__closure__",
+        "__frame__",
+        "__module__",
+        "__qualname__",
+        "__init__",
+        "__new__",
+    }
+)
 
-DANGEROUS_ATTR_NAMES = frozenset({
-    '__class__', '__bases__', '__base__', '__mro__', '__subclasses__',
-    '__globals__', '__builtins__', '__code__', '__func__',
-    '__self__', '__dict__', '__closure__', '__frame__',
-    '__module__', '__qualname__', '__init__', '__new__',
-})
+REMOVED_BUILTINS = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "type",
+        "breakpoint",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "help",
+    }
+)
+
+BLOCKED_CALL_NAMES = REMOVED_BUILTINS | {"__import__", "open"}
+
+CRASH_RESULT: dict[str, Any] = {
+    "success": False,
+    "stdout": "",
+    "stderr": "",
+    "error": "Execution failed to return a result (possible crash or out of memory).",
+}
 
 
 class ASTSandboxValidator(ast.NodeVisitor):
     """AST 级别的静态安全检查，在执行前拒绝危险代码模式。"""
 
-    def __init__(self):
-        self.errors = []
+    def __init__(self) -> None:
+        self.errors: list[str] = []
 
-    def _error(self, node, msg):
+    def _error(self, node: ast.AST, msg: str) -> None:
         self.errors.append(f"Line {getattr(node, 'lineno', '?')}: {msg}")
 
-    def visit_Import(self, node):
+    def _check_import(self, node: ast.AST, module_name: str | None) -> None:
+        if not module_name:
+            return
+        base = module_name.split(".")[0]
+        if base in FORBIDDEN_IMPORTS:
+            self._error(node, f"import '{base}' is not allowed")
+        elif base not in ALLOWED_IMPORTS:
+            self._error(node, f"import '{base}' is not in the allowed list")
+
+    def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            base = alias.name.split('.')[0]
-            if base in FORBIDDEN_IMPORTS:
-                self._error(node, f"import '{base}' is not allowed")
-            elif base not in ALLOWED_IMPORTS:
-                self._error(node, f"import '{base}' is not in the allowed list")
+            self._check_import(node, alias.name)
         self.generic_visit(node)
 
-    def visit_ImportFrom(self, node):
-        if node.module:
-            base = node.module.split('.')[0]
-            if base in FORBIDDEN_IMPORTS:
-                self._error(node, f"from '{base}' import is not allowed")
-            elif base not in ALLOWED_IMPORTS:
-                self._error(node, f"from '{base}' import is not in the allowed list")
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._check_import(node, node.module)
         self.generic_visit(node)
 
-    def visit_Attribute(self, node):
+    def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr in DANGEROUS_ATTR_NAMES:
             self._error(node, f"access to attribute '{node.attr}' is not allowed")
         self.generic_visit(node)
 
-    def visit_Call(self, node):
-        if isinstance(node.func, ast.Attribute) and node.func.attr in ('__import__', 'eval', 'exec', 'compile', 'open'):
-            self._error(node, f"calling '{node.func.attr}' is not allowed in this context")
-        if isinstance(node.func, ast.Name) and node.func.id in ('eval', 'exec', 'compile'):
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in BLOCKED_CALL_NAMES
+        ):
+            self._error(
+                node, f"calling '{node.func.attr}' is not allowed in this context"
+            )
+        if isinstance(node.func, ast.Name) and node.func.id in REMOVED_BUILTINS:
             self._error(node, f"calling '{node.func.id}' is not allowed")
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            if node.slice.value in DANGEROUS_ATTR_NAMES:
+                self._error(
+                    node, f"subscript access to '{node.slice.value}' is not allowed"
+                )
         self.generic_visit(node)
 
 
@@ -118,8 +241,12 @@ def validate_code_with_ast(code: str) -> list[str]:
     return validator.errors
 
 
-def init_namespace(ns, work_dir: str):
-    imports = f"""
+def _is_path_within(child: Path, parent: Path) -> bool:
+    return child.resolve().is_relative_to(parent.resolve())
+
+
+def init_namespace(ns: dict, work_dir: str) -> None:
+    imports = """
 import pandas as pd
 import numpy as np
 import json
@@ -150,27 +277,26 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
-
-WORK_DIR = '{work_dir}'
 """
     try:
         exec(imports, ns)
     except Exception as e:
-        print(f"Warning: Some libraries not available: {e}")
+        logger.warning("Some libraries not available: %s", e)
+    ns["WORK_DIR"] = work_dir
 
 
 class ExecuteRequest(BaseModel):
     code: str
     timeout: int = 30
 
-    @field_validator('timeout')
+    @field_validator("timeout")
     @classmethod
-    def clamp_timeout(cls, v):
+    def clamp_timeout(cls, v: int) -> int:
         return max(5, min(v, MAX_TIMEOUT))
 
-    @field_validator('code')
+    @field_validator("code")
     @classmethod
-    def validate_code_size(cls, v):
+    def validate_code_size(cls, v: str) -> str:
         if len(v) > MAX_CODE_SIZE:
             raise ValueError(f"Code exceeds maximum size of {MAX_CODE_SIZE} bytes")
         return v
@@ -183,18 +309,37 @@ class ExecuteResponse(BaseModel):
     error: str | None = None
     files: list[str] = []
     duration_ms: int = 0
+    truncated: bool = False
+
+
+def _verify_proxy_token(request: Request) -> None:
+    expected_token = os.environ.get("PROXY_TOKEN")
+    if not expected_token:
+        raise HTTPException(503, "PROXY_TOKEN not configured; access disabled")
+    token = request.headers.get("X-Proxy-Token", "")
+    if not hmac.compare_digest(token, expected_token):
+        raise HTTPException(403, "Forbidden: Missing or invalid proxy token")
+
+
+@asynccontextmanager
+async def lifespan(application):
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    _cleanup_old_files()
+    yield
+
+
+app = FastAPI(title="Python Executor MCP", version="2.1.0", lifespan=lifespan)
 
 
 @app.middleware("http")
 async def quiet_health_logs(request: Request, call_next):
     start = time.time()
     response = await call_next(request)
-    path = request.url.path
-    if path not in {"/health", "/tools"}:
+    if request.url.path not in {"/health", "/tools"}:
         logger.info(
             "http method=%s path=%s status=%s duration_ms=%d",
             request.method,
-            path,
+            request.url.path,
             response.status_code,
             int((time.time() - start) * 1000),
         )
@@ -202,12 +347,12 @@ async def quiet_health_logs(request: Request, call_next):
 
 
 @app.get("/health")
-def health():
+def health() -> dict:
     return {"status": "ok", "tools": ["code_run_python"]}
 
 
 @app.get("/tools")
-def list_tools():
+def list_tools() -> dict:
     return {
         "tools": [
             {
@@ -222,73 +367,86 @@ def list_tools():
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": "要执行的 Python 代码"
+                            "description": "要执行的 Python 代码",
                         },
                         "timeout": {
                             "type": "integer",
                             "description": f"超时时间（秒），默认 30，最大 {MAX_TIMEOUT}",
-                            "default": 30
-                        }
+                            "default": 30,
+                        },
                     },
-                    "required": ["code"]
-                }
+                    "required": ["code"],
+                },
             }
         ]
     }
 
 
-def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue):
-    req_dir = Path(req_dir_path)
-    os.chdir(req_dir)
+def _apply_resource_limits() -> None:
+    try:
+        mem = MEMORY_LIMIT_MB * 1024 * 1024
+        fsize = FILE_SIZE_LIMIT_MB * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+        resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+    except (ValueError, OSError):
+        pass
 
-    local_ns = {}
-    init_namespace(local_ns, str(req_dir))
 
+def _build_safe_builtins(req_dir: Path) -> dict:
     import builtins
-    safe_builtins = builtins.__dict__.copy()
 
+    safe_builtins = builtins.__dict__.copy()
     original_import = builtins.__import__
+    original_getattr = builtins.getattr
+    original_open = builtins.open
 
     def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-        base_name = name.split('.')[0]
+        base_name = name.split(".")[0]
         if base_name in FORBIDDEN_IMPORTS:
-            raise ImportError(f"Importing '{base_name}' is not allowed in this sandbox.")
+            raise ImportError(
+                f"Importing '{base_name}' is not allowed in this sandbox."
+            )
         if base_name not in ALLOWED_IMPORTS:
-            raise ImportError(f"Importing '{base_name}' is not allowed. Only pre-approved libraries are available.")
+            raise ImportError(
+                "Importing is not allowed. Only pre-approved libraries are available."
+            )
         return original_import(name, globals, locals, fromlist, level)
 
-    _builtin_open = builtins.open
-
-    def safe_open(file, mode='r', *args, **kwargs):
+    def safe_open(file, mode="r", *args, **kwargs):
         resolved = Path(file).resolve()
-        if not str(resolved).startswith(str(req_dir.resolve())):
-            raise PermissionError("Access denied: file operations are restricted to the working directory.")
-        if 'w' in mode or 'a' in mode or '+' in mode:
-            pass
-        return _builtin_open(resolved, mode, *args, **kwargs)
-
-    safe_builtins['__import__'] = safe_import
-    safe_builtins['open'] = safe_open
-    safe_builtins.pop('eval', None)
-    safe_builtins.pop('exec', None)
-    safe_builtins.pop('compile', None)
+        if not _is_path_within(resolved, req_dir):
+            raise PermissionError(
+                "Access denied: file operations are restricted to the working directory."
+            )
+        return original_open(resolved, mode, *args, **kwargs)
 
     def safe_getattr(obj, name, *args):
         if isinstance(name, str) and name in DANGEROUS_ATTR_NAMES:
-            raise AttributeError(f"Access to attribute '{name}' is not allowed in this sandbox.")
+            raise AttributeError(
+                f"Access to attribute '{name}' is not allowed in this sandbox."
+            )
         return original_getattr(obj, name, *args)
 
-    original_getattr = builtins.getattr
-    safe_builtins['getattr'] = safe_getattr
-    local_ns['__builtins__'] = safe_builtins
+    safe_builtins["__import__"] = safe_import
+    safe_builtins["open"] = safe_open
+    safe_builtins["getattr"] = safe_getattr
 
-    try:
-        import resource as _resource
-        _resource.setrlimit(_resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-        _resource.setrlimit(_resource.RLIMIT_NPROC, (0, 0))
-        _resource.setrlimit(_resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024))
-    except Exception:
-        pass
+    for name in REMOVED_BUILTINS:
+        safe_builtins.pop(name, None)
+
+    return safe_builtins
+
+
+def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue) -> None:
+    req_dir = Path(req_dir_path)
+    os.chdir(req_dir)
+
+    local_ns: dict = {}
+    init_namespace(local_ns, str(req_dir))
+    local_ns["__builtins__"] = _build_safe_builtins(req_dir)
+
+    _apply_resource_limits()
 
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
@@ -296,7 +454,10 @@ def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue):
     error = None
 
     try:
-        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+        with (
+            contextlib.redirect_stdout(stdout_buf),
+            contextlib.redirect_stderr(stderr_buf),
+        ):
             exec(code, local_ns)
     except Exception as e:
         success = False
@@ -304,20 +465,37 @@ def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue):
 
     try:
         import matplotlib.pyplot as plt
-        plt.close('all')
+
+        plt.close("all")
     except Exception:
         pass
 
-    q.put({
-        "success": success,
-        "stdout": stdout_buf.getvalue(),
-        "stderr": stderr_buf.getvalue(),
-        "error": error
-    })
+    q.put(
+        {
+            "success": success,
+            "stdout": stdout_buf.getvalue(),
+            "stderr": stderr_buf.getvalue(),
+            "error": error,
+        }
+    )
+
+
+def _collect_output_files(req_dir: Path, req_id: str) -> list[str]:
+    if not req_dir.exists():
+        return []
+    new_files = []
+    for f in req_dir.glob("*"):
+        if f.is_file():
+            dest_name = f"{req_id}_{f.name}"
+            shutil.move(str(f), str(WORK_DIR / dest_name))
+            new_files.append(dest_name)
+    shutil.rmtree(req_dir, ignore_errors=True)
+    return new_files
 
 
 @app.post("/execute", response_model=ExecuteResponse)
-def execute_code(req: ExecuteRequest):
+def execute_code(req: ExecuteRequest, request: Request):
+    _verify_proxy_token(request)
     start = time.time()
 
     ast_errors = validate_code_with_ast(req.code)
@@ -335,24 +513,17 @@ def execute_code(req: ExecuteRequest):
     req_dir = WORK_DIR / req_id
     req_dir.mkdir(parents=True, exist_ok=True)
 
-    q = multiprocessing.Queue()
+    q: multiprocessing.Queue = multiprocessing.Queue()
     p = multiprocessing.Process(target=run_in_process, args=(req.code, str(req_dir), q))
     p.start()
-
     p.join(req.timeout)
 
-    timeout_occurred = False
     if p.is_alive():
         p.terminate()
         p.join(5)
         if p.is_alive():
             p.kill()
             p.join(5)
-        timeout_occurred = True
-
-    duration_ms = int((time.time() - start) * 1000)
-
-    if timeout_occurred:
         shutil.rmtree(req_dir, ignore_errors=True)
         return ExecuteResponse(
             success=False,
@@ -360,66 +531,53 @@ def execute_code(req: ExecuteRequest):
             stderr="",
             error=f"Execution timed out after {req.timeout} seconds.",
             files=[],
-            duration_ms=duration_ms,
+            duration_ms=int((time.time() - start) * 1000),
         )
 
     try:
         result = q.get_nowait()
-    except Exception:
-        result = {
-            "success": False,
-            "stdout": "",
-            "stderr": "",
-            "error": "Execution failed to return a result (possible crash or out of memory).",
-        }
+    except queue.Empty:
+        result = CRASH_RESULT
 
-    new_files = []
-    if req_dir.exists():
-        for f in req_dir.glob("*"):
-            if f.is_file():
-                dest_name = f"{req_id}_{f.name}"
-                shutil.move(str(f), str(WORK_DIR / dest_name))
-                new_files.append(dest_name)
-        shutil.rmtree(req_dir, ignore_errors=True)
+    new_files = _collect_output_files(req_dir, req_id)
+    duration_ms = int((time.time() - start) * 1000)
+    raw_stdout = result["stdout"]
+    raw_stderr = result["stderr"]
+    truncated = len(raw_stdout) > STDOUT_LIMIT or len(raw_stderr) > STDERR_LIMIT
 
     logger.info(
         "execute success=%s duration_ms=%d files=%d stdout_chars=%d stderr_chars=%d",
         result["success"],
         duration_ms,
         len(new_files),
-        len(result["stdout"]),
-        len(result["stderr"]),
+        len(raw_stdout),
+        len(raw_stderr),
     )
 
     return ExecuteResponse(
         success=result["success"],
-        stdout=result["stdout"][:10000],
-        stderr=result["stderr"][:5000],
+        stdout=raw_stdout[:STDOUT_LIMIT],
+        stderr=raw_stderr[:STDERR_LIMIT],
         error=result["error"],
         files=new_files,
         duration_ms=duration_ms,
+        truncated=truncated,
     )
 
 
 @app.get("/files/{filename}")
 def get_file(filename: str, request: Request):
-    token = request.headers.get("X-Proxy-Token")
-    expected_token = os.environ.get("PROXY_TOKEN")
-    if not expected_token:
-        raise HTTPException(503, "PROXY_TOKEN not configured; file access disabled")
-    if token != expected_token:
-        raise HTTPException(403, "Forbidden: Missing or invalid proxy token")
+    _verify_proxy_token(request)
 
     filepath = (WORK_DIR / filename).resolve()
-    if not str(filepath).startswith(str(WORK_DIR.resolve())):
+    if not _is_path_within(filepath, WORK_DIR):
         raise HTTPException(400, "Invalid file path")
     if not filepath.exists():
-        raise HTTPException(404, f"File not found: {filename}")
+        raise HTTPException(404, "File not found")
     return FileResponse(filepath)
 
 
-def _cleanup_old_files(max_age_hours: int = 24):
-    """Remove workspace files older than max_age_hours to prevent disk exhaustion."""
+def _cleanup_old_files(max_age_hours: int = 24) -> None:
     cutoff = time.time() - max_age_hours * 3600
     for f in WORK_DIR.glob("*"):
         if f.is_file() and f.stat().st_mtime < cutoff:
@@ -429,12 +587,11 @@ def _cleanup_old_files(max_age_hours: int = 24):
                 pass
 
 
-@app.on_event("startup")
-def on_startup():
-    _cleanup_old_files()
-
-
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", "8081"))
+
+    try:
+        port = int(os.environ.get("PORT", "8081"))
+    except ValueError:
+        port = 8081
     uvicorn.run(app, host="0.0.0.0", port=port, access_log=False)

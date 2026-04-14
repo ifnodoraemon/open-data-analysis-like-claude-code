@@ -81,6 +81,7 @@
         v-else-if="mode === 'preview'"
         ref="reportFrame"
         :src="reportURL"
+        title="研究报告预览"
         class="report-iframe"
         sandbox="allow-scripts"
         @load="handleFrameLoad"

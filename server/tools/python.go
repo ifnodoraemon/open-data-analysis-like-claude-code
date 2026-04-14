@@ -52,6 +52,7 @@ type pyExecResponse struct {
 	Error      *string  `json:"error"`
 	Files      []string `json:"files"`
 	DurationMs int      `json:"duration_ms"`
+	Truncated  bool     `json:"truncated"`
 }
 
 func (t *RunPythonTool) Endpoint() string {
@@ -94,14 +95,22 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 
 	endpoint := t.Endpoint()
 
-	// 调用 Python MCP 服务
 	reqBody, _ := json.Marshal(pyExecRequest{
 		Code:    params.Code,
 		Timeout: params.Timeout,
 	})
 
+	req, err := http.NewRequest(http.MethodPost, endpoint+"/execute", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("构建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if proxyToken := os.Getenv("PROXY_TOKEN"); proxyToken != "" {
+		req.Header.Set("X-Proxy-Token", proxyToken)
+	}
+
 	client := &http.Client{Timeout: time.Duration(params.Timeout+5) * time.Second}
-	resp, err := client.Post(endpoint+"/execute", "application/json", bytes.NewReader(reqBody))
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("Python MCP 服务不可用: %w", err)
 	}

@@ -221,16 +221,6 @@ async function confirmDelete(sessionId) {
   }
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return "";
-  const date = new Date(dateStr);
-  const now = new Date();
-  if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 function logout() {
   disconnect();
   store.logout();
@@ -364,12 +354,6 @@ function logout() {
   text-overflow: ellipsis;
 }
 
-.session-date {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
 .session-item-wrapper {
   position: relative;
   display: block;
@@ -380,10 +364,6 @@ function logout() {
   align-items: center;
   gap: 2px;
   margin-left: auto;
-}
-
-.session-item:hover .session-date {
-  display: none;
 }
 
 .session-item:hover .session-actions {

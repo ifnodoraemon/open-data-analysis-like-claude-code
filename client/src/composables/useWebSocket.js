@@ -1,13 +1,44 @@
 import { ref } from "vue";
 import { useAgentStore } from "../stores/agent";
 
-// 单例 WebSocket
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
+const RECONNECT_MAX_ATTEMPTS = 20;
+const PENDING_QUEUE_MAX = 100;
+
 let wsInstance = null;
 let reconnectTimer = null;
 let connectPromise = null;
 let bootstrapPromise = null;
 let reconnectEnabled = false;
+let reconnectAttempts = 0;
+const pendingMessages = [];
 const connected = ref(false);
+
+function enqueueMessage(payload) {
+  if (pendingMessages.length >= PENDING_QUEUE_MAX) {
+    pendingMessages.shift();
+  }
+  pendingMessages.push(payload);
+}
+
+function flushPendingMessages(socket) {
+  while (pendingMessages.length > 0) {
+    const msg = pendingMessages.shift();
+    try {
+      socket.send(JSON.stringify(msg));
+    } catch {
+      pendingMessages.unshift(msg);
+      break;
+    }
+  }
+}
+
+function getReconnectDelay() {
+  const jitter = Math.random() * 500;
+  const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts), RECONNECT_MAX_MS);
+  return delay + jitter;
+}
 
 export function useWebSocket() {
   const store = useAgentStore();
@@ -23,13 +54,9 @@ export function useWebSocket() {
 
   async function loadRunReport(runId) {
     if (!runId) return;
-    const res = await fetch(`/api/runs/${runId}/report`, {
-      headers: authHeaders(),
-    });
+    const res = await fetch(`/api/runs/${runId}/report`, { headers: authHeaders() });
     if (!res.ok) {
-      if (res.status !== 404) {
-        throw new Error(await res.text());
-      }
+      if (res.status !== 404) throw new Error(await res.text());
       return;
     }
     const html = await res.text();
@@ -72,9 +99,7 @@ export function useWebSocket() {
   }
 
   function deriveSessionTitle(input) {
-    const value = String(input || "")
-      .trim()
-      .replace(/\s+/g, " ");
+    const value = String(input || "").trim().replace(/\s+/g, " ");
     if (!value) return "未命名分析";
     return value.length > 28 ? `${value.slice(0, 28)}...` : value;
   }
@@ -82,25 +107,14 @@ export function useWebSocket() {
   function restoreBootstrapState(data) {
     const nextSessionId = data.session?.id || "";
     store.setSessions(data.sessions || []);
-    return applySessionState(
-      nextSessionId,
-      data.files || [],
-      data.runs || [],
-      data.runtimeState,
-    );
+    return applySessionState(nextSessionId, data.files || [], data.runs || [], data.runtimeState);
   }
 
   async function bootstrap() {
-    if (!store.token) {
-      throw new Error("未登录");
-    }
-    const res = await fetch("/api/bootstrap", {
-      headers: authHeaders(),
-    });
+    if (!store.token) throw new Error("未登录");
+    const res = await fetch("/api/bootstrap", { headers: authHeaders() });
     if (!res.ok) {
-      if (res.status === 401) {
-        store.logout();
-      }
+      if (res.status === 401) store.logout();
       throw new Error("bootstrap 失败");
     }
     const data = await res.json();
@@ -113,21 +127,15 @@ export function useWebSocket() {
     }
     if (
       !data.runtimeState?.report_html &&
-      (latestRun?.runKind === "report" ||
-        latestRun?.reportFileId ||
-        latestRun?.report)
+      (latestRun?.runKind === "report" || latestRun?.reportFileId || latestRun?.report)
     ) {
       await tryLoadRunReport(latestRun.id);
     }
   }
 
   async function initializeApp() {
-    if (!store.token) {
-      throw new Error("未登录");
-    }
-    if (bootstrapPromise) {
-      return bootstrapPromise;
-    }
+    if (!store.token) throw new Error("未登录");
+    if (bootstrapPromise) return bootstrapPromise;
 
     const pending = (async () => {
       store.setBootstrapState("loading");
@@ -141,9 +149,7 @@ export function useWebSocket() {
         store.setBootstrapState("error", message);
         throw err;
       } finally {
-        if (bootstrapPromise === pending) {
-          bootstrapPromise = null;
-        }
+        if (bootstrapPromise === pending) bootstrapPromise = null;
       }
     })();
 
@@ -152,30 +158,16 @@ export function useWebSocket() {
   }
 
   async function createSession({ refreshSessions = true } = {}) {
-    const res = await fetch("/api/sessions", {
-      method: "POST",
-      headers: authHeaders(),
-    });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    const res = await fetch("/api/sessions", { method: "POST", headers: authHeaders() });
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    if (data.session) {
-      store.upsertSession(data.session);
-    }
-    const latestRun = applySessionState(
-      data.session?.id || "",
-      data.files || [],
-      data.runs || [],
-      data.runtimeState,
-    );
-    if (refreshSessions) {
-      await loadSessions();
-    }
+    if (data.session) store.upsertSession(data.session);
+    const latestRun = applySessionState(data.session?.id || "", data.files || [], data.runs || [], data.runtimeState);
+    if (refreshSessions) await loadSessions();
     return { ...data.session, latestRun };
   }
 
-let sessionCreatePromise = null;
+  let sessionCreatePromise = null;
 
   async function ensureSession() {
     if (store.sessionId) return store.sessionId;
@@ -183,9 +175,7 @@ let sessionCreatePromise = null;
     sessionCreatePromise = (async () => {
       try {
         const session = await createSession({ refreshSessions: true });
-        if (!session?.id) {
-          throw new Error("创建会话失败");
-        }
+        if (!session?.id) throw new Error("创建会话失败");
         return session.id;
       } finally {
         sessionCreatePromise = null;
@@ -195,38 +185,23 @@ let sessionCreatePromise = null;
   }
 
   async function loadSessions() {
-    const res = await fetch("/api/sessions", {
-      headers: authHeaders(),
-    });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    const res = await fetch("/api/sessions", { headers: authHeaders() });
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     store.setSessions(data.sessions || []);
     return data.sessions || [];
   }
 
   async function openSession(sessionId) {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-      headers: authHeaders(),
-    });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { headers: authHeaders() });
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     disconnect();
-    const latestRun = applySessionState(
-      data.session?.id || "",
-      data.files || [],
-      data.runs || [],
-      data.runtimeState,
-    );
+    const latestRun = applySessionState(data.session?.id || "", data.files || [], data.runs || [], data.runtimeState);
     try {
       if (
         !data.runtimeState?.report_html &&
-        (latestRun?.runKind === "report" ||
-          latestRun?.reportFileId ||
-          latestRun?.report)
+        (latestRun?.runKind === "report" || latestRun?.reportFileId || latestRun?.report)
       ) {
         await tryLoadRunReport(latestRun.id);
       }
@@ -241,63 +216,34 @@ let sessionCreatePromise = null;
     store.updateReport("");
 
     try {
-      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
-        headers: authHeaders(),
-      });
+      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
-        if (data.run) {
-          store.upsertRun(data.run);
-        }
-        if (data && data.messages) {
+        if (data.run) store.upsertRun(data.run);
+        if (data?.messages) {
           const historicalMessages = data.messages.map((msg) => {
             let parsedArgs = msg.content;
             let parsedResult = null;
             if (msg.type === "tool_call") {
-              try {
-                parsedArgs = JSON.parse(msg.content);
-              } catch {
-                parsedArgs = msg.content;
-              }
+              try { parsedArgs = JSON.parse(msg.content); } catch { parsedArgs = msg.content; }
             } else if (msg.type === "user_request_input") {
-              try {
-                parsedArgs = JSON.parse(msg.content);
-              } catch {
-                parsedArgs = { question: msg.content };
-              }
+              try { parsedArgs = JSON.parse(msg.content); } catch { parsedArgs = { question: msg.content }; }
             }
             if (msg.type === "tool_result") {
-              try {
-                parsedResult = JSON.parse(msg.content);
-              } catch {
-                parsedResult = null;
-              }
+              try { parsedResult = JSON.parse(msg.content); } catch { parsedResult = null; }
             }
             return {
               id: msg.id,
               type: msg.type,
-              content:
-                msg.type !== "tool_call" &&
-                msg.type !== "tool_result" &&
-                msg.type !== "user_request_input"
-                  ? msg.content
-                  : undefined,
+              content: (msg.type !== "tool_call" && msg.type !== "tool_result" && msg.type !== "user_request_input")
+                ? msg.content : undefined,
               name: msg.name,
               arguments: msg.type === "tool_call" ? parsedArgs : undefined,
-              question:
-                msg.type === "user_request_input"
-                  ? parsedArgs?.question
-                  : undefined,
-              options:
-                msg.type === "user_request_input"
-                  ? parsedArgs?.options
-                  : undefined,
-              allow_multiple:
-                msg.type === "user_request_input"
-                  ? parsedArgs?.allow_multiple || false
-                  : undefined,
+              question: msg.type === "user_request_input" ? parsedArgs?.question : undefined,
+              options: msg.type === "user_request_input" ? parsedArgs?.options : undefined,
+              allow_multiple: msg.type === "user_request_input" ? parsedArgs?.allow_multiple || false : undefined,
               result: msg.type === "tool_result" ? msg.content : undefined,
-              parsedResult: parsedResult,
+              parsedResult,
               duration: msg.duration,
               success: msg.success,
               timestamp: new Date(msg.createdAt).toLocaleTimeString(),
@@ -311,15 +257,11 @@ let sessionCreatePromise = null;
       console.error("Failed to load run messages:", err);
     }
 
-    if (!store.reportHTML) {
-      await loadRunReport(runId);
-    }
+    if (!store.reportHTML) await loadRunReport(runId);
   }
 
   function connect() {
-    if (!store.token) {
-      return Promise.reject(new Error("未登录"));
-    }
+    if (!store.token) return Promise.reject(new Error("未登录"));
     if (wsInstance?.readyState === WebSocket.OPEN) {
       reconnectEnabled = true;
       return Promise.resolve(wsInstance);
@@ -336,7 +278,6 @@ let sessionCreatePromise = null;
     if (store.sessionId) params.set("session_id", store.sessionId);
     if (store.workspace?.id) params.set("workspace_id", store.workspace.id);
     const sessionQuery = params.toString() ? `?${params.toString()}` : "";
-    // Issue 27: Ensure token is correctly passed in custom sub-protocols without exposing it in URL query
     const url = `${protocol}//${location.host}/ws${sessionQuery}`;
     const socket = new WebSocket(url, ["mcp-token", store.token]);
     wsInstance = socket;
@@ -349,51 +290,35 @@ let sessionCreatePromise = null;
       function resolveOnce(value) {
         if (settled) return;
         settled = true;
-        if (connectPromise === pending) {
-          connectPromise = null;
-        }
+        if (connectPromise === pending) connectPromise = null;
         resolve(value);
       }
 
       function rejectOnce(error) {
         if (settled) return;
         settled = true;
-        if (connectPromise === pending) {
-          connectPromise = null;
-        }
+        if (connectPromise === pending) connectPromise = null;
         reject(error);
       }
 
       socket.onopen = () => {
-        if (wsInstance !== socket) {
-          resolveOnce(socket);
-          return;
-        }
+        if (wsInstance !== socket) { resolveOnce(socket); return; }
         connected.value = true;
+        reconnectAttempts = 0;
         store.setConnectionState("connected");
-        console.log("WebSocket 已连接");
+        flushPendingMessages(socket);
         resolveOnce(socket);
       };
 
       socket.onmessage = (event) => {
-        if (wsInstance !== socket) {
-          return;
-        }
+        if (wsInstance !== socket) return;
         let data;
-        try {
-          data = JSON.parse(event.data);
-        } catch (err) {
-          console.warn("WebSocket message parse error:", err);
-          return;
-        }
+        try { data = JSON.parse(event.data); } catch { return; }
         handleEvent(data, store);
       };
 
       socket.onclose = () => {
-        if (wsInstance !== socket) {
-          rejectOnce(new Error("连接已被替换"));
-          return;
-        }
+        if (wsInstance !== socket) { rejectOnce(new Error("连接已被替换")); return; }
         wsInstance = null;
         connected.value = false;
         rejectOnce(new Error("WebSocket 连接已关闭"));
@@ -401,21 +326,24 @@ let sessionCreatePromise = null;
           store.setConnectionState("disconnected");
           return;
         }
-        store.setConnectionState("reconnecting");
-        console.log("WebSocket 断开，3 秒后重连...");
-        clearReconnectTimer();
-        reconnectTimer = setTimeout(() => {
-          void connect().catch((err) => {
-            console.error("WebSocket 重连失败:", err);
-          });
-        }, 3000);
-      };
-
-      socket.onerror = (err) => {
-        if (wsInstance !== socket) {
+        if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+          store.setConnectionState("disconnected");
+          console.error(`WebSocket: 已达最大重连次数 (${RECONNECT_MAX_ATTEMPTS})，停止重连`);
           return;
         }
-        console.error("WebSocket 错误:", err);
+        store.setConnectionState("reconnecting");
+        const delay = getReconnectDelay();
+        reconnectAttempts++;
+        console.log(`WebSocket 断开，${Math.round(delay)}ms 后重连 (第 ${reconnectAttempts} 次)...`);
+        clearReconnectTimer();
+        reconnectTimer = setTimeout(() => {
+          void connect().catch((err) => console.error("WebSocket 重连失败:", err));
+        }, delay);
+      };
+
+      socket.onerror = () => {
+        if (wsInstance !== socket) return;
+        console.error("WebSocket 连接错误");
       };
     });
 
@@ -424,45 +352,24 @@ let sessionCreatePromise = null;
   }
 
   function handleEvent(event, store) {
-    if (
-      event.sessionId &&
-      store.sessionId &&
-      event.sessionId !== store.sessionId
-    ) {
-      return;
-    }
-    const relevantRunIds = [store.activeRunId, store.selectedRunId].filter(
-      Boolean,
-    );
-    const selectedRunScopedTypes = new Set([
-      "thinking",
-      "tool_call",
-      "tool_result",
-      "user_request_input",
-    ]);
-    if (
-      event.runId &&
-      relevantRunIds.length > 0 &&
-      !relevantRunIds.includes(event.runId) &&
-      selectedRunScopedTypes.has(event.type)
-    ) {
-      return;
-    }
+    if (event.sessionId && store.sessionId && event.sessionId !== store.sessionId) return;
+    const relevantRunIds = [store.activeRunId, store.selectedRunId].filter(Boolean);
+    const selectedRunScopedTypes = new Set(["thinking", "tool_call", "tool_result", "user_request_input"]);
+    if (event.runId && relevantRunIds.length > 0 && !relevantRunIds.includes(event.runId) && selectedRunScopedTypes.has(event.type)) return;
 
     switch (event.type) {
-      case "session_ready":
+      case "session_ready": {
         store.setSession(event.data.sessionId);
         store.replaceFiles(event.data.files || []);
         applyRuntimeState(event.data);
-        const existingSession = store.sessions.find(
-          (s) => s.id === event.data.sessionId,
-        );
+        const existingSession = store.sessions.find((s) => s.id === event.data.sessionId);
         store.upsertSession({
           id: event.data.sessionId,
           title: event.data.title || existingSession?.title || "未命名分析",
           lastSeenAt: new Date().toISOString(),
         });
         break;
+      }
       case "session_reset":
         store.resetAnalysis({ keepFiles: event.data.keepFiles });
         store.replaceFiles(event.data.files || []);
@@ -470,62 +377,29 @@ let sessionCreatePromise = null;
       case "run_started":
         store.startRun(event.data.runId);
         store.upsertRun({
-          id: event.data.runId,
-          sessionId: store.sessionId,
-          status: "running",
-          inputMessage:
-            store.messages.filter((msg) => msg.type === "user").at(-1)
-              ?.content || "",
+          id: event.data.runId, sessionId: store.sessionId, status: "running",
+          inputMessage: store.messages.filter((msg) => msg.type === "user").at(-1)?.content || "",
           createdAt: new Date().toISOString(),
         });
         break;
       case "thinking":
-        if (
-          store.selectedRunId &&
-          event.runId &&
-          event.runId !== store.selectedRunId
-        ) {
-          break;
-        }
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
         store.addMessage({ type: "thinking", content: event.data.content });
         break;
       case "tool_call":
-        if (
-          store.selectedRunId &&
-          event.runId &&
-          event.runId !== store.selectedRunId
-        ) {
-          break;
-        }
-        store.addMessage({
-          type: "tool_call",
-          name: event.data.name,
-          arguments: event.data.arguments,
-          id: event.data.id,
-        });
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
+        store.addMessage({ type: "tool_call", name: event.data.name, arguments: event.data.arguments, id: event.data.id });
         break;
-      case "tool_result":
-        if (
-          store.selectedRunId &&
-          event.runId &&
-          event.runId !== store.selectedRunId
-        ) {
-          break;
-        }
+      case "tool_result": {
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
         let parsedResult = null;
-        try {
-          parsedResult = JSON.parse(event.data.result);
-        } catch (e) {}
+        try { parsedResult = JSON.parse(event.data.result); } catch { parsedResult = null; }
         store.addMessage({
-          type: "tool_result",
-          name: event.data.name,
-          result: event.data.result,
-          parsedResult: parsedResult,
-          duration: event.data.duration,
-          success: event.data.success,
-          id: event.data.id,
+          type: "tool_result", name: event.data.name, result: event.data.result,
+          parsedResult, duration: event.data.duration, success: event.data.success, id: event.data.id,
         });
         break;
+      }
       case "report_update":
         store.updateReport(event.data.html);
         break;
@@ -535,149 +409,71 @@ let sessionCreatePromise = null;
           store.updateReport(event.data.html);
         }
         if (event.data.title && store.sessionId) {
-          store.upsertSession({
-            id: store.sessionId,
-            title: event.data.title,
-            lastSeenAt: new Date().toISOString(),
-          });
+          store.upsertSession({ id: store.sessionId, title: event.data.title, lastSeenAt: new Date().toISOString() });
         }
         if (event.data.reportFileId && event.runId) {
-          if (
-            !store.patchRun(event.runId, {
-              reportFileId: event.data.reportFileId,
-            })
-          ) {
-            store.upsertRun({
-              id: event.runId,
-              reportFileId: event.data.reportFileId,
-            });
+          if (!store.patchRun(event.runId, { reportFileId: event.data.reportFileId })) {
+            store.upsertRun({ id: event.runId, reportFileId: event.data.reportFileId });
           }
         }
         break;
-      case "run_completed":
-        if (
-          !store.patchRun(event.runId, {
-            status: "completed",
-            summary: event.data.summary,
-            updatedAt: new Date().toISOString(),
-          })
-        ) {
-          store.upsertRun({
-            id: event.runId,
-            status: "completed",
-            summary: event.data.summary,
-            updatedAt: new Date().toISOString(),
-          });
-        }
+      case "run_completed": {
+        const patch = { status: "completed", summary: event.data.summary, updatedAt: new Date().toISOString() };
+        if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
         const run = store.getRun(event.runId);
-        if (
-          !store.selectedRunId ||
-          !event.runId ||
-          event.runId === store.selectedRunId
-        ) {
-          if (!run?.reportFileId) {
-            store.addMessage({ type: "complete", content: event.data.summary });
-          }
+        if ((!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) && !run?.reportFileId) {
+          store.addMessage({ type: "complete", content: event.data.summary });
         }
         store.finishRun(event.runId);
         break;
-      case "run_cancelled":
-        if (
-          !store.patchRun(event.runId, {
-            status: "cancelled",
-            updatedAt: new Date().toISOString(),
-          })
-        ) {
-          store.upsertRun({
-            id: event.runId,
-            status: "cancelled",
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        if (
-          !store.selectedRunId ||
-          !event.runId ||
-          event.runId === store.selectedRunId
-        ) {
-          store.addMessage({
-            type: "cancelled",
-            content: event.data.message || "任务已取消",
-          });
+      }
+      case "run_cancelled": {
+        const patch = { status: "cancelled", updatedAt: new Date().toISOString() };
+        if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
+        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
+          store.addMessage({ type: "cancelled", content: event.data.message || "任务已取消" });
         }
         store.finishRun(event.runId);
         break;
-      case "error":
+      }
+      case "error": {
         if (event.runId) {
-          if (
-            !store.patchRun(event.runId, {
-              status: "failed",
-              errorMessage: event.data.message,
-              updatedAt: new Date().toISOString(),
-            })
-          ) {
-            store.upsertRun({
-              id: event.runId,
-              status: "failed",
-              errorMessage: event.data.message,
-              updatedAt: new Date().toISOString(),
-            });
-          }
+          const patch = { status: "failed", errorMessage: event.data.message, updatedAt: new Date().toISOString() };
+          if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
         }
-        if (
-          !store.selectedRunId ||
-          !event.runId ||
-          event.runId === store.selectedRunId
-        ) {
+        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
           store.addMessage({ type: "error", content: event.data.message });
         }
         store.finishRun(event.runId);
         break;
+      }
       case "user_request_input":
-        if (
-          store.selectedRunId &&
-          event.runId &&
-          event.runId !== store.selectedRunId
-        ) {
-          break;
-        }
-        // 挂起状态，将提问显示到信息流中
+        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
         store.setRunning(false);
-        if (event.runId) {
-          store.patchRun(event.runId, {
-            status: "waiting_user_input",
-            updatedAt: new Date().toISOString(),
-          });
-        }
+        if (event.runId) store.patchRun(event.runId, { status: "waiting_user_input", updatedAt: new Date().toISOString() });
         store.addMessage({
-          type: "user_request_input",
-          question: event.data.question,
-          options: event.data.options,
-          allow_multiple: event.data.allow_multiple || false,
+          type: "user_request_input", question: event.data.question,
+          options: event.data.options, allow_multiple: event.data.allow_multiple || false,
         });
         break;
       case "state_subgoals_updated":
-        if (event.data && event.data.goals) {
-          store.setSubgoals(event.data.goals);
-        }
+        if (event.data?.goals) store.setSubgoals(event.data.goals);
         break;
       case "state_memory_updated":
-        if (event.data && event.data.facts) {
-          store.setMemoryFacts(event.data.facts);
-        }
+        if (event.data?.facts) store.setMemoryFacts(event.data.facts);
         break;
       case "state_child_runs_updated":
-        if (event.data && Array.isArray(event.data.childRuns)) {
-          store.setRunChildren(event.data.parentRunId, event.data.childRuns);
-        }
+        if (event.data?.childRuns) store.setRunChildren(event.data.parentRunId, event.data.childRuns);
         break;
     }
   }
 
   function send(type, data = {}, runId = "") {
+    const payload = { type, sessionId: store.sessionId, runId, data };
     if (wsInstance?.readyState === WebSocket.OPEN) {
-      wsInstance.send(
-        JSON.stringify({ type, sessionId: store.sessionId, runId, data }),
-      );
+      wsInstance.send(JSON.stringify(payload));
+    } else {
+      enqueueMessage(payload);
     }
   }
 
@@ -687,9 +483,7 @@ let sessionCreatePromise = null;
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, workspaceId }),
     });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     store.setToken(data.token);
     store.setIdentity(data.user, data.workspace);
@@ -702,15 +496,10 @@ let sessionCreatePromise = null;
   async function switchWorkspace(workspaceId) {
     const res = await fetch("/api/auth/switch-workspace", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ workspaceId }),
     });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     disconnect();
     store.setToken(data.token);
@@ -723,7 +512,9 @@ let sessionCreatePromise = null;
 
   function disconnect() {
     reconnectEnabled = false;
+    reconnectAttempts = 0;
     clearReconnectTimer();
+    pendingMessages.length = 0;
     if (wsInstance) {
       const socket = wsInstance;
       wsInstance = null;
@@ -735,13 +526,9 @@ let sessionCreatePromise = null;
   }
 
   async function ensureSocketOpen() {
-    if (wsInstance?.readyState === WebSocket.OPEN) {
-      return wsInstance;
-    }
+    if (wsInstance?.readyState === WebSocket.OPEN) return wsInstance;
     await connect();
-    if (wsInstance?.readyState !== WebSocket.OPEN) {
-      throw new Error("连接尚未建立，请稍后重试。");
-    }
+    if (wsInstance?.readyState !== WebSocket.OPEN) throw new Error("连接尚未建立，请稍后重试。");
     return wsInstance;
   }
 
@@ -753,29 +540,18 @@ let sessionCreatePromise = null;
       await ensureSession();
       await ensureSocketOpen();
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "连接尚未建立，请稍后重试。";
+      const message = err instanceof Error ? err.message : "连接尚未建立，请稍后重试。";
       store.addMessage({ type: "error", content: message });
       return;
     }
 
     store.setRunning(true);
     if (store.sessionId) {
-      store.upsertSession({
-        id: store.sessionId,
-        title: deriveSessionTitle(value),
-        lastSeenAt: new Date().toISOString(),
-      });
+      store.upsertSession({ id: store.sessionId, title: deriveSessionTitle(value), lastSeenAt: new Date().toISOString() });
     }
     const payload = { content: value };
-    if (options.editContext) {
-      payload.editContext = options.editContext;
-    }
-    store.addMessage({
-      type: "user",
-      content: value,
-      editContext: options.editContext || null,
-    });
+    if (options.editContext) payload.editContext = options.editContext;
+    store.addMessage({ type: "user", content: value, editContext: options.editContext || null });
     send("user_message", payload);
   }
 
@@ -799,53 +575,27 @@ let sessionCreatePromise = null;
     if (!sessionId || !title.trim()) return;
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ title: title.trim() }),
     });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    if (data.session) {
-      store.upsertSession(data.session);
-    }
+    if (data.session) store.upsertSession(data.session);
   }
 
   async function deleteSession(sessionId) {
     if (!sessionId) return;
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-      headers: authHeaders(),
+      method: "DELETE", headers: authHeaders(),
     });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
+    if (!res.ok) throw new Error(await res.text());
     await loadSessions();
-    if (store.sessionId === sessionId) {
-      await createNewSession();
-    }
+    if (store.sessionId === sessionId) await createNewSession();
   }
 
   return {
-    connected,
-    bootstrap,
-    initializeApp,
-    connect,
-    login,
-    switchWorkspace,
-    loadSessions,
-    openSession,
-    openRun,
-    disconnect,
-    sendMessage,
-    stop,
-    resetSession,
-    createNewSession,
-    ensureSession,
-    renameSession,
-    deleteSession,
+    connected, bootstrap, initializeApp, connect, login, switchWorkspace,
+    loadSessions, openSession, openRun, disconnect, sendMessage, stop,
+    resetSession, createNewSession, ensureSession, renameSession, deleteSession,
   };
 }

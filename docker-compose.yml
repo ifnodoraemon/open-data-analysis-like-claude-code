@@ -7,6 +7,7 @@ services:
     environment:
       LLM_DEBUG: "true"
       LLM_DEBUG_DIR: /app/data/llm-debug
+      PROXY_TOKEN: "${PROXY_TOKEN:?PROXY_TOKEN must be set}"
     ports:
       - "8080:8080"
     volumes:
@@ -22,15 +23,17 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   python-executor:
     build: ./python-executor
     container_name: data-analysis-python
     restart: unless-stopped
     environment:
-      PROXY_TOKEN: "${PROXY_TOKEN:-oda-proxy-$(date +%s)}"
-    ports:
-      - "8081:8081"
+      PROXY_TOKEN: "${PROXY_TOKEN:?PROXY_TOKEN must be set}"
     volumes:
       - ./data:/app/data:ro
       - python-workspace:/app/workspace
@@ -41,6 +44,10 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   client:
     build: ./client
@@ -53,6 +60,11 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 networks:
   app-network:

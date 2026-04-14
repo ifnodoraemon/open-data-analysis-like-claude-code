@@ -17,10 +17,12 @@ const REPORT_ALLOWED_TAGS = new Set([
   "IMG", "FIGURE", "FIGCAPTION",
   "SECTION", "ARTICLE", "ASIDE", "HEADER", "FOOTER", "MAIN", "NAV",
   "DETAILS", "SUMMARY",
-  "SCRIPT",
 ]);
 
-const REPORT_REMOVE_TAGS = new Set(["IFRAME", "OBJECT", "EMBED", "BASE", "FORM", "INPUT", "BUTTON", "SELECT", "TEXTAREA"]);
+const REPORT_REMOVE_TAGS = new Set([
+  "IFRAME", "OBJECT", "EMBED", "BASE", "FORM", "INPUT",
+  "BUTTON", "SELECT", "TEXTAREA", "SCRIPT", "NOSCRIPT",
+]);
 
 const DANGEROUS_ATTRS = new Set(["id", "content"]);
 
@@ -110,7 +112,7 @@ function cleanAttributes(
     if (
       allowReportAttrs &&
       ["title", "colspan", "rowspan", "width", "height", "alt", "role", "aria-", "lang", "dir"].some(
-        (ok) => name === ok || name.startsWith(ok)
+        (ok) => name === ok || name.startsWith(ok),
       )
     ) {
       continue;
@@ -157,7 +159,49 @@ export function sanitizeMarkdownHTML(html) {
   return doc.body.innerHTML;
 }
 
-const ECHARTS_CDN_HOSTS = ["cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"];
+const ECHARTS_CDN_HOSTS = new Set(["cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"]);
+
+function isEChartsLoaderScript(node) {
+  const src = node.getAttribute("src") || "";
+  const id = node.getAttribute("id") || "";
+  if (id !== "oda-echarts-loader" || !src) return false;
+  try {
+    const url = new URL(src, "https://example.com");
+    const path = url.pathname.toLowerCase();
+    return ECHARTS_CDN_HOSTS.has(url.hostname) && path.endsWith("echarts.min.js");
+  } catch {
+    return false;
+  }
+}
+
+const RUNTIME_DANGEROUS_PATTERNS = [
+  /\bfetch\s*\(/,
+  /\bXMLHttpRequest\b/,
+  /\bimport\s*\(/,
+  /\brequire\s*\(/,
+  /\beval\s*\(/,
+  /\bdocument\.(?!getElementById\b)\w+/,
+  /\bwindow\b/,
+  /\bself\b/,
+  /\blocalStorage\b/,
+  /\bsessionStorage\b/,
+  /\bWebSocket\b/,
+  /\bWorker\b/,
+  /\bSharedWorker\b/,
+  /\bServiceWorker\b/,
+];
+
+function isSafeRuntimeScript(node) {
+  if (node.getAttribute("src")) return false;
+  const id = node.getAttribute("id") || "";
+  if (id !== "oda-chart-runtime") return false;
+  const text = node.textContent || "";
+  const lines = text.split("\n").filter((l) => l.trim() && !l.trim().startsWith("//"));
+  if (lines.length > 20) return false;
+  if (!text.includes("echarts.init(")) return false;
+  if (RUNTIME_DANGEROUS_PATTERNS.some((pat) => pat.test(text))) return false;
+  return true;
+}
 
 export function sanitizeReportHTML(html) {
   const parser = new DOMParser();
@@ -170,46 +214,10 @@ export function sanitizeReportHTML(html) {
     allowReportAttrs: true,
   });
 
-  const scriptSnapshots = new Map();
   doc.querySelectorAll("script").forEach((node) => {
-    const src = node.getAttribute("src") || "";
-    const id = node.getAttribute("id") || "";
-
-    let isSafeLoader = false;
-    if (id === "oda-echarts-loader" && src) {
-      try {
-        const url = new URL(src, "https://example.com");
-        const path = url.pathname.toLowerCase();
-        if (ECHARTS_CDN_HOSTS.includes(url.hostname) && path.endsWith("echarts.min.js")) {
-          isSafeLoader = true;
-        }
-      } catch {
-        isSafeLoader = false;
-      }
-    }
-
-    let isSafeRuntime = false;
-    if (!src && id === "oda-chart-runtime") {
-      const text = node.textContent || "";
-      const lines = text.split("\n").filter((l) => l.trim() && !l.trim().startsWith("//"));
-      if (
-        lines.length <= 20 &&
-        text.includes("echarts.init(") &&
-        !text.includes("fetch(") &&
-        !text.includes("XMLHttpRequest") &&
-        !text.includes("import(") &&
-        !text.includes("require(") &&
-        !/document\./.test(text.replace(/document\.getElementById/, ""))
-      ) {
-        isSafeRuntime = true;
-      }
-    }
-
-    if (!isSafeLoader && !isSafeRuntime) {
-      node.remove();
-    } else if (isSafeRuntime && !scriptSnapshots.has(id)) {
-      scriptSnapshots.set(id, node.textContent);
-    } else if (isSafeRuntime) {
+    const isLoader = isEChartsLoaderScript(node);
+    const isRuntime = isSafeRuntimeScript(node);
+    if (!isLoader && !isRuntime) {
       node.remove();
     }
   });
@@ -221,16 +229,5 @@ export function sanitizeReportHTML(html) {
     doc.body.removeAttribute("class");
   }
 
-  let serialized = `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
-  scriptSnapshots.forEach((originalText, scriptId) => {
-    if (!originalText) return;
-    const regex = new RegExp(
-      `(<script[^>]*id="${scriptId}"[^>]*>)([\\s\\S]*?)(<\\/script>)`,
-    );
-    serialized = serialized.replace(
-      regex,
-      (_, open, _body, close) => `${open}${originalText}${close}`,
-    );
-  });
-  return serialized;
+  return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
 }

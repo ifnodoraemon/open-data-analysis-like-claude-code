@@ -10,13 +10,15 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
-RUN mkdir -p /app/workspace
-
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
+RUN mkdir -p /app/workspace \
+    && groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
     && chown -R appuser:appuser /app/workspace
 
 USER appuser
 
 EXPOSE 8081
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()" || exit 1
 
 CMD ["python", "main.py"]

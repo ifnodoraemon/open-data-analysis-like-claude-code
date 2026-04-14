@@ -28,7 +28,14 @@
       </div>
       <div
         class="splitter"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-valuenow="Math.round(leftWidth)"
+        aria-valuemin="25"
+        aria-valuemax="75"
+        tabindex="0"
         @mousedown="startDrag"
+        @keydown="handleSplitterKey"
         :class="{ dragging: isDragging }"
       ></div>
       <ReportPreview
@@ -112,6 +119,15 @@ function startDrag(e) {
 
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
+}
+
+function handleSplitterKey(e) {
+  const step = 2;
+  if (e.key === "ArrowLeft") {
+    leftWidth.value = Math.max(25, leftWidth.value - step);
+  } else if (e.key === "ArrowRight") {
+    leftWidth.value = Math.min(75, leftWidth.value + step);
+  }
 }
 </script>
 

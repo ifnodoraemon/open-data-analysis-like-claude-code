@@ -16,7 +16,7 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	endpoint := os.Getenv("PYTHON_MCP_ENDPOINT")
+	endpoint := os.Getenv("PYTHON_MCP_URL")
 	if endpoint == "" {
 		endpoint = "http://python-executor:8081"
 	}
