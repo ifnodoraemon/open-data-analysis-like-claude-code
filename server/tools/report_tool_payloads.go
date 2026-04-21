@@ -11,7 +11,7 @@ func reportDraftSuccess(toolName string, state *ReportState, fields map[string]i
 
 func reportDraftPayload(state *ReportState, fields map[string]interface{}) map[string]interface{} {
 	payload := clonePayload(fields)
-	delivery := DescribeReportDeliveryState(state)
+	delivery := describeReportDeliveryStateLocked(state)
 	payload["delivery_state"] = delivery.DeliveryState
 	payload["is_finalized"] = delivery.IsFinalized
 	payload["needs_finalize"] = delivery.NeedsFinalize

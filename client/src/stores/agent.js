@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
+const MAX_MESSAGES = 500;
+
 export const useAgentStore = defineStore("agent", () => {
   const messages = ref([]);
   const reportHTML = ref("");
@@ -100,6 +102,9 @@ let _msgSeq = 0;
       id: `msg_${Date.now()}_${++_msgSeq}`,
       timestamp: new Date().toLocaleTimeString(),
     });
+    if (messages.value.length > MAX_MESSAGES) {
+      messages.value = messages.value.slice(-MAX_MESSAGES);
+    }
   }
 
   function updateReport(html) {
@@ -262,6 +267,7 @@ let _msgSeq = 0;
     connectionState.value = "disconnected";
     bootstrapState.value = "idle";
     bootstrapError.value = "";
+    _msgSeq = 0;
   }
 
   return {

@@ -77,17 +77,21 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
+	t.ReportState.Lock()
 	result, err := applyReportLayoutMutation(t.ReportState, params)
 	if err != nil {
+		t.ReportState.Unlock()
 		return "", err
 	}
 
-	return reportDraftSuccess("report_configure_layout", t.ReportState, map[string]interface{}{
+	success := reportDraftSuccess("report_configure_layout", t.ReportState, map[string]interface{}{
 		"action":         result.Action,
 		"has_custom_css": result.HasCustomCSS,
 		"body_class":     result.BodyClass,
 		"ui_summary":     result.UISummary,
-	}), nil
+	})
+	t.ReportState.Unlock()
+	return success, nil
 }
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
@@ -133,8 +137,10 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
+	t.ReportState.Lock()
 	result, err := applyReportBlockMutation(t.ReportState, t.EditState, params)
 	if err != nil {
+		t.ReportState.Unlock()
 		var scopeErr reportBlockScopeError
 		if errors.As(err, &scopeErr) {
 			return reportEditScopeFailure("report_manage_blocks", "block_id", scopeErr.BlockID, " block", fmt.Sprintf("block %s 不在当前局部编辑范围内", scopeErr.BlockID), map[string]interface{}{
@@ -144,13 +150,15 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		return "", err
 	}
 
-	return reportDraftSuccess("report_manage_blocks", t.ReportState, map[string]interface{}{
+	success := reportDraftSuccess("report_manage_blocks", t.ReportState, map[string]interface{}{
 		"action":      result.Action,
 		"block_id":    result.BlockID,
 		"block_kind":  result.BlockKind,
 		"block_count": result.BlockCount,
 		"ui_summary":  result.UISummary,
-	}), nil
+	})
+	t.ReportState.Unlock()
+	return success, nil
 }
 
 func (t *FinalizeReportTool) Name() string { return "report_finalize" }
@@ -174,28 +182,38 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
+	t.ReportState.Lock()
 	result, err := finalizeReportState(t.ReportState, t.Subgoals, params)
 	if err != nil {
 		var blockedErr reportFinalizeBlockedError
 		if errors.As(err, &blockedErr) {
-			return reportFinalizeBlockedFailure(t.ReportState, blockedErr.Blockers), nil
+			failure := reportFinalizeBlockedFailure(t.ReportState, blockedErr.Blockers)
+			t.ReportState.Unlock()
+			return failure, nil
 		}
 		var issuesErr reportFinalizeIssuesError
 		if errors.As(err, &issuesErr) {
-			return reportFinalizeIssuesFailure(t.ReportState, issuesErr.Issues), nil
+			failure := reportFinalizeIssuesFailure(t.ReportState, issuesErr.Issues)
+			t.ReportState.Unlock()
+			return failure, nil
 		}
 		var alreadyFinalizedErr reportAlreadyFinalizedError
 		if errors.As(err, &alreadyFinalizedErr) {
-			return reportAlreadyFinalizedFailure(t.ReportState), nil
+			failure := reportAlreadyFinalizedFailure(t.ReportState)
+			t.ReportState.Unlock()
+			return failure, nil
 		}
+		t.ReportState.Unlock()
 		return "", err
 	}
 
-	return reportFinalizeSuccess(map[string]interface{}{
+	success := reportFinalizeSuccess(map[string]interface{}{
 		"report_title": result.ReportTitle,
 		"author":       result.Author,
 		"block_count":  result.BlockCount,
 		"chart_count":  result.ChartCount,
 		"ui_summary":   fmt.Sprintf("delivery_state=finalized；block_count=%d；chart_count=%d", result.BlockCount, result.ChartCount),
-	}), nil
+	})
+	t.ReportState.Unlock()
+	return success, nil
 }

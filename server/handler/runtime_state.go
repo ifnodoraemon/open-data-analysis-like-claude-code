@@ -253,7 +253,10 @@ func renderLiveSessionRuntimeReport(sess *session.Session) (*domain.ReportSnapsh
 	if sess == nil || sess.ReportState == nil {
 		return nil, ""
 	}
-	if len(sess.ReportState.Blocks) == 0 && len(sess.ReportState.Charts) == 0 {
+	sess.ReportState.RLock()
+	hasContent := len(sess.ReportState.Blocks) > 0 || len(sess.ReportState.Charts) > 0
+	sess.ReportState.RUnlock()
+	if !hasContent {
 		return nil, ""
 	}
 	snapshot := buildReportSnapshot(sess.ReportState)

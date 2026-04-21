@@ -123,6 +123,9 @@ func isRetryableLLMError(err error) bool {
 
 // ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑（指数退避，区分可重试错误）
 func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+	retryCtx, retryCancel := context.WithTimeout(ctx, 120*time.Second)
+	defer retryCancel()
+
 	var resp *openai.ChatCompletionResponse
 	var err error
 
@@ -130,8 +133,8 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, too
 	retryDelays := []time.Duration{time.Second, 3 * time.Second, 8 * time.Second}
 
 	for attempt := 0; attempt <= len(retryDelays); attempt++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if retryCtx.Err() != nil {
+			return nil, fmt.Errorf("LLM retry budget exceeded: %w", retryCtx.Err())
 		}
 
 		switch l.provider {
@@ -591,7 +594,7 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 	// 调用 Anthropic API
 	req := anthropic.MessagesRequest{
 		Model:     anthropic.Model(l.model),
-		MaxTokens: 4096,
+		MaxTokens: 8192,
 		Messages:  anthropicMsgs,
 	}
 	if systemPrompt != "" {

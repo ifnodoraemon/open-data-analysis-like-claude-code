@@ -114,7 +114,10 @@ export function useWebSocket() {
     if (!store.token) throw new Error("未登录");
     const res = await fetch("/api/bootstrap", { headers: authHeaders() });
     if (!res.ok) {
-      if (res.status === 401) store.logout();
+      if (res.status === 401) {
+        disconnect();
+        store.logout();
+      }
       throw new Error("bootstrap 失败");
     }
     const data = await res.json();
@@ -272,6 +275,7 @@ export function useWebSocket() {
     }
 
     reconnectEnabled = true;
+    reconnectAttempts = 0;
     clearReconnectTimer();
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const params = new URLSearchParams();
@@ -279,7 +283,7 @@ export function useWebSocket() {
     if (store.workspace?.id) params.set("workspace_id", store.workspace.id);
     const sessionQuery = params.toString() ? `?${params.toString()}` : "";
     const url = `${protocol}//${location.host}/ws${sessionQuery}`;
-    const socket = new WebSocket(url, ["mcp-token", store.token]);
+    const socket = new WebSocket(url, ["mcp-token", `token-${store.token}`]);
     wsInstance = socket;
     store.setConnectionState("connecting");
     connected.value = false;

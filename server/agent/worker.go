@@ -639,6 +639,7 @@ func disallowedDelegateTools(allowed []string) []string {
 	disallowedSet := map[string]struct{}{
 		"user_request_input": {},
 		"report_finalize":    {},
+		"task_delegate":      {},
 	}
 	var forbidden []string
 	for _, name := range allowed {

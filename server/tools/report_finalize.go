@@ -44,7 +44,7 @@ func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params rep
 		return reportFinalizeResult{}, fmt.Errorf("report state is not initialized")
 	}
 
-	if DescribeReportDeliveryState(state).IsFinalized {
+	if describeReportDeliveryStateLocked(state).IsFinalized {
 		return reportFinalizeResult{}, reportAlreadyFinalizedError{}
 	}
 

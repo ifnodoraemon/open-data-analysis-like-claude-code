@@ -54,6 +54,7 @@
                   class="action-btn"
                   @click.stop="startRename(session)"
                   title="重命名"
+                  aria-label="重命名"
                 >
                   ✏️
                 </button>
@@ -61,6 +62,7 @@
                   class="action-btn delete"
                   @click.stop="confirmDelete(session.id)"
                   title="删除"
+                  aria-label="删除"
                 >
                   🗑️
                 </button>

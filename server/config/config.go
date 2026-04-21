@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -94,6 +95,19 @@ func Load() {
 		log.Println("Warning: LLM_API_KEY is not set")
 	}
 
+	if Cfg.AuthSecret == "" || Cfg.AuthSecret == "replace-with-a-long-random-secret" {
+		log.Println("CRITICAL: AUTH_SECRET is not set or uses the default placeholder. Tokens may be forgeable. Set a strong random secret.")
+	}
+
+	if len(Cfg.AuthSecret) < 32 {
+		log.Printf("Warning: AUTH_SECRET is too short (%d chars). Recommend at least 32 characters.", len(Cfg.AuthSecret))
+	}
+
+	if Cfg.ReportEchartsUrl != "" && !strings.HasPrefix(Cfg.ReportEchartsUrl, "https://") && !strings.HasPrefix(Cfg.ReportEchartsUrl, "http://") {
+		log.Printf("Warning: REPORT_ECHARTS_URL does not start with http(s)://, ignoring: %s", Cfg.ReportEchartsUrl)
+		Cfg.ReportEchartsUrl = ""
+	}
+
 	log.Printf("config loaded llm_provider=%s llm_model=%s llm_endpoint=%s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMAPIEndpoint)
 }
 
@@ -124,16 +138,9 @@ func getEnvInt(key string, fallback int) int {
 	if !ok {
 		return fallback
 	}
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
+	result, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
 		return fallback
-	}
-	result := 0
-	for _, ch := range trimmed {
-		if ch < '0' || ch > '9' {
-			return fallback
-		}
-		result = result*10 + int(ch-'0')
 	}
 	return result
 }

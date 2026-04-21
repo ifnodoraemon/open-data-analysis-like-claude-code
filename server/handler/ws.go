@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,7 +38,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin == "" {
-			return true
+			return false
 		}
 		return allowedOrigins[origin]
 	},
@@ -46,8 +47,11 @@ var upgrader = websocket.Upgrader{
 const persistenceTimeout = 10 * time.Second
 
 var (
-	wsConnsMu sync.Mutex
-	wsConns   = make(map[string]map[*websocket.Conn]context.CancelFunc)
+	wsConnsMu    sync.Mutex
+	wsConns      = make(map[string]map[*websocket.Conn]context.CancelFunc)
+	overflowWg   sync.WaitGroup
+	maxOverflow  = int32(8)
+	overflowCnt  int32
 )
 
 func registerWS(sessionID string, conn *websocket.Conn) context.CancelFunc {
@@ -281,11 +285,14 @@ func getRunWithPersistence(ctx context.Context, runID string) (*domain.AnalysisR
 }
 
 func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sessID, workspaceID, runID string, state *tools.ReportState) {
-	snapshot := buildReportSnapshot(state)
+	state.RLock()
+	snapshot := buildReportSnapshotLocked(state)
+	html := tools.RenderReportHTML("", "", state)
+	state.RUnlock()
 	updateEv := agent.WSEvent{
 		Type: agent.EventReportUpdate,
 		Data: agent.ReportUpdateData{
-			HTML:           tools.RenderReportHTML("", "", state),
+			HTML:           html,
 			Title:          strings.TrimSpace(snapshot.Title),
 			ReportSnapshot: &snapshot,
 		},
@@ -295,7 +302,10 @@ func emitReportPreviewUpdate(ctx context.Context, conn *websocket.Conn, writeMu 
 }
 
 func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, sess *session.Session, identity auth.Identity, runID string) error {
+	sess.ReportState.RLock()
 	finalHTML := tools.RenderReportHTML(sess.ReportState.FinalTitle, sess.ReportState.FinalAuthor, sess.ReportState)
+	snapshot := buildReportSnapshotLocked(sess.ReportState)
+	sess.ReportState.RUnlock()
 	var finalReportFileID string
 	err := withPersistenceContext(ctx, func(persistCtx context.Context) error {
 		reportFile, err := fileService.SaveReportHTML(persistCtx, service.SaveReportInput{
@@ -306,7 +316,7 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 			Title:       sess.ReportState.FinalTitle,
 			Author:      sess.ReportState.FinalAuthor,
 			HTML:        finalHTML,
-			Snapshot:    buildReportSnapshot(sess.ReportState),
+			Snapshot:    snapshot,
 		})
 		if err != nil {
 			return err
@@ -339,8 +349,8 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 			Title:        strings.TrimSpace(sess.ReportState.FinalTitle),
 			ReportFileID: finalReportFileID,
 			ReportSnapshot: func() *domain.ReportSnapshot {
-				snapshot := buildReportSnapshot(sess.ReportState)
-				return &snapshot
+				s2 := snapshot
+				return &s2
 			}(),
 		},
 	}
@@ -697,9 +707,19 @@ func saveEventToDB(ctx context.Context, workspaceID, sessionID, runID string, ev
 	select {
 	case q <- persistJob{workspaceID: workspaceID, sessionID: sessionID, runID: runID, ev: ev}:
 	default:
-		// 当队列满时，不直接丢弃事件（防止关键的状态转换无法被持久化），而是起一个 goroutine 同步写入（弹性溢出）
-		log.Printf("[warn] eventPersistQueue full, falling back to sync saving for event type=%s run_id=%s", ev.Type, runID)
-		go saveEventToDBSync(workspaceID, sessionID, runID, ev)
+		if v := atomic.AddInt32(&overflowCnt, 1); v <= int32(maxOverflow) {
+			overflowWg.Add(1)
+			go func() {
+				defer func() {
+					atomic.AddInt32(&overflowCnt, -1)
+					overflowWg.Done()
+				}()
+				saveEventToDBSync(workspaceID, sessionID, runID, ev)
+			}()
+		} else {
+			atomic.AddInt32(&overflowCnt, -1)
+			log.Printf("[warn] eventPersistQueue full and overflow limit reached, dropping event type=%s run_id=%s", ev.Type, runID)
+		}
 	}
 }
 
@@ -795,6 +815,14 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 }
 
 func buildReportSnapshot(state *tools.ReportState) domain.ReportSnapshot {
+	if state != nil {
+		state.RLock()
+		defer state.RUnlock()
+	}
+	return buildReportSnapshotLocked(state)
+}
+
+func buildReportSnapshotLocked(state *tools.ReportState) domain.ReportSnapshot {
 	snapshot := domain.ReportSnapshot{
 		Version:       "v3",
 		GeneratedAt:   time.Now(),

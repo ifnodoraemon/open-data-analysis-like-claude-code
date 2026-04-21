@@ -9,6 +9,13 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	maxFacts       = 50
+	maxFactLen     = 2000
+	maxGoals       = 30
+	maxGoalDescLen = 500
+)
+
 // WorkingMemory 存储已经确认的事实、口径和核心发现
 type WorkingMemory struct {
 	Facts map[string]string `json:"facts"`
@@ -25,6 +32,14 @@ func NewWorkingMemory() *WorkingMemory {
 func (m *WorkingMemory) SaveFact(key, fact string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.Facts) >= maxFacts {
+		if _, exists := m.Facts[key]; !exists {
+			return
+		}
+	}
+	if len(fact) > maxFactLen {
+		fact = fact[:maxFactLen]
+	}
 	m.Facts[key] = fact
 }
 
@@ -124,6 +139,13 @@ func NewSubgoalManager() *SubgoalManager {
 func (s *SubgoalManager) AddGoal(description, parentGoalID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if len(s.Goals) >= maxGoals {
+		return ""
+	}
+	if len(description) > maxGoalDescLen {
+		description = description[:maxGoalDescLen]
+	}
 
 	id := "goal_" + uuid.New().String()[:8]
 	s.Goals = append(s.Goals, Subgoal{

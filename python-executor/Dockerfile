@@ -19,6 +19,6 @@ USER appuser
 EXPOSE 8081
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()" || exit 1
+  CMD python -c "import http.client; c = http.client.HTTPConnection('127.0.0.1', 8081, timeout=2); c.request('GET', '/health'); r = c.getresponse(); exit(0 if r.status == 200 else 1)" || exit 1
 
 CMD ["python", "main.py"]

@@ -383,6 +383,7 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 	if snapshot == nil {
 		return
 	}
+	s.ReportState.Lock()
 	s.ReportState.FinalTitle = strings.TrimSpace(snapshot.Title)
 	s.ReportState.FinalAuthor = strings.TrimSpace(snapshot.Author)
 	s.ReportState.Layout = tools.ReportLayout{
@@ -416,6 +417,7 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 			Height: chart.Height,
 		})
 	}
+	s.ReportState.Unlock()
 	if s.EditState != nil {
 		s.EditState.RefreshFromReportState(s.ReportState)
 	}
@@ -451,12 +453,14 @@ func (s *Session) Reset(keepFiles bool) error {
 	}
 
 	s.mu.Lock()
+	s.ReportState.Lock()
 	s.ReportState.Blocks = nil
 	s.ReportState.Charts = nil
 	s.ReportState.FinalTitle = ""
 	s.ReportState.FinalAuthor = ""
 	s.ReportState.Layout = tools.ReportLayout{}
 	s.ReportState.NeedsFinalize = false
+	s.ReportState.Unlock()
 	if s.EditState != nil {
 		s.EditState.Reset()
 	}

@@ -37,7 +37,7 @@ function sanitizeClassList(value) {
 function sanitizeURL(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (raw.startsWith("#") || raw.startsWith("/")) return raw;
+  if (raw.startsWith("#") || (raw.startsWith("/") && !raw.startsWith("//"))) return raw;
   try {
     const parsed = new URL(raw, window.location.origin);
     return SAFE_URL_PROTOCOLS.has(parsed.protocol) ? raw : "";
@@ -189,6 +189,9 @@ const RUNTIME_DANGEROUS_PATTERNS = [
   /\bWorker\b/,
   /\bSharedWorker\b/,
   /\bServiceWorker\b/,
+  /\bpostMessage\s*\(/,
+  /\blocation\s*[.=]/,
+  /\blocation\b/,
 ];
 
 function isSafeRuntimeScript(node) {

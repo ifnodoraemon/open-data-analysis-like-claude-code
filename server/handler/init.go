@@ -17,16 +17,17 @@ import (
 )
 
 var (
-	defaultIdentity auth.Identity
-	fileService     *service.FileService
-	metadataStore   *metadata.Store
-	tokenManager    *auth.TokenManager
-	userRepo        repository.UserRepository
-	workspaceRepo   repository.WorkspaceRepository
-	runRepo         repository.RunRepository
-	sessionRepo     repository.SessionRepository
-	reportRepo      repository.ReportRepository
-	messageRepo     repository.MessageRepository
+	defaultIdentity           auth.Identity
+	fileService               *service.FileService
+	metadataStore             *metadata.Store
+	tokenManager              *auth.TokenManager
+	userRepo                  repository.UserRepository
+	workspaceRepo             repository.WorkspaceRepository
+	runRepo                   repository.RunRepository
+	sessionRepo               repository.SessionRepository
+	reportRepo                repository.ReportRepository
+	messageRepo               repository.MessageRepository
+	ShutdownEventPersistWorker func()
 )
 
 func Initialize() {
@@ -112,8 +113,7 @@ func Initialize() {
 		config.Cfg.TempCleanupOnStart,
 	)
 
-	// 启动异步事件持久化 goroutine（#16），生产环境不需要手动 shutdown
-	_ = startEventPersistWorker()
+	ShutdownEventPersistWorker = startEventPersistWorker()
 }
 
 func AuthMiddleware(next http.Handler) http.Handler {

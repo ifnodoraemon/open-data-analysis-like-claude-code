@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -75,7 +76,9 @@ func configureSQLite(db *sql.DB) error {
 
 func (ing *Ingester) ResetDB(sessionID string) error {
 	if ing.db != nil {
-		_ = ing.db.Close()
+		if err := ing.db.Close(); err != nil {
+			log.Printf("Warning: closing DB in ResetDB: %v", err)
+		}
 		ing.db = nil
 	}
 	dbPath := filepath.Join(ing.CacheDir, sessionID+".db")
@@ -87,7 +90,9 @@ func (ing *Ingester) ResetDB(sessionID string) error {
 
 func (ing *Ingester) Destroy() error {
 	if ing.db != nil {
-		_ = ing.db.Close()
+		if err := ing.db.Close(); err != nil {
+			log.Printf("Warning: closing DB in Destroy: %v", err)
+		}
 		ing.db = nil
 	}
 	if ing.dbPath == "" {
@@ -192,7 +197,7 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	success := false
 	defer func() {
 		if !success {
-			_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
+			if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil { log.Printf("Warning: failed to drop table %s: %v", tableName, err) }
 		}
 	}()
 
@@ -327,7 +332,7 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	success := false
 	defer func() {
 		if !success {
-			_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
+			if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil { log.Printf("Warning: failed to drop table %s: %v", tableName, err) }
 		}
 	}()
 
@@ -464,7 +469,7 @@ func (ing *Ingester) createTableTyped(tableName string, columns []string, types 
 			return fmt.Errorf("invalid column name: %w", err)
 		}
 	}
-	_, _ = ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName))
+	if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil { log.Printf("Warning: failed to drop table %s: %v", tableName, err) }
 
 	var colDefs []string
 	for i, col := range columns {
@@ -646,7 +651,7 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 	// 1. 生成系统级统计 (用于 SQL Query Planner)
 	_, err := ing.db.Exec(fmt.Sprintf("ANALYZE \"%s\"", tableName))
 	if err != nil {
-		fmt.Printf("[Warning] Failed to analyze table %s: %v\n", tableName, err)
+		log.Printf("[Warning] Failed to analyze table %s: %v", tableName, err)
 	}
 
 	// 2. 提取确定性 schema
@@ -673,7 +678,7 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 		tableName, string(schemaBytes),
 	)
 	if err != nil {
-		fmt.Printf("[Warning] Failed to save schema metadata for %s: %v\n", tableName, err)
+		log.Printf("[Warning] Failed to save schema metadata for %s: %v", tableName, err)
 	}
 
 	// 4. 构建索引
@@ -686,7 +691,7 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 			createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (\"%s\")", idxName, tableName, col.Name)
 			_, err := ing.db.Exec(createIdxSQL)
 			if err != nil {
-				fmt.Printf("[Warning] Failed to create index %s on table %s: %v\n", idxName, tableName, err)
+				log.Printf("[Warning] Failed to create index %s on table %s: %v", idxName, tableName, err)
 			}
 		}
 	}
@@ -705,7 +710,7 @@ func (ing *Ingester) tryEnrichAfterImport(tableName string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := ing.EnrichSemanticProfile(ctx, tableName, ing.SemanticEnricher); err != nil {
-			fmt.Printf("[Warning] 导入后语义分析失败 (table=%s): %v\n", tableName, err)
+			log.Printf("[Warning] 导入后语义分析失败 (table=%s): %v", tableName, err)
 		}
 	}()
 }
@@ -749,7 +754,7 @@ func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string
 		return fmt.Errorf("LLM 语义分析失败: %w", err)
 	}
 
-	fmt.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s\n", tableName)
+	log.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s", tableName)
 
 	// 4. 校验 relation hints
 	// 尝试获取目标表的 schema 用于验证

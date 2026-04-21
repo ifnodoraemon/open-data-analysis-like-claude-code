@@ -39,19 +39,19 @@ func Middleware(tokenManager *TokenManager) func(http.Handler) http.Handler {
 			if token == "" {
 				token = strings.TrimSpace(r.URL.Query().Get("token"))
 			}
-			if token == "" {
-				wsProtos := r.Header.Get("Sec-WebSocket-Protocol")
-				if wsProtos != "" {
-					parts := strings.Split(wsProtos, ",")
-					for _, p := range parts {
-						p = strings.TrimSpace(p)
-						if len(p) > 20 { // Token is typically a JWT or long string, simple heuristic to skip "mcp-token" marker
-							token = p
-							break
-						}
+		if token == "" {
+			wsProtos := r.Header.Get("Sec-WebSocket-Protocol")
+			if wsProtos != "" {
+				parts := strings.Split(wsProtos, ",")
+				for _, p := range parts {
+					p = strings.TrimSpace(p)
+					if strings.HasPrefix(p, "token-") {
+						token = strings.TrimPrefix(p, "token-")
+						break
 					}
 				}
 			}
+		}
 			if token == "" || tokenManager == nil {
 				writeAuthError(w, http.StatusUnauthorized, "未登录")
 				return

@@ -93,6 +93,9 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("report state is not initialized")
 	}
 
+	t.ReportState.RLock()
+	defer t.ReportState.RUnlock()
+
 	type reportBlockSnapshot struct {
 		ID                         string   `json:"id"`
 		Kind                       string   `json:"kind"`

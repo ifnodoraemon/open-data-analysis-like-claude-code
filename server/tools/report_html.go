@@ -840,14 +840,31 @@ func sanitizeCSS(value string) string {
 	}
 	replacements := []string{
 		"</style", "",
+		"</Style", "",
+		"</STYLE", "",
 		"@import", "",
+		"@Import", "",
+		"@IMPORT", "",
 		"expression(", "",
+		"Expression(", "",
+		"EXPRESSION(", "",
 		"javascript:", "",
+		"Javascript:", "",
+		"JAVASCRIPT:", "",
 		"behavior:", "",
+		"Behavior:", "",
+		"BEHAVIOR:", "",
+		"vbscript:", "",
+		"Vbscript:", "",
+		"VBSCRIPT:", "",
 	}
 	replacer := strings.NewReplacer(replacements...)
-	return replacer.Replace(css)
+	css = replacer.Replace(css)
+	css = cssStripRe.ReplaceAllString(css, "")
+	return css
 }
+
+var cssStripRe = regexp.MustCompile(`(?i)(@[\s]*import|expression[\s]*\(|behavior[\s]*:)`)
 
 func safeJSONForInlineScript(raw json.RawMessage) string {
 	option := strings.TrimSpace(string(raw))

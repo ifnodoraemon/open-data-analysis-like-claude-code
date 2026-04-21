@@ -18,6 +18,8 @@ type reportLayoutResult struct {
 	UISummary    string
 }
 
+const maxCustomCSSSize = 10240
+
 func applyReportLayoutMutation(state *ReportState, params reportLayoutParams) (reportLayoutResult, error) {
 	if state == nil {
 		return reportLayoutResult{}, fmt.Errorf("report state is not initialized")
@@ -39,6 +41,9 @@ func applyReportLayoutMutation(state *ReportState, params reportLayoutParams) (r
 		}, nil
 	case "merge":
 		if params.CustomCSS != "" {
+			if len(params.CustomCSS) > maxCustomCSSSize {
+				return reportLayoutResult{}, fmt.Errorf("custom_css exceeds maximum allowed size (%d bytes)", maxCustomCSSSize)
+			}
 			state.Layout.CustomCSS = params.CustomCSS
 		}
 		if params.BodyClass != "" {

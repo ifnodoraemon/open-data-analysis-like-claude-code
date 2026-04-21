@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -212,8 +213,13 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+var safeIdentPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
 func ensureColumn(db *sql.DB, table, column, definition string) error {
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if !safeIdentPattern.MatchString(table) || !safeIdentPattern.MatchString(column) {
+		return fmt.Errorf("invalid identifier: table=%s column=%s", table, column)
+	}
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(\"%s\")", table))
 	if err != nil {
 		return fmt.Errorf("检查 %s.%s 失败: %w", table, column, err)
 	}
@@ -235,7 +241,7 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 		return fmt.Errorf("遍历 %s 表结构失败: %w", table, err)
 	}
 
-	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
+	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", table, column, definition)); err != nil {
 		return fmt.Errorf("为 %s 添加列 %s 失败: %w", table, column, err)
 	}
 	return nil

@@ -11,6 +11,7 @@
         class="upload-btn"
         :class="{ disabled: isUploading }"
         title="上传数据文件"
+        aria-label="上传数据文件"
       >
         📁
         <input
@@ -25,6 +26,7 @@
         v-model="input"
         class="input-field"
         placeholder="输入你的目标、问题或约束..."
+        aria-label="消息输入框"
         @keydown.enter.exact="handleSend"
         rows="1"
         :disabled="isRunning"

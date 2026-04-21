@@ -35,10 +35,16 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
+MAX_CONCURRENT_EXECUTIONS = 4
+
 logger = logging.getLogger("python-executor")
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
+
+import asyncio
+
+_concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_EXECUTIONS)
 
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/app/workspace"))
 MAX_TIMEOUT = int(os.environ.get("MAX_TIMEOUT", "120"))
@@ -111,7 +117,6 @@ ALLOWED_IMPORTS = frozenset(
         "fractions",
         "itertools",
         "functools",
-        "operator",
         "copy",
         "enum",
         "typing",
@@ -124,10 +129,8 @@ ALLOWED_IMPORTS = frozenset(
         "random",
         "uuid",
         "pprint",
-        "traceback",
         "warnings",
         "contextlib",
-        "unittest.mock",
     }
 )
 
@@ -230,6 +233,14 @@ class ASTSandboxValidator(ast.NodeVisitor):
                 )
         self.generic_visit(node)
 
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and node.value in DANGEROUS_ATTR_NAMES:
+            self._error(
+                node,
+                f"dangerous string constant '{node.value}' is not allowed",
+            )
+        self.generic_visit(node)
+
 
 def validate_code_with_ast(code: str) -> list[str]:
     try:
@@ -261,7 +272,6 @@ from decimal import Decimal
 from fractions import Fraction
 import itertools
 import functools
-import operator
 import copy
 import enum
 import string
@@ -323,6 +333,10 @@ def _verify_proxy_token(request: Request) -> None:
 
 @asynccontextmanager
 async def lifespan(application):
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     _cleanup_old_files()
     yield
@@ -442,11 +456,11 @@ def run_in_process(code: str, req_dir_path: str, q: multiprocessing.Queue) -> No
     req_dir = Path(req_dir_path)
     os.chdir(req_dir)
 
+    _apply_resource_limits()
+
     local_ns: dict = {}
     init_namespace(local_ns, str(req_dir))
     local_ns["__builtins__"] = _build_safe_builtins(req_dir)
-
-    _apply_resource_limits()
 
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
@@ -494,8 +508,17 @@ def _collect_output_files(req_dir: Path, req_id: str) -> list[str]:
 
 
 @app.post("/execute", response_model=ExecuteResponse)
-def execute_code(req: ExecuteRequest, request: Request):
+async def execute_code(req: ExecuteRequest, request: Request):
     _verify_proxy_token(request)
+
+    if _concurrency_semaphore.locked():
+        raise HTTPException(429, "Too many concurrent executions. Please retry later.")
+
+    async with _concurrency_semaphore:
+        return await asyncio.get_event_loop().run_in_executor(None, _execute_sync, req, request)
+
+
+def _execute_sync(req: ExecuteRequest, request: Request) -> ExecuteResponse:
     start = time.time()
 
     ast_errors = validate_code_with_ast(req.code)
@@ -568,6 +591,9 @@ def execute_code(req: ExecuteRequest, request: Request):
 @app.get("/files/{filename}")
 def get_file(filename: str, request: Request):
     _verify_proxy_token(request)
+
+    if not re.match(r"^req_[a-f0-9]{8}_", filename):
+        raise HTTPException(400, "Invalid filename format")
 
     filepath = (WORK_DIR / filename).resolve()
     if not _is_path_within(filepath, WORK_DIR):

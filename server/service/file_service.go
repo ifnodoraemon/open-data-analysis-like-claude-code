@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -285,12 +286,12 @@ func (s *FileService) OpenStoredObject(ctx context.Context, userID, workspaceID,
 	return s.Storage.Get(ctx, storageKey)
 }
 
+var safeFilePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
 func sanitizeFilename(name string) string {
 	name = filepath.Base(strings.TrimSpace(name))
-	if name == "" {
+	if name == "" || name == "." || name == ".." || !safeFilePattern.MatchString(name) {
 		return "upload.bin"
 	}
-	name = strings.ReplaceAll(name, "/", "_")
-	name = strings.ReplaceAll(name, "\\", "_")
 	return name
 }

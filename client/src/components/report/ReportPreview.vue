@@ -77,13 +77,19 @@
         <div class="empty-icon">📊</div>
         <p>研究报告将在这里实时渲染</p>
       </div>
+      <!--
+        sandbox with allow-same-origin is NOT a security boundary:
+        the DOM sanitizer (sanitizeReportHTML) is the primary defense.
+        allow-same-origin is required so the iframe can access its own
+        canvas elements for ECharts rendering and PDF/Word export.
+      -->
       <iframe
         v-else-if="mode === 'preview'"
         ref="reportFrame"
-        :src="reportURL"
+        :srcdoc="sanitizedReportHTML"
         title="研究报告预览"
         class="report-iframe"
-        sandbox="allow-scripts"
+        sandbox="allow-scripts allow-same-origin"
         @load="handleFrameLoad"
       ></iframe>
       <pre v-else class="source-code">{{ sanitizedReportHTML }}</pre>
@@ -107,7 +113,6 @@ const selectedRun = computed(() => store.getRun(store.selectedRunId) || null);
 const activeRun = computed(() => store.getRun(store.activeRunId) || null);
 const selectedReport = computed(() => selectedRun.value?.report || null);
 const isRunning = computed(() => store.isRunning);
-const reportURL = ref("");
 const reportFrame = ref(null);
 const showExportMenu = ref(false);
 const selectedBlockId = ref("");
@@ -141,17 +146,9 @@ const mode = ref("preview");
 
 watch(
   sanitizedReportHTML,
-  (html) => {
-    if (reportURL.value) {
-      URL.revokeObjectURL(reportURL.value);
-      reportURL.value = "";
-    }
+  () => {
     showExportMenu.value = false;
     clearSelection();
-    if (!html) return;
-    reportURL.value = URL.createObjectURL(
-      new Blob([html], { type: "text/html" }),
-    );
   },
   { immediate: true },
 );
@@ -163,9 +160,6 @@ watch(mode, (nextMode) => {
 });
 
 onBeforeUnmount(() => {
-  if (reportURL.value) {
-    URL.revokeObjectURL(reportURL.value);
-  }
 });
 
 function toggleExportMenu() {

@@ -122,7 +122,9 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
 
+	t.ReportState.Lock()
 	result, err := applyReportChartMutation(t.ReportState, t.EditState, params)
+	t.ReportState.Unlock()
 	if err != nil {
 		var validationErr reportChartValidationError
 		if errors.As(err, &validationErr) {

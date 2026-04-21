@@ -34,9 +34,8 @@ type Manager struct {
 	sessionRepo    repository.SessionRepository
 	sessions       map[string]*Session
 	mu             sync.Mutex
-	// FullDeleteFunc 是全链路删除函数，由 handler.Initialize 设置。
-	// 如果为 nil，则退化为 Session.Destroy + sessionRepo.Delete。
 	FullDeleteFunc func(ctx context.Context, sessionID string) error
+	cleanupStop    chan struct{}
 }
 
 func NewManager(cacheRoot string, fileService *service.FileService) *Manager {

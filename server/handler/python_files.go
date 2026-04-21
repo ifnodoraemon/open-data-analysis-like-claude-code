@@ -5,14 +5,22 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+var safeFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
 	if filename == "" {
 		http.Error(w, "缺少文件名参数", http.StatusBadRequest)
+		return
+	}
+	if !safeFilenamePattern.MatchString(filename) {
+		http.Error(w, "无效文件名", http.StatusBadRequest)
 		return
 	}
 
@@ -34,7 +42,7 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("X-Proxy-Token", proxyToken)
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "代理请求失败", http.StatusBadGateway)

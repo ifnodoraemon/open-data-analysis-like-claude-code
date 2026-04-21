@@ -17,6 +17,7 @@ type Claims struct {
 	UserEmail   string `json:"userEmail"`
 	WorkspaceID string `json:"workspaceId"`
 	Workspace   string `json:"workspaceName"`
+	IssuedAt    int64  `json:"iat"`
 	ExpiresAt   int64  `json:"exp"`
 }
 
@@ -35,6 +36,7 @@ func (m *TokenManager) Sign(identity Identity, ttl time.Duration) (string, error
 		UserEmail:   identity.UserEmail,
 		WorkspaceID: identity.WorkspaceID,
 		Workspace:   identity.Workspace,
+		IssuedAt:    time.Now().Unix(),
 		ExpiresAt:   time.Now().Add(ttl).Unix(),
 	}
 	payload, err := json.Marshal(claims)

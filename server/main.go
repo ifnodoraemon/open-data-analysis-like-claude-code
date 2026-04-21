@@ -28,7 +28,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Proxy-Token"},
 		AllowCredentials: true,
 	}))
 
@@ -39,6 +39,7 @@ func main() {
 
 	r.Group(func(protected chi.Router) {
 		protected.Use(handler.AuthMiddleware)
+		protected.Use(handler.MaxBodySizeMiddleware(1 << 20))
 		protected.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
 		protected.Get("/api/bootstrap", handler.BootstrapHandler)
 		protected.Post("/api/sessions", handler.CreateSessionHandler)
@@ -56,7 +57,13 @@ func main() {
 	})
 
 	port := config.Cfg.ServerPort
-	srv := &http.Server{Addr: ":" + port, Handler: r}
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 
 	go func() {
 		log.Printf("server started addr=0.0.0.0:%s ws_path=/ws model=%s endpoint=%s llm_debug=%t llm_debug_dir=%s",
@@ -82,6 +89,12 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("server forced shutdown: %v", err)
 	}
+
+	if handler.ShutdownEventPersistWorker != nil {
+		handler.ShutdownEventPersistWorker()
+	}
+	handler.StopLoginCleanup()
+	handler.StopSessionCleanup()
 
 	log.Println("server exited")
 }

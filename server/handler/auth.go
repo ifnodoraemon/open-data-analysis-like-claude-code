@@ -24,11 +24,50 @@ type switchWorkspaceRequest struct {
 }
 
 var (
-	loginRateMu     sync.Mutex
-	loginAttempts   = make(map[string][]time.Time)
-	loginRateLimit  = 5
-	loginRateWindow = 5 * time.Minute
+	loginRateMu      sync.Mutex
+	loginAttempts    = make(map[string][]time.Time)
+	loginRateLimit   = 5
+	loginRateWindow  = 5 * time.Minute
+	loginCleanupStop = make(chan struct{})
 )
+
+func init() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupLoginAttempts()
+			case <-loginCleanupStop:
+				return
+			}
+		}
+	}()
+}
+
+func StopLoginCleanup() {
+	close(loginCleanupStop)
+}
+
+func cleanupLoginAttempts() {
+	loginRateMu.Lock()
+	defer loginRateMu.Unlock()
+	cutoff := time.Now().Add(-loginRateWindow)
+	for email, attempts := range loginAttempts {
+		valid := make([]time.Time, 0, len(attempts))
+		for _, t := range attempts {
+			if t.After(cutoff) {
+				valid = append(valid, t)
+			}
+		}
+		if len(valid) == 0 {
+			delete(loginAttempts, email)
+		} else {
+			loginAttempts[email] = valid
+		}
+	}
+}
 
 func checkLoginRate(email string) bool {
 	loginRateMu.Lock()
@@ -53,6 +92,7 @@ func recordLoginAttempt(email string) {
 }
 
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "请求格式错误", http.StatusBadRequest)

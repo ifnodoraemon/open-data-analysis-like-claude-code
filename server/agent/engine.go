@@ -29,6 +29,7 @@ const (
 	recentContextWindow         = 12
 	historyDigestPrefix         = "=== 历史执行摘要 ==="
 	maxDigestBulletCount        = 24
+	maxMainLoopIterations       = 50
 )
 
 type eventEmitterAware interface {
@@ -94,6 +95,8 @@ func compactWorkerBundle(bundle *PromptBundle, promptTokens int) {
 	if recentStart <= 0 {
 		return
 	}
+
+	recentStart = adjustCompactionBoundary(bundle.History, recentStart)
 
 	existingDigest := ""
 	for _, ctx := range bundle.RuntimeContext {
@@ -327,6 +330,8 @@ func (e *Engine) compactMessagesLocked(promptTokens int) {
 		return
 	}
 
+	recentStart = adjustCompactionBoundary(e.history, recentStart)
+
 	digest := buildHistoryDigest(e.contextDigest, e.history[:recentStart])
 	if digest == "" {
 		return
@@ -334,6 +339,24 @@ func (e *Engine) compactMessagesLocked(promptTokens int) {
 
 	e.contextDigest = digest
 	e.history = e.history[recentStart:]
+}
+
+func adjustCompactionBoundary(history []ConversationItem, boundary int) int {
+	if boundary <= 0 || boundary >= len(history) {
+		return boundary
+	}
+	msg := history[boundary]
+	if msg.Role == openai.ChatMessageRoleTool {
+		for i := boundary - 1; i >= 0 && i >= boundary-5; i-- {
+			if history[i].Role == openai.ChatMessageRoleAssistant && len(history[i].ToolCalls) > 0 {
+				return i
+			}
+		}
+	}
+	if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
+		return boundary
+	}
+	return boundary
 }
 
 func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
@@ -423,6 +446,11 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			emit(WSEvent{Type: EventRunCancelled, Data: ErrorData{Message: "任务被取消"}})
 			return
 		default:
+		}
+
+		if i > maxMainLoopIterations {
+			emit(WSEvent{Type: EventError, Data: ErrorData{Message: fmt.Sprintf("主循环超过最大轮次 %d", maxMainLoopIterations)}})
+			return
 		}
 
 		// 通知前端: 正在思考
@@ -884,7 +912,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 
 	e.history = append(e.history, ConversationItem{
 		Role:       openai.ChatMessageRoleTool,
-		Content:    userResponse,
+		Content:    "[User Response]: " + userResponse,
 		ToolCallID: toolCallID,
 	})
 

@@ -182,13 +182,11 @@ func isDateDirName(name string) bool {
 
 // StartPeriodicCleanup 启动后台清理协程
 func (m *Manager) StartPeriodicCleanup(sessionTTLHours, traceRetentionDays int, traceDir, tempDir string, tempCleanupOnStart bool) {
-	// 如果没有任何周期性任务需要跑，并且也没有启动时 temp 清理，直接返回
 	periodicEnabled := sessionTTLHours > 0 || traceRetentionDays > 0 || tempDir != ""
 	if !periodicEnabled && !tempCleanupOnStart {
 		return
 	}
 
-	// 仅在明确配置了 TEMP_CLEANUP_ON_START 时才做启动时清理
 	if tempCleanupOnStart && tempDir != "" {
 		if entries, err := os.ReadDir(tempDir); err == nil && len(entries) > 0 {
 			log.Printf("cleanup: clearing %d temp entries on start", len(entries))
@@ -200,20 +198,33 @@ func (m *Manager) StartPeriodicCleanup(sessionTTLHours, traceRetentionDays int, 
 		return
 	}
 
+	m.mu.Lock()
+	if m.cleanupStop != nil {
+		m.mu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	m.cleanupStop = stop
+	m.mu.Unlock()
+
 	go func() {
-		// 每小时检查一次
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			if n := m.CleanupExpiredSessions(sessionTTLHours); n > 0 {
-				log.Printf("cleanup: removed %d expired sessions", n)
-			}
-			if n := CleanupOldTraces(traceDir, traceRetentionDays); n > 0 {
-				log.Printf("cleanup: removed %d old trace directories", n)
-			}
-			if tempDir != "" {
-				// 清理超过 4 小时未修改的 temp 文件
-				cleanupStaleTemp(tempDir, 4*time.Hour)
+		for {
+			select {
+			case <-stop:
+				log.Println("cleanup: periodic cleanup stopped")
+				return
+			case <-ticker.C:
+				if n := m.CleanupExpiredSessions(sessionTTLHours); n > 0 {
+					log.Printf("cleanup: removed %d expired sessions", n)
+				}
+				if n := CleanupOldTraces(traceDir, traceRetentionDays); n > 0 {
+					log.Printf("cleanup: removed %d old trace directories", n)
+				}
+				if tempDir != "" {
+					cleanupStaleTemp(tempDir, 4*time.Hour)
+				}
 			}
 		}
 	}()
@@ -226,6 +237,17 @@ func (m *Manager) StartPeriodicCleanup(sessionTTLHours, traceRetentionDays int, 
 		parts = append(parts, "trace_retention="+strconv.Itoa(traceRetentionDays)+"d")
 	}
 	log.Printf("cleanup: periodic cleanup started (%s)", strings.Join(parts, ", "))
+}
+
+// StopPeriodicCleanup 停止后台清理协程
+func (m *Manager) StopPeriodicCleanup() {
+	m.mu.Lock()
+	stop := m.cleanupStop
+	m.cleanupStop = nil
+	m.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
 }
 
 func cleanupStaleTemp(tempDir string, maxAge time.Duration) {

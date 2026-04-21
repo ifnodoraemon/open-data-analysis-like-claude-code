@@ -3,9 +3,11 @@ package tools
 import (
 	"sort"
 	"strings"
+	"sync"
 )
 
 type ReportState struct {
+	mu            sync.RWMutex `json:"-"`
 	Blocks        []ReportBlock `json:"blocks"`
 	Charts        []ChartData   `json:"charts"`
 	FinalTitle    string        `json:"finalTitle,omitempty"`
@@ -13,6 +15,11 @@ type ReportState struct {
 	Layout        ReportLayout  `json:"layout,omitempty"`
 	NeedsFinalize bool          `json:"needsFinalize,omitempty"`
 }
+
+func (s *ReportState) Lock()    { s.mu.Lock() }
+func (s *ReportState) Unlock()  { s.mu.Unlock() }
+func (s *ReportState) RLock()   { s.mu.RLock() }
+func (s *ReportState) RUnlock() { s.mu.RUnlock() }
 
 // EvidenceRef 报告 block 的来源引用，记录结论基于哪次查询/哪张图/哪一步分析
 type EvidenceRef struct {
@@ -100,6 +107,15 @@ func DescribeReportDeliveryState(state *ReportState) ReportDeliveryState {
 	}
 	if state == nil {
 		return delivery
+	}
+	state.RLock()
+	defer state.RUnlock()
+	return describeReportDeliveryStateLocked(state)
+}
+
+func describeReportDeliveryStateLocked(state *ReportState) ReportDeliveryState {
+	delivery := ReportDeliveryState{
+		DeliveryState: "empty",
 	}
 	delivery.BlockCount = len(state.Blocks)
 	delivery.ChartCount = len(state.Charts)
