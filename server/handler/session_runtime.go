@@ -69,7 +69,7 @@ func recoverStaleSessionRuns(ctx context.Context, sessionID string) error {
 
 func recoverStaleRunTree(ctx context.Context, run domain.AnalysisRun) error {
 	if run.Status == domain.RunStatusRunning || run.Status == domain.RunStatusWaitingUserInput {
-		errMsg := "服务重启后任务无法恢复，已自动标记为失败"
+		errMsg := "task cannot be restored after service restart, automatically marked as failed"
 		if run.ErrorMessage == nil || strings.TrimSpace(*run.ErrorMessage) != errMsg || run.Status != domain.RunStatusFailed {
 			if err := runRepo.UpdateStatus(ctx, run.ID, domain.RunStatusFailed, &errMsg); err != nil {
 				return err

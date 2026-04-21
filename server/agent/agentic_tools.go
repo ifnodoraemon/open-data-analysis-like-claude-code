@@ -46,7 +46,7 @@ func (t *SaveMemoryTool) Name() string {
 }
 
 func (t *SaveMemoryTool) Description() string {
-	return "写入一条工作记忆事实。相同 key 会覆盖旧值；此工具会修改 working memory 状态，但不会直接修改报告、目标树或数据，也不会改变 report delivery_state。"
+	return "Write a working memory fact. Same key overwrites old value; this tool modifies working memory state but does not directly modify reports, goal tree, or data, and does not change report delivery_state."
 }
 
 func (t *SaveMemoryTool) Parameters() json.RawMessage {
@@ -55,11 +55,11 @@ func (t *SaveMemoryTool) Parameters() json.RawMessage {
 		"properties": {
 			"key": {
 				"type": "string",
-				"description": "记忆的标识键，例如 'roi_definition', 'user_table_pk'。重复写入同一 key 会覆盖旧值。"
+				"description": "Memory key, e.g. 'roi_definition', 'user_table_pk'. Writing the same key overwrites the old value."
 			},
 			"fact": {
 				"type": "string",
-				"description": "要写入的事实或结论。"
+				"description": "Fact or conclusion to write."
 			}
 		},
 		"required": ["key", "fact"]
@@ -101,8 +101,8 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 		"overwrote_existing":      existed,
 		"affects_report_delivery": false,
 		"affects_goal_state":      false,
-		"message":                 "工作记忆已更新。",
-		"ui_summary":              fmt.Sprintf("已写入工作记忆 [%s]。", payload.Key),
+		"message":                 "Working memory updated.",
+		"ui_summary":              fmt.Sprintf("Working memory written [%s].", payload.Key),
 	})
 }
 
@@ -115,7 +115,7 @@ func (t *InspectMemoryTool) Name() string {
 }
 
 func (t *InspectMemoryTool) Description() string {
-	return "读取工作记忆中的事实状态。返回 key/value 和数量；不修改任何状态。"
+	return "Read the fact state in working memory. Returns key/value pairs and count; does not modify any state."
 }
 
 func (t *InspectMemoryTool) Parameters() json.RawMessage {
@@ -132,7 +132,7 @@ func (t *InspectMemoryTool) Execute(args json.RawMessage) (string, error) {
 		"tool":       "state_memory_inspect",
 		"fact_count": len(facts),
 		"facts":      facts,
-		"ui_summary": fmt.Sprintf("当前工作记忆共有 %d 条事实。", len(facts)),
+		"ui_summary": fmt.Sprintf("Working memory has %d facts.", len(facts)),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -149,7 +149,7 @@ func (t *AskUserTool) Name() string {
 }
 
 func (t *AskUserTool) Description() string {
-	return "向用户发起一次输入请求，并将当前 run 挂起为 waiting_user_input。读取参数 `question` 与可选的 `options`；不会直接返回用户答案，后续用户回复会作为该工具调用结果写回对话。"
+	return "Send an input request to the user and suspend the current run as waiting_user_input. Reads the `question` parameter and optional `options`; does not directly return the user answer. The subsequent user reply will be written back as the tool call result."
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {
@@ -158,29 +158,29 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 		"properties": {
 			"question": {
 				"type": "string",
-				"description": "问题文本。"
+				"description": "Question text."
 			},
 			"reason": {
 				"type": "string",
-				"description": "确认原因：为什么需要用户确认这个问题，例如'存在多个可能的 join key'。"
+				"description": "Confirmation reason: why user confirmation is needed, e.g. 'multiple possible join keys'."
 			},
 			"scope": {
 				"type": "string",
 				"enum": ["join_key", "metric", "time_grain", "filter", "general"],
-				"description": "确认的作用域类型。"
+				"description": "Confirmation scope type."
 			},
 			"context_ref": {
 				"type": "string",
-				"description": "关联上下文，例如表名、列名、指标名等。"
+				"description": "Associated context, e.g. table name, column name, metric name."
 			},
 			"required": {
 				"type": "boolean",
-				"description": "是否必须确认，为 true 则用户不能跳过。",
+				"description": "Whether confirmation is required; if true, user cannot skip.",
 				"default": false
 			},
 			"allow_multiple": {
 				"type": "boolean",
-				"description": "是否允许多选，为 true 时以 JSON 数组返回选项的 ID。",
+				"description": "Whether multiple selections are allowed; if true, returns option IDs as a JSON array.",
 				"default": false
 			},
 			"options": {
@@ -188,13 +188,13 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 				"items": {
 					"type": "object",
 					"properties": {
-						"id":    {"type": "string", "description": "选项稳定 ID"},
-						"label": {"type": "string", "description": "选项显示文字"},
-						"hint":  {"type": "string", "description": "选项描述"}
+						"id":    {"type": "string", "description": "Stable option ID"},
+						"label": {"type": "string", "description": "Option display text"},
+						"hint":  {"type": "string", "description": "Option description"}
 					},
 					"required": ["id", "label"]
 				},
-				"description": "可选项列表，每个选项带稳定 ID。"
+				"description": "List of selectable options, each with a stable ID."
 			}
 		},
 		"required": ["question"]
@@ -226,7 +226,7 @@ func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 		"allow_multiple":      payload.AllowMultiple,
 		"options":             payload.Options,
 		"run_status":          "waiting_user_input",
-		"message":             "已发起用户输入请求，等待用户回复。",
-		"ui_summary":          "已向用户发起输入请求。",
+		"message":             "User input request sent, waiting for user reply.",
+		"ui_summary":          "User input request sent.",
 	})
 }

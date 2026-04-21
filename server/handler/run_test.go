@@ -86,7 +86,7 @@ func TestAttachRunRuntimeStateIncludesLiveSessionReportDraft(t *testing.T) {
 		sessionManager = prevSessionManager
 	})
 
-	sessionManager = session.NewManager(t.TempDir(), nil)
+	sessionManager = session.NewManager(t.TempDir(), nil, nil)
 	sess, _, err := sessionManager.GetOrCreate(context.Background(), "sess_live", "ws_1", "user_1")
 	if err != nil {
 		t.Fatalf("GetOrCreate: %v", err)

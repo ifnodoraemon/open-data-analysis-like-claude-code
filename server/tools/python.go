@@ -26,15 +26,15 @@ func init() {
 
 func (t *RunPythonTool) Name() string { return "code_run_python" }
 func (t *RunPythonTool) Description() string {
-	return "在受限 Python 沙箱中执行代码，并返回 stdout、stderr、生成文件和耗时。"
+	return "Execute Python code in a sandboxed environment and return stdout, stderr, generated files, and duration."
 }
 
 func (t *RunPythonTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"code": {"type": "string", "description": "Python 代码。"},
-			"timeout": {"type": "integer", "description": "超时时间（秒），默认 30", "default": 30}
+			"code": {"type": "string", "description": "Python code to execute."},
+			"timeout": {"type": "integer", "description": "Timeout in seconds, default 30", "default": 30}
 		},
 		"required": ["code"]
 	}`)
@@ -87,7 +87,7 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 		Timeout int    `json:"timeout"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
-		return "", fmt.Errorf("参数解析失败: %w", err)
+		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 	if params.Timeout <= 0 {
 		params.Timeout = 30
@@ -102,7 +102,7 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 
 	req, err := http.NewRequest(http.MethodPost, endpoint+"/execute", bytes.NewReader(reqBody))
 	if err != nil {
-		return "", fmt.Errorf("构建请求失败: %w", err)
+		return "", fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if proxyToken := os.Getenv("PROXY_TOKEN"); proxyToken != "" {
@@ -112,14 +112,14 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 	client := &http.Client{Timeout: time.Duration(params.Timeout+5) * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Python MCP 服务不可用: %w", err)
+		return "", fmt.Errorf("Python MCP service unavailable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	var result pyExecResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("解析 Python 执行结果失败: %w", err)
+		return "", fmt.Errorf("failed to parse Python execution result: %w", err)
 	}
 
 	apiBaseURL := strings.TrimRight(os.Getenv("API_BASE_URL"), "/")
@@ -141,7 +141,7 @@ func formatPythonResult(result pyExecResponse) string {
 		"files":       result.Files,
 	}
 	if result.Success {
-		payload["ui_summary"] = fmt.Sprintf("Python 执行成功 (%dms)", result.DurationMs)
+		payload["ui_summary"] = fmt.Sprintf("Python execution succeeded (%dms)", result.DurationMs)
 		return toolSuccess("code_run_python", payload)
 	}
 
@@ -153,6 +153,6 @@ func formatPythonResult(result pyExecResponse) string {
 		errorText = strings.TrimSpace(result.Stderr)
 	}
 	payload["detail"] = errorText
-	payload["ui_summary"] = fmt.Sprintf("Python 执行失败 (%dms)", result.DurationMs)
-	return toolFailure("code_run_python", "execution_failed", "Python 执行失败", payload)
+	payload["ui_summary"] = fmt.Sprintf("Python execution failed (%dms)", result.DurationMs)
+	return toolFailure("code_run_python", "execution_failed", "Python execution failed", payload)
 }

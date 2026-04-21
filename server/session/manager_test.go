@@ -19,7 +19,7 @@ func TestManagerDeleteRemovesCacheFilesForUnloadedSession(t *testing.T) {
 		}
 	}
 
-	manager := NewManager(cacheRoot, nil)
+	manager := NewManager(cacheRoot, nil, nil)
 	if err := manager.Delete(sessionID, "w_1", "u_1"); err != nil {
 		t.Fatalf("delete session cache: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestManagerStopWaitsForActiveRunToFinish(t *testing.T) {
 		StartedAt: time.Now(),
 	}
 
-	manager := NewManager(t.TempDir(), nil)
+	manager := NewManager(t.TempDir(), nil, nil)
 	manager.sessions[sess.ID] = sess
 
 	if err := manager.Stop(sess.ID, sess.WorkspaceID, sess.UserID); err != nil {

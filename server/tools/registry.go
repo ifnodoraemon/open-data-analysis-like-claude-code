@@ -32,15 +32,19 @@ type SubgoalChecker interface {
 
 // ToolContext 提供给工具初始化时的上下文依赖
 type ToolContext struct {
-	Ingester          *data.Ingester
-	ReportState       *ReportState
-	EditState         *ReportEditState
-	FileFactsProvider FileFactsProvider
-	FileMaterializer  FileMaterializer
-	Memory            any            // Type: *agent.WorkingMemory
-	Subgoals          SubgoalChecker // Instead of any, we use an interface to avoid circular imports
-	DelegateRegistry  *Registry
-	EmitFunc          func(any) // Type: func(agent.WSEvent)
+	Ingester                *data.Ingester
+	ReportState             *ReportState
+	EditState               *ReportEditState
+	Memory                  any            // Type: *agent.WorkingMemory
+	Subgoals                SubgoalChecker // Instead of any, we use an interface to avoid circular imports
+	DelegateRegistry        *Registry
+	EmitFunc                func(any) // Type: func(agent.WSEvent)
+	SessionID               string
+	WorkspaceID             string
+	SessionSourcesProvider    SessionSourcesProvider
+	ProfileDetailProvider     ProfileDetailProvider
+	ConfirmedOverridesProvider ConfirmedOverridesProvider
+	AmbiguityChecker          AmbiguityChecker
 }
 
 // ToolBuilder 是负责动态创建有状态工具的函数
@@ -89,7 +93,7 @@ func (r *Registry) Register(tool Tool) {
 func (r *Registry) Get(name string) (Tool, error) {
 	tool, ok := r.tools[name]
 	if !ok {
-		return nil, fmt.Errorf("工具 '%s' 未注册", name)
+		return nil, fmt.Errorf("tool '%s' not registered", name)
 	}
 	return tool, nil
 }

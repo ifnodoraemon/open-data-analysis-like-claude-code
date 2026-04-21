@@ -139,7 +139,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* === 章节 === */
+/* === Sections === */
 .section {
   max-width: 780px;
   margin: 1.5rem auto;
@@ -204,7 +204,7 @@ body {
   color: var(--text);
 }
 
-/* === 图表 === */
+/* === Charts === */
 .chart-box {
   width: 100%%;
   height: 420px;
@@ -216,7 +216,7 @@ body {
   transition: box-shadow 0.3s ease;
 }
 .chart-box:hover { box-shadow: var(--shadow-md); }
-/* === 表格 === */
+/* === Tables === */
 table {
   width: 100%%;
   border-collapse: separate;
@@ -246,14 +246,14 @@ tr:nth-child(even) { background: var(--bg-alt); }
 tr:hover td { background: var(--primary-soft); }
 strong { color: var(--primary); font-weight: 600; }
 
-/* === 打印样式 === */
+/* === Print === */
 @media print {
   body { background: white; }
   .section { box-shadow: none; page-break-inside: avoid; margin: 1rem auto; }
   .chart-box { box-shadow: none; }
   table { box-shadow: none; }
 }
-/* === 响应式 === */
+/* === Responsive === */
 @media (max-width: 860px) {
   .section { margin-left: 1rem; margin-right: 1rem; }
 }
@@ -290,10 +290,10 @@ func buildChartScripts(charts []ChartData) string {
             chart.setOption(option);
             window.addEventListener('resize', function() { chart.resize(); });
           } else {
-            el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#999;font-size:14px;">图表数据为空</div>';
+            el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#999;font-size:14px;">Chart data is empty</div>';
           }
         } catch(e) {
-          el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#e53e3e;font-size:14px;">图表渲染失败: ' + e.message + '</div>';
+          el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#e53e3e;font-size:14px;">Chart render failed: ' + e.message + '</div>';
         }
       });
     }

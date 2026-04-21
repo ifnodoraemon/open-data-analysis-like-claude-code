@@ -40,12 +40,12 @@ func (ing *Ingester) GetDB() *sql.DB {
 // InitDB 初始化 SQLite 缓存数据库
 func (ing *Ingester) InitDB(sessionID string) error {
 	if err := os.MkdirAll(ing.CacheDir, 0o755); err != nil {
-		return fmt.Errorf("创建缓存目录失败: %w", err)
+		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 	dbPath := filepath.Join(ing.CacheDir, sessionID+".db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return fmt.Errorf("创建 SQLite 数据库失败: %w", err)
+		return fmt.Errorf("failed to create SQLite database: %w", err)
 	}
 	if err := configureSQLite(db); err != nil {
 		_ = db.Close()
@@ -68,7 +68,7 @@ func configureSQLite(db *sql.DB) error {
 	}
 	for _, pragma := range pragmas {
 		if _, err := db.Exec(pragma); err != nil {
-			return fmt.Errorf("配置 SQLite 失败 (%s): %w", pragma, err)
+			return fmt.Errorf("failed to configure SQLite (%s): %w", pragma, err)
 		}
 	}
 	return nil
@@ -83,7 +83,7 @@ func (ing *Ingester) ResetDB(sessionID string) error {
 	}
 	dbPath := filepath.Join(ing.CacheDir, sessionID+".db")
 	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除旧数据库失败: %w", err)
+		return fmt.Errorf("failed to delete old database: %w", err)
 	}
 	return ing.InitDB(sessionID)
 }
@@ -120,14 +120,13 @@ func removeSQLiteSidecars(dbPath string) error {
 	}
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("删除 SQLite 缓存文件失败: %w", err)
+			return fmt.Errorf("failed to delete SQLite cache file: %w", err)
 		}
 	}
 	return nil
 }
 
-// ImportFile 导入文件到 SQLite
-func (ing *Ingester) ImportFile(filePath string) (tableName string, rowCount int, colCount int, err error) {
+func (ing *Ingester) ImportFileRaw(filePath string) (tableName string, rowCount int, colCount int, err error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	baseName := strings.TrimSuffix(filepath.Base(filePath), ext)
 	tableName = sanitizeTableName(baseName)
@@ -138,25 +137,34 @@ func (ing *Ingester) ImportFile(filePath string) (tableName string, rowCount int
 	case ".xlsx", ".xls":
 		rowCount, colCount, err = ing.importExcel(filePath, tableName)
 	default:
-		err = fmt.Errorf("不支持的文件格式: %s", ext)
+		err = fmt.Errorf("unsupported file format: %s", ext)
 	}
 	return
 }
 
-// importCSV 导入 CSV 文件
+// ImportFile 导入文件到 SQLite（包含自动 schema/semantic 后处理）
+func (ing *Ingester) ImportFile(filePath string) (tableName string, rowCount int, colCount int, err error) {
+	tableName, rowCount, colCount, err = ing.ImportFileRaw(filePath)
+	if err != nil {
+		return
+	}
+	_ = ing.GenerateSchemaMetadata(tableName)
+	ing.tryEnrichAfterImport(tableName)
+	return
+}
+
 func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("打开 CSV 文件失败: %w", err)
+		return 0, 0, fmt.Errorf("failed to open CSV file: %w", err)
 	}
 	defer f.Close()
 
 	reader := csv.NewReader(f)
 
-	// 读取表头
 	headers, err := reader.Read()
 	if err != nil {
-		return 0, 0, fmt.Errorf("读取 CSV 表头失败: %w", err)
+		return 0, 0, fmt.Errorf("failed to read CSV headers: %w", err)
 	}
 
 	colCount := len(headers)
@@ -172,7 +180,6 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		sanitizedHeaders[i] = finalName
 	}
 
-	// 读取部分数据进行类型推断（最多扫描 500 行）
 	sampleSize := 500
 	var sampleRows [][]string
 	for i := 0; i < sampleSize; i++ {
@@ -181,15 +188,13 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 			break
 		}
 		if err != nil {
-			continue // 跳过错误行
+			continue
 		}
 		sampleRows = append(sampleRows, record)
 	}
 
-	// 类型推断
 	colTypes := inferColumnTypes(sampleRows, colCount)
 
-	// 创建表
 	if err := ing.createTableTyped(tableName, sanitizedHeaders, colTypes); err != nil {
 		return 0, 0, err
 	}
@@ -197,11 +202,12 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	success := false
 	defer func() {
 		if !success {
-			if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil { log.Printf("Warning: failed to drop table %s: %v", tableName, err) }
+			if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil {
+				log.Printf("Warning: failed to drop table %s: %v", tableName, err)
+			}
 		}
 	}()
 
-	// 插入已经读出的 sample 行
 	rowCount := 0
 	if len(sampleRows) > 0 {
 		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, sampleRows); err != nil {
@@ -210,8 +216,7 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 		rowCount += len(sampleRows)
 	}
 
-	// 流式读取剩余数据并批量插入
-	batchSize := 500
+	batchSize := 5000
 	batch := make([][]string, 0, batchSize)
 
 	for {
@@ -220,7 +225,7 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 			break
 		}
 		if err != nil {
-			continue // 跳过错误行
+			continue
 		}
 
 		batch = append(batch, record)
@@ -230,23 +235,16 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 				return rowCount, colCount, err
 			}
 			rowCount += len(batch)
-			batch = batch[:0] // 复用 slice
+			batch = batch[:0]
 		}
 	}
 
-	// 插入最后不足一个 batch 的数据
 	if len(batch) > 0 {
 		if err := ing.insertBatchTyped(tableName, sanitizedHeaders, colTypes, batch); err != nil {
 			return rowCount, colCount, err
 		}
 		rowCount += len(batch)
 	}
-
-	// 自动生成确定性 schema metadata 和索引（不依赖 LLM）
-	_ = ing.GenerateSchemaMetadata(tableName)
-
-	// 如果配置了 LLM enricher，自动触发语义分析（失败不阻塞导入）
-	ing.tryEnrichAfterImport(tableName)
 
 	success = true
 	return rowCount, colCount, nil
@@ -256,7 +254,7 @@ func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("打开 Excel 文件失败: %w", err)
+		return 0, 0, fmt.Errorf("failed to open Excel file: %w", err)
 	}
 	defer f.Close()
 
@@ -264,22 +262,22 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	sheetName := f.GetSheetName(0)
 	rows, err := f.Rows(sheetName)
 	if err != nil {
-		return 0, 0, fmt.Errorf("读取 Excel 数据失败: %w", err)
+		return 0, 0, fmt.Errorf("failed to read Excel data: %w", err)
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		return 0, 0, fmt.Errorf("Excel 文件为空")
+		return 0, 0, fmt.Errorf("Excel file is empty")
 	}
 
 	// 表头
 	headers, err := rows.Columns()
 	if err != nil {
-		return 0, 0, fmt.Errorf("读取 Excel 表头失败: %w", err)
+		return 0, 0, fmt.Errorf("failed to read Excel headers: %w", err)
 	}
 	colCount := len(headers)
 	if colCount == 0 {
-		return 0, 0, fmt.Errorf("Excel 文件没有表头")
+		return 0, 0, fmt.Errorf("Excel file has no headers")
 	}
 
 	sanitizedHeaders := make([]string, colCount)
@@ -318,7 +316,7 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	}
 
 	if rowsRead == 0 {
-		return 0, 0, fmt.Errorf("Excel 数据区为空")
+		return 0, 0, fmt.Errorf("Excel data area is empty")
 	}
 
 	// 类型推断
@@ -346,12 +344,12 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	}
 
 	// 流式读取剩余数据并批量插入
-	batchSize := 500
+	batchSize := 5000
 	batch := make([][]string, 0, batchSize)
 
 	for rows.Next() {
 		if rowCount+len(batch) >= maxExcelRows {
-			return 0, 0, fmt.Errorf("Excel 文件行数超过 %d 行的上限，若是较大数据集建议转换为 CSV 格式后再上传", maxExcelRows)
+			return 0, 0, fmt.Errorf("Excel row count exceeds %d limit; for large datasets, convert to CSV before uploading", maxExcelRows)
 		}
 
 		row, err := rows.Columns()
@@ -381,12 +379,6 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 		rowCount += len(batch)
 	}
 
-	// 自动生成确定性 schema metadata 和索引（不依赖 LLM）
-	_ = ing.GenerateSchemaMetadata(tableName)
-
-	// 如果配置了 LLM enricher，自动触发语义分析（失败不阻塞导入）
-	ing.tryEnrichAfterImport(tableName)
-
 	success = true
 	return rowCount, colCount, nil
 }
@@ -415,9 +407,8 @@ func (t ColumnType) SQLType() string {
 func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
 	types := make([]ColumnType, colCount)
 
-	// 初始假设所有列是整数
 	for i := range types {
-		types[i] = TypeInteger
+		types[i] = TypeText
 	}
 
 	sampleSize := 100
@@ -459,13 +450,21 @@ func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
 	return types
 }
 
+func (ing *Ingester) CreateTypedTable(tableName string, columns []string, types []ColumnType) error {
+	return ing.createTableTyped(tableName, columns, types)
+}
+
+func (ing *Ingester) InsertBatchTyped(tableName string, columns []string, types []ColumnType, rows [][]string) error {
+	return ing.insertBatchTyped(tableName, columns, types, rows)
+}
+
 // createTableTyped 创建带类型的 SQLite 表
 func (ing *Ingester) createTableTyped(tableName string, columns []string, types []ColumnType) error {
-	if err := validateSQLIdent(tableName); err != nil {
+	if err := ValidateSQLIdent(tableName); err != nil {
 		return fmt.Errorf("invalid table name: %w", err)
 	}
 	for _, col := range columns {
-		if err := validateSQLIdent(col); err != nil {
+		if err := ValidateSQLIdent(col); err != nil {
 			return fmt.Errorf("invalid column name: %w", err)
 		}
 	}
@@ -483,7 +482,7 @@ func (ing *Ingester) createTableTyped(tableName string, columns []string, types 
 	createSQL := fmt.Sprintf("CREATE TABLE \"%s\" (%s)", tableName, strings.Join(colDefs, ", "))
 	_, err := ing.db.Exec(createSQL)
 	if err != nil {
-		return fmt.Errorf("创建表失败: %w", err)
+		return fmt.Errorf("failed to create table: %w", err)
 	}
 	return nil
 }
@@ -493,11 +492,11 @@ func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types 
 	if len(rows) == 0 {
 		return nil
 	}
-	if err := validateSQLIdent(tableName); err != nil {
+	if err := ValidateSQLIdent(tableName); err != nil {
 		return fmt.Errorf("invalid table name: %w", err)
 	}
 	for _, col := range columns {
-		if err := validateSQLIdent(col); err != nil {
+		if err := ValidateSQLIdent(col); err != nil {
 			return fmt.Errorf("invalid column name: %w", err)
 		}
 	}
@@ -566,9 +565,9 @@ func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types 
 
 var invalidSQLIdent = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
-// validateSQLIdent ensures a name only contains safe characters for SQL identifiers.
+// ValidateSQLIdent ensures a name only contains safe characters for SQL identifiers.
 // This is a defense-in-depth check before interpolating names into DDL/DML statements.
-func validateSQLIdent(name string) error {
+func ValidateSQLIdent(name string) error {
 	if name == "" {
 		return fmt.Errorf("empty SQL identifier")
 	}
@@ -642,9 +641,9 @@ func (ing *Ingester) ensureMetadataTable() {
 // 此函数不依赖 LLM，始终可以成功完成。
 func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 	if ing.db == nil {
-		return fmt.Errorf("数据库未初始化")
+		return fmt.Errorf("database not initialized")
 	}
-	if err := validateSQLIdent(tableName); err != nil {
+	if err := ValidateSQLIdent(tableName); err != nil {
 		return fmt.Errorf("invalid table name for schema generation: %w", err)
 	}
 
@@ -654,10 +653,17 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 		log.Printf("[Warning] Failed to analyze table %s: %v", tableName, err)
 	}
 
-	// 2. 提取确定性 schema
-	schema, err := ExtractSchema(ing.db, tableName)
+	// 2. 提取确定性 schema (use sampled for large tables)
+	var rowCount int
+	ing.db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", tableName)).Scan(&rowCount)
+	var schema *SchemaInfo
+	if rowCount > 10000 {
+		schema, err = ExtractSchemaSampled(ing.db, tableName)
+	} else {
+		schema, err = ExtractSchema(ing.db, tableName)
+	}
 	if err != nil {
-		return fmt.Errorf("提取概要失败: %w", err)
+		return fmt.Errorf("failed to extract schema: %w", err)
 	}
 
 	// 3. 持久化确定性 schema 到 metadata 表，同时清除旧的 semantic 状态
@@ -681,12 +687,13 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 		log.Printf("[Warning] Failed to save schema metadata for %s: %v", tableName, err)
 	}
 
-	// 4. 构建索引
+	// 4. 构建索引 — 仅覆盖候选时间列、id 列、低基数且可能作为 filter 的列
 	for _, col := range schema.Columns {
-		isNominal := schema.RowCount > 0 && float64(col.UniqueCount)/float64(schema.RowCount) < 0.20 && col.UniqueCount > 1
+		isTimeCol := col.TimeProfile != nil
 		isID := strings.HasSuffix(strings.ToLower(col.Name), "_id") || strings.ToLower(col.Name) == "id"
+		isLowCardinalityFilter := schema.RowCount > 0 && col.UniqueCount > 1 && col.UniqueCount < 100 && col.NonNullRate > 0.5
 
-		if isNominal || isID {
+		if isTimeCol || isID || isLowCardinalityFilter {
 			idxName := fmt.Sprintf("idx_%s_%s", sanitizeTableName(tableName), sanitizeColumnName(col.Name))
 			createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (\"%s\")", idxName, tableName, col.Name)
 			_, err := ing.db.Exec(createIdxSQL)
@@ -710,7 +717,7 @@ func (ing *Ingester) tryEnrichAfterImport(tableName string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := ing.EnrichSemanticProfile(ctx, tableName, ing.SemanticEnricher); err != nil {
-			log.Printf("[Warning] 导入后语义分析失败 (table=%s): %v", tableName, err)
+			log.Printf("[Warning] post-import semantic analysis failed (table=%s): %v", tableName, err)
 		}
 	}()
 }
@@ -720,18 +727,18 @@ func (ing *Ingester) tryEnrichAfterImport(tableName string) {
 // 此函数失败不影响已有的确定性 schema metadata。
 func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string, chatFn LLMChatFunc) error {
 	if ing.db == nil {
-		return fmt.Errorf("数据库未初始化")
+		return fmt.Errorf("database not initialized")
 	}
 
 	// 1. 读取已有的确定性 schema_json 作为乐观锁版本
 	var schemaStr string
 	err := ing.db.QueryRow(`SELECT schema_json FROM _oda_table_metadata WHERE table_name = ?`, tableName).Scan(&schemaStr)
 	if err != nil {
-		return fmt.Errorf("读取 schema 失败: %w", err)
+		return fmt.Errorf("failed to read schema: %w", err)
 	}
 	var schema *SchemaInfo
 	if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
-		return fmt.Errorf("解析 schema 失败: %w", err)
+		return fmt.Errorf("failed to parse schema: %w", err)
 	}
 
 	// 2. 获取环境中的其他表名供 Join 探测
@@ -751,10 +758,10 @@ func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string
 	// 3. 调用 LLM 分析
 	profile, err := AnalyzeTableSemantics(ctx, chatFn, schema, activeTables)
 	if err != nil {
-		return fmt.Errorf("LLM 语义分析失败: %w", err)
+		return fmt.Errorf("LLM semantic analysis failed: %w", err)
 	}
 
-	log.Printf("[Info] AI 语义分析完成，提取了业务别名和关联关系预测表: %s", tableName)
+	log.Printf("[Info] AI semantic analysis completed, extracted business aliases and relation predictions for table: %s", tableName)
 
 	// 4. 校验 relation hints
 	// 尝试获取目标表的 schema 用于验证
@@ -786,10 +793,10 @@ func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string
 		schemaStr,
 	)
 	if err != nil {
-		return fmt.Errorf("保存语义分析结果失败: %w", err)
+		return fmt.Errorf("failed to save semantic analysis result: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return fmt.Errorf("语义分析被丢弃: 在 LLM 调用期间表的 schema 已发生改变 (可能已重导入)")
+		return fmt.Errorf("semantic analysis discarded: schema changed during LLM call (possibly re-imported)")
 	}
 
 	return nil
@@ -829,7 +836,7 @@ type TableMetadata struct {
 // GetTableMetadata 从内置表读取已持久化的 metadata
 func (ing *Ingester) GetTableMetadata(tableName string) (string, error) {
 	if ing.db == nil {
-		return "", fmt.Errorf("数据库未初始化")
+		return "", fmt.Errorf("database not initialized")
 	}
 	ing.ensureMetadataTable()
 
@@ -908,7 +915,7 @@ func (ing *Ingester) GetTableMetadata(tableName string) (string, error) {
 // GetFullTableMetadata 返回完整的表 metadata 结构
 func (ing *Ingester) GetFullTableMetadata(tableName string) (*TableMetadata, error) {
 	if ing.db == nil {
-		return nil, fmt.Errorf("数据库未初始化")
+		return nil, fmt.Errorf("database not initialized")
 	}
 	ing.ensureMetadataTable()
 

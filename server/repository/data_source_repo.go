@@ -1,0 +1,54 @@
+package repository
+
+import (
+	"context"
+
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+)
+
+type DataSourceRepository interface {
+	Create(ctx context.Context, ds *domain.DataSource) error
+	GetByID(ctx context.Context, id string) (*domain.DataSource, error)
+	GetByFileID(ctx context.Context, fileID string) (*domain.DataSource, error)
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]domain.DataSource, error)
+	UpdateStatus(ctx context.Context, id string, status domain.SourceStatus) error
+	Delete(ctx context.Context, id string) error
+}
+
+type DatabaseConnectionRepository interface {
+	Create(ctx context.Context, conn *domain.DatabaseConnection) error
+	GetBySourceID(ctx context.Context, sourceID string) (*domain.DatabaseConnection, error)
+	Update(ctx context.Context, conn *domain.DatabaseConnection) error
+}
+
+type SourceSnapshotRepository interface {
+	Create(ctx context.Context, snapshot *domain.SourceSnapshot) error
+	GetByID(ctx context.Context, id string) (*domain.SourceSnapshot, error)
+	ListBySession(ctx context.Context, sessionID string) ([]domain.SourceSnapshot, error)
+	ListBySource(ctx context.Context, sourceID string) ([]domain.SourceSnapshot, error)
+	UpdateStatus(ctx context.Context, id string, status domain.SnapshotStatus, errorMsg *string) error
+	UpdateRuntimeFacts(ctx context.Context, id string, rowsImported, importDurationMs, profileDurationMs int, snapshotSizeBytes int64, profileMode domain.ProfileMode) error
+}
+
+type SessionSourceBindingRepository interface {
+	Upsert(ctx context.Context, binding *domain.SessionSourceBinding) error
+	GetBySession(ctx context.Context, sessionID string) ([]domain.SessionSourceBinding, error)
+	GetBySessionAndSource(ctx context.Context, sessionID, sourceID string) (*domain.SessionSourceBinding, error)
+}
+
+type SemanticProfileRepository interface {
+	Create(ctx context.Context, profile *domain.SemanticProfile) error
+	GetByID(ctx context.Context, id string) (*domain.SemanticProfile, error)
+	ListBySession(ctx context.Context, sessionID string) ([]domain.SemanticProfile, error)
+	ListBySource(ctx context.Context, sourceID string) ([]domain.SemanticProfile, error)
+	UpdateStatus(ctx context.Context, id string, status domain.ProfileStatus) error
+	UpdateProfileJSON(ctx context.Context, id string, profileJSON string) error
+	FindWorkspaceConfirmation(ctx context.Context, workspaceID, schemaSignature string) (*domain.SemanticConfirmation, error)
+}
+
+type SemanticConfirmationRepository interface {
+	Create(ctx context.Context, confirmation *domain.SemanticConfirmation) error
+	ListByProfile(ctx context.Context, profileID string) ([]domain.SemanticConfirmation, error)
+	ListBySession(ctx context.Context, sessionID string) ([]domain.SemanticConfirmation, error)
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]domain.SemanticConfirmation, error)
+}

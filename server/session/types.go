@@ -37,6 +37,7 @@ type Session struct {
 	UserID       string
 	CacheRoot    string
 	FileService  *service.FileService
+	SourceService *service.SourceService
 	Ingester     *data.Ingester
 	Registry     *tools.Registry
 	Engine       *agent.Engine
@@ -51,7 +52,7 @@ type Session struct {
 	mu           sync.Mutex
 }
 
-func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileService) (*Session, error) {
+func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileService, sourceService *service.SourceService) (*Session, error) {
 	ingester := data.NewIngester(cacheRoot)
 	if err := ingester.InitDB(id); err != nil {
 		return nil, err
@@ -67,37 +68,85 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	subgoals := agent.NewSubgoalManager()
 
 	s := &Session{
-		ID:          id,
-		WorkspaceID: workspaceID,
-		UserID:      userID,
-		CacheRoot:   cacheRoot,
-		FileService: fileService,
-		Ingester:    ingester,
-		ReportState: &tools.ReportState{},
-		EditState:   &tools.ReportEditState{},
-		Memory:      memory,
-		Subgoals:    subgoals,
-		CreatedAt:   time.Now(),
-		LastSeenAt:  time.Now(),
+		ID:           id,
+		WorkspaceID:  workspaceID,
+		UserID:       userID,
+		CacheRoot:    cacheRoot,
+		FileService:  fileService,
+		SourceService: sourceService,
+		Ingester:     ingester,
+		ReportState:  &tools.ReportState{},
+		EditState:    &tools.ReportEditState{},
+		Memory:       memory,
+		Subgoals:     subgoals,
+		CreatedAt:    time.Now(),
+		LastSeenAt:   time.Now(),
 	}
 
 	ctx := tools.ToolContext{
 		Ingester:          s.Ingester,
 		ReportState:       s.ReportState,
 		EditState:         s.EditState,
-		FileFactsProvider: s.BuildFileFacts,
 		Memory:            memory,
 		Subgoals:          subgoals,
-		FileMaterializer: func(fileID string) (*tools.FileReference, error) {
-			tempPath, file, err := s.FileService.MaterializeToTemp(context.Background(), s.ID, s.WorkspaceID, fileID)
-			if err != nil {
-				return nil, err
+		SessionID:         id,
+		WorkspaceID:       workspaceID,
+		SessionSourcesProvider: func() ([]service.SessionSourceSummary, error) {
+			if sourceService == nil {
+				return nil, nil
 			}
-			return &tools.FileReference{
-				FileID:      file.ID,
-				DisplayName: file.DisplayName,
-				StoredPath:  tempPath,
-			}, nil
+			return sourceService.GetSessionSources(context.Background(), id)
+		},
+		ProfileDetailProvider: func(profileID string) (string, string, error) {
+			if sourceService == nil {
+				return "{}", "[]", nil
+			}
+			profile, confirmations, err := sourceService.GetProfileDetail(context.Background(), profileID)
+			if err != nil {
+				return "{}", "[]", err
+			}
+			confJSON, _ := json.Marshal(confirmations)
+			return profile.ProfileJSON, string(confJSON), nil
+		},
+		ConfirmedOverridesProvider: func(tableName string) map[string]interface{} {
+			if sourceService == nil {
+				return nil
+			}
+			profiles, err := sourceService.GetSessionProfiles(context.Background(), id)
+			if err != nil {
+				return nil
+			}
+			for _, p := range profiles {
+				if p.AnalysisTableName == tableName && p.ProfileStatus == string(domain.ProfileStatusConfirmed) {
+					fullProfile, _, err := sourceService.GetProfileDetail(context.Background(), p.ProfileID)
+					if err != nil {
+						continue
+					}
+					var profile map[string]interface{}
+					if err := json.Unmarshal([]byte(fullProfile.ProfileJSON), &profile); err == nil {
+						overrides := make(map[string]interface{})
+						if pt, ok := profile["primary_time_column"]; ok {
+							overrides["primary_time_column"] = pt
+						}
+						if cm, ok := profile["confirmed_metric_mappings"]; ok {
+							overrides["confirmed_metric_mappings"] = cm
+						}
+						if cj, ok := profile["confirmed_join_candidates"]; ok {
+							overrides["confirmed_join_candidates"] = cj
+						}
+						if ua, ok := profile["unit_annotations"]; ok {
+							overrides["unit_annotations"] = ua
+						}
+						return overrides
+					}
+				}
+			}
+			return nil
+		},
+		AmbiguityChecker: &sessionAmbiguityChecker{
+			sessionID:     id,
+			sourceService: sourceService,
+			reportState:   s.ReportState,
 		},
 	}
 
@@ -106,8 +155,8 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 
 	// 主控和子 Agent 使用同一套工具语义；子 Agent 只是按本次任务裁剪过工具边界的递归实例。
 	plannerAllowed := []string{
-		"data_load_file",
-		"state_session_files_inspect",
+		"state_session_sources_inspect",
+		"state_semantic_profile_inspect",
 		"data_list_tables",
 		"data_describe_table",
 		"data_query_sql",
@@ -233,7 +282,7 @@ func (s *Session) StartRun(parent context.Context) (string, context.Context, err
 	defer s.mu.Unlock()
 
 	if s.ActiveRun != nil {
-		return "", nil, fmt.Errorf("已有任务正在行中或尚未清理，请稍候停止后再试")
+		return "", nil, fmt.Errorf("a task is still running or not yet cleaned up, please wait and try again after stopping")
 	}
 
 	runID := "r_" + uuid.New().String()[:8]
@@ -427,7 +476,7 @@ func (s *Session) PrepareUserRun(ctx context.Context, userMsg agent.UserMessage,
 	var snapshot *domain.ReportSnapshot
 	if userMsg.EditContext != nil && strings.TrimSpace(userMsg.EditContext.TargetRunID) != "" {
 		if loader == nil {
-			return fmt.Errorf("缺少报告快照加载器")
+			return fmt.Errorf("missing report snapshot loader")
 		}
 		loaded, err := loader.LoadReportSnapshot(ctx, s.ID, s.WorkspaceID, s.UserID, strings.TrimSpace(userMsg.EditContext.TargetRunID))
 		if err != nil {
@@ -533,4 +582,75 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 	}
 
 	return vars
+}
+
+type sessionAmbiguityChecker struct {
+	sessionID     string
+	sourceService *service.SourceService
+	reportState   *tools.ReportState
+}
+
+func (c *sessionAmbiguityChecker) CheckAmbiguities() ([]tools.AmbiguityBlocker, error) {
+	if c.sourceService == nil {
+		return nil, nil
+	}
+	profiles, err := c.sourceService.GetSessionProfiles(context.Background(), c.sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	reportText := c.collectReportText()
+
+	var blockers []tools.AmbiguityBlocker
+	for _, p := range profiles {
+		if p.ProfileStatus != string(domain.ProfileStatusConfirmed) {
+			detail, _, err := c.sourceService.GetProfileDetail(context.Background(), p.ProfileID)
+			if err != nil {
+				continue
+			}
+			var facts service.ProfiledFacts
+			if err := json.Unmarshal([]byte(detail.ProfileJSON), &facts); err != nil {
+				continue
+			}
+			for _, amb := range facts.Ambiguities {
+				if reportText == "" || ambiguityIsReferenced(amb, p.AnalysisTableName, reportText) {
+					blockers = append(blockers, tools.AmbiguityBlocker{
+						Kind:        amb.Kind,
+						Description: fmt.Sprintf("table=%s: %s", p.AnalysisTableName, amb.Description),
+						Candidates:  amb.Candidates,
+					})
+				}
+			}
+		}
+	}
+	return blockers, nil
+}
+
+func (c *sessionAmbiguityChecker) collectReportText() string {
+	if c.reportState == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, block := range c.reportState.Blocks {
+		if block.Title != "" {
+			b.WriteString(block.Title)
+			b.WriteString(" ")
+		}
+		b.WriteString(block.Content)
+		b.WriteString(" ")
+	}
+	return b.String()
+}
+
+func ambiguityIsReferenced(amb service.Ambiguity, tableName string, reportText string) bool {
+	lower := strings.ToLower(reportText)
+	if strings.Contains(lower, strings.ToLower(tableName)) {
+		return true
+	}
+	for _, candidate := range amb.Candidates {
+		if strings.Contains(lower, strings.ToLower(candidate)) {
+			return true
+		}
+	}
+	return false
 }

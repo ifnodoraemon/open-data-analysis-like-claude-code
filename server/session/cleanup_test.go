@@ -11,7 +11,7 @@ import (
 func TestCleanupExpiredSessions_RemovesIdleSessions(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(t.TempDir(), nil)
+	manager := NewManager(t.TempDir(), nil, nil)
 
 	// 创建两个 session：一个过期一个活跃
 	expired := &Session{
@@ -47,7 +47,7 @@ func TestCleanupExpiredSessions_RemovesIdleSessions(t *testing.T) {
 func TestCleanupExpiredSessions_SkipsRunning(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(t.TempDir(), nil)
+	manager := NewManager(t.TempDir(), nil, nil)
 	running := &Session{
 		ID:          "s_running",
 		WorkspaceID: "w1",
@@ -110,7 +110,7 @@ func TestCleanupTempDir(t *testing.T) {
 func TestCleanupExpiredSessions_ZeroTTL_NoOp(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(t.TempDir(), nil)
+	manager := NewManager(t.TempDir(), nil, nil)
 	manager.sessions["s_1"] = &Session{
 		ID:         "s_1",
 		LastSeenAt: time.Now().Add(-100 * time.Hour),

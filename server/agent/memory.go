@@ -90,8 +90,8 @@ func (m *WorkingMemory) GetSummary() string {
 	}
 
 	var builder strings.Builder
-	builder.WriteString("=== 已确认的工作记忆 (Working Memory) ===\n")
-	builder.WriteString("这里存放了已确认的关键口径、字段含义和中间结论：\n")
+	builder.WriteString("=== Confirmed Working Memory ===\n")
+	builder.WriteString("Confirmed key definitions, field meanings, and intermediate conclusions:\n")
 	for k, v := range m.Facts {
 		builder.WriteString(fmt.Sprintf("- [%s]: %s\n", k, v))
 	}
@@ -266,17 +266,17 @@ func (s *SubgoalManager) GetSummary() string {
 	defer s.mu.RUnlock()
 
 	if len(s.Goals) == 0 {
-		return "当前没有进行中的子任务。"
+		return "No active subtasks."
 	}
 
 	var builder strings.Builder
-	builder.WriteString("【当前待解决的目标清单】\n")
+	builder.WriteString("[Current Goal List]\n")
 	snapshot := s.snapshotLocked()
 	for _, root := range snapshot.roots {
 		s.renderSummary(&builder, snapshot.children, root, 0)
 	}
 	if blockers := s.collectActiveBranchLines(snapshot); len(blockers) > 0 {
-		builder.WriteString("\n【当前阻塞收尾的 Active Branch】\n")
+		builder.WriteString("\n[Active Branches Blocking Finalization]\n")
 		for _, branch := range blockers {
 			builder.WriteString("- ")
 			builder.WriteString(branch)
@@ -299,7 +299,7 @@ func (s *SubgoalManager) renderSummary(builder *strings.Builder, children map[st
 	indent := strings.Repeat("  ", depth)
 	builder.WriteString(fmt.Sprintf("%s%s ID:%s | %s\n", indent, mark, goal.ID, goal.Description))
 	if goal.Result != "" {
-		builder.WriteString(fmt.Sprintf("%s    -> 结论/原因: %s\n", indent, goal.Result))
+		builder.WriteString(fmt.Sprintf("%s    -> conclusion/reason: %s\n", indent, goal.Result))
 	}
 	for _, child := range children[goal.ID] {
 		s.renderSummary(builder, children, child, depth+1)

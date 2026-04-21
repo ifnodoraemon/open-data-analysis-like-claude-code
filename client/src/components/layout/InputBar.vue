@@ -22,6 +22,14 @@
           hidden
         />
       </label>
+      <button
+        class="sources-btn"
+        @click="showSourcesDrawer = true"
+        title="数据源管理"
+        aria-label="数据源管理"
+      >
+        🔗
+      </button>
       <textarea
         v-model="input"
         class="input-field"
@@ -41,6 +49,13 @@
       </button>
       <button v-else class="stop-btn" @click="handleStop">■ 停止</button>
     </div>
+    <DataSourceDrawer
+      :open="showSourcesDrawer"
+      :sessionSources="dataSourceStore.sessionSources"
+      :workspaceDataSources="dataSourceStore.workspaceDataSources"
+      :pendingProfiles="pendingProfiles"
+      @close="showSourcesDrawer = false"
+    />
   </div>
 </template>
 
@@ -48,13 +63,21 @@
 import { ref, computed } from "vue";
 import { useWebSocket } from "../../composables/useWebSocket.js";
 import { useAgentStore } from "../../stores/agent.js";
+import { useDataSourceStore } from "../../stores/datasource.js";
+import DataSourceDrawer from "../datasource/DataSourceDrawer.vue";
 
 const { sendMessage, stop, ensureSession } = useWebSocket();
 const store = useAgentStore();
+const dataSourceStore = useDataSourceStore();
 const input = ref("");
 const isRunning = computed(() => store.isRunning);
 const uploadedFiles = computed(() => store.uploadedFiles);
 const isUploading = ref(false);
+const showSourcesDrawer = ref(false);
+
+const pendingProfiles = computed(() =>
+  dataSourceStore.sessionSources.filter(s => s.semantic_status !== 'confirmed' && s.semantic_status !== 'rejected' && s.semantic_status !== '')
+);
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
@@ -167,6 +190,21 @@ function formatSize(bytes) {
   border-radius: 6px;
   transition: background var(--transition);
   color: var(--text-secondary);
+}
+
+.sources-btn {
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: background var(--transition);
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+}
+
+.sources-btn:hover {
+  background: var(--border-light);
 }
 
 .upload-btn:hover {

@@ -42,46 +42,46 @@ var AnalyzeTableSemantics = func(ctx context.Context, chatFn LLMChatFunc, schema
 	schemaBytes, _ := json.MarshalIndent(schema, "", "  ")
 
 	// 构造环境里其它表的简易上下文以找出关联机会
-	tablesCtx := "当前会话环境无其他表。"
+	tablesCtx := "No other tables in current session."
 	if len(activeTables) > 0 {
-		tablesCtx = fmt.Sprintf("当前会话环境还有如下表存在，可分析 Join 关系: %s", strings.Join(activeTables, ", "))
+		tablesCtx = fmt.Sprintf("Current session has these other tables available for Join analysis: %s", strings.Join(activeTables, ", "))
 	}
 
-	prompt := fmt.Sprintf(`你是资深数据分析师。你需要对以下刚刚抽取的新表 Schema 进行业务语义预分析。
-目标表结构和数据样本分布如下：
+	prompt := fmt.Sprintf(`You are a senior data analyst. Perform a business semantic pre-analysis on the following newly extracted table Schema.
+The target table structure and data sample distribution are as follows:
 %s
 
 %s
 
-请分析表并输出 JSON，只能输出标准的 JSON 格式，结构规定如下：
+Analyze the table and output JSON only. The structure must follow this format:
 {
-  "table_summary": "一句话总结这张表的业务用途",
+  "table_summary": "One-sentence summary of this table's business purpose",
   "columns": [
     {
-      "name": "列原名",
-      "business_alias": "业务别名猜想",
+      "name": "Original column name",
+      "business_alias": "Guessed business alias",
       "role": "time | metric | dimension | id",
-      "calculation_logic": "对指标的口径猜测或者说明，若无则留空",
-      "warnings": ["低置信度或者异常数据提示", ...] 
+      "calculation_logic": "Guess or explanation of the metric's definition; leave empty if none",
+      "warnings": ["Low-confidence or anomalous data hints", ...] 
     }
   ],
   "relations": [
     {
-      "target_table": "关联表名",
-      "target_column": "关联表字段猜想",
-      "source_column": "本表字段",
-      "reason": "猜测连接理由"
+      "target_table": "Related table name",
+      "target_column": "Guessed related table column",
+      "source_column": "This table's column",
+      "reason": "Guessed join reason"
     }
   ]
 }
 
-只需直接返回 JSON 文本，不要用 Markdown 代码块包裹，也不要说其他多余的话。`, string(schemaBytes), tablesCtx)
+Return only raw JSON text. Do not wrap it in Markdown code blocks or add any other text.`, string(schemaBytes), tablesCtx)
 
 	systemPrompt := "You are a specialized data semantic profiler outputting only valid JSON."
 
 	rawJSON, err := chatFn(ctx, systemPrompt, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("LLM 分析请求失败: %w", err)
+		return nil, fmt.Errorf("LLM analysis request failed: %w", err)
 	}
 
 	rawJSON = strings.TrimSpace(rawJSON)
@@ -93,7 +93,7 @@ var AnalyzeTableSemantics = func(ctx context.Context, chatFn LLMChatFunc, schema
 
 	var profile SemanticProfile
 	if err := json.Unmarshal([]byte(rawJSON), &profile); err != nil {
-		return nil, fmt.Errorf("解析大模型输出 JSON 失败: %w\nOutput %s", err, rawJSON)
+		return nil, fmt.Errorf("failed to parse LLM output JSON: %w\nOutput %s", err, rawJSON)
 	}
 
 	return &profile, nil

@@ -16,11 +16,11 @@ var safeFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
 	if filename == "" {
-		http.Error(w, "缺少文件名参数", http.StatusBadRequest)
+		http.Error(w, "missing filename parameter", http.StatusBadRequest)
 		return
 	}
 	if !safeFilenamePattern.MatchString(filename) {
-		http.Error(w, "无效文件名", http.StatusBadRequest)
+		http.Error(w, "invalid filename", http.StatusBadRequest)
 		return
 	}
 
@@ -30,14 +30,14 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	proxyToken := os.Getenv("PROXY_TOKEN")
 	if proxyToken == "" {
-		http.Error(w, "文件代理服务未配置", http.StatusServiceUnavailable)
+		http.Error(w, "file proxy service not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	url := fmt.Sprintf("%s/files/%s", endpoint, filename)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
 	if err != nil {
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("X-Proxy-Token", proxyToken)
@@ -45,7 +45,7 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "代理请求失败", http.StatusBadGateway)
+		http.Error(w, "proxy request failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

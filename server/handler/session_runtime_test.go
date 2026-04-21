@@ -23,7 +23,7 @@ func TestRecoverStaleSessionRunsMarksNestedRunsFailed(t *testing.T) {
 	})
 
 	runRepo = repomemory.NewRunRepository()
-	sessionManager = session.NewManager(t.TempDir(), nil)
+	sessionManager = session.NewManager(t.TempDir(), nil, nil)
 
 	now := time.Now()
 	rootID := "r_root"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 
 const (
 	queryTimeout            = 5 * time.Second
+	queryTimeoutLarge       = 30 * time.Second
+	largeTableThreshold     = 100000
 	queryRowLimit           = 200
 	queryProbeRows          = queryRowLimit + 1
 	schemaDistinctProbeRows = 200
@@ -47,6 +50,7 @@ type ColumnInfo struct {
 	UniqueCount  int             `json:"uniqueCount"`
 	SampleValues []string        `json:"sampleValues"`
 	TimeProfile  *TimeColumnInfo `json:"timeProfile,omitempty"`
+	Estimated    bool            `json:"estimated,omitempty"`
 	// 数值列统计
 	Min    *float64 `json:"min,omitempty"`
 	Max    *float64 `json:"max,omitempty"`
@@ -71,25 +75,52 @@ type normalizedTimeValue struct {
 	sortKey   string
 }
 
-// ExtractSchema 提取表的 Schema 和统计摘要
+// ExtractSchema 提取表的 Schema 和统计摘要 (full table scan)
 func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
-	if err := validateSQLIdent(tableName); err != nil {
+	return extractSchemaInternal(db, tableName, false)
+}
+
+// ExtractSchemaSampled 提取表的 Schema 和统计摘要 (bounded sample, max 10000 rows)
+// Stats are marked as estimated. Row count is still exact (COUNT(*) is cheap).
+func ExtractSchemaSampled(db *sql.DB, tableName string) (*SchemaInfo, error) {
+	return extractSchemaInternal(db, tableName, true)
+}
+
+func extractSchemaInternal(db *sql.DB, tableName string, sampled bool) (*SchemaInfo, error) {
+	if err := ValidateSQLIdent(tableName); err != nil {
 		return nil, fmt.Errorf("invalid table name: %w", err)
 	}
 	schema := &SchemaInfo{TableName: tableName}
 
-	// 获取行数
+	// 获取行数 (always exact — COUNT(*) is a single scan)
 	var rowCount int
 	err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", tableName)).Scan(&rowCount)
 	if err != nil {
-		return nil, fmt.Errorf("获取行数失败: %w", err)
+		return nil, fmt.Errorf("failed to get row count: %w", err)
 	}
 	schema.RowCount = rowCount
+
+	// For sampled mode, create a temporary bounded sample view
+	sampleTable := ""
+	if sampled && rowCount > 10000 {
+		sampleTable = fmt.Sprintf("_oda_sample_%s", sanitizeSampleTableName(tableName))
+		_, _ = db.Exec(fmt.Sprintf("DROP VIEW IF EXISTS \"%s\"", sampleTable))
+		_, err := db.Exec(fmt.Sprintf("CREATE TEMP VIEW \"%s\" AS SELECT * FROM \"%s\" LIMIT 10000", sampleTable, tableName))
+		if err != nil {
+			// If view creation fails, fall back to full table
+			log.Printf("[Warning] Failed to create sample view, falling back to full table: %v", err)
+			sampleTable = ""
+		}
+	}
+	queryTable := tableName
+	if sampleTable != "" {
+		queryTable = sampleTable
+	}
 
 	// 获取列信息
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(\"%s\")", tableName))
 	if err != nil {
-		return nil, fmt.Errorf("获取列信息失败: %w", err)
+		return nil, fmt.Errorf("failed to get column info: %w", err)
 	}
 	defer rows.Close()
 
@@ -107,22 +138,33 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 
 	// 分析每一列
 	for _, col := range columns {
-		if err := validateSQLIdent(col); err != nil {
+		if err := ValidateSQLIdent(col); err != nil {
 			continue
 		}
-		colInfo := ColumnInfo{Name: col, Type: "TEXT"}
+		colInfo := ColumnInfo{Name: col, Type: "TEXT", Estimated: sampleTable != ""}
 
 		// 非空率
-		var nonNullCount int
-		db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != ''", tableName, col, col)).Scan(&nonNullCount)
-		if rowCount > 0 {
-			colInfo.NonNullRate = float64(nonNullCount) / float64(rowCount)
+		if sampled && sampleTable != "" {
+			// Estimated from sample
+			var sampleNonNull int
+			var sampleTotal int
+			db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != ''", queryTable, col, col)).Scan(&sampleNonNull)
+			db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", queryTable)).Scan(&sampleTotal)
+			if sampleTotal > 0 {
+				colInfo.NonNullRate = float64(sampleNonNull) / float64(sampleTotal)
+			}
+		} else {
+			var nonNullCount int
+			db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != ''", queryTable, col, col)).Scan(&nonNullCount)
+			if rowCount > 0 {
+				colInfo.NonNullRate = float64(nonNullCount) / float64(rowCount)
+			}
 		}
 
 		// 唯一值数
-		db.QueryRow(fmt.Sprintf("SELECT COUNT(DISTINCT \"%s\") FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != ''", col, tableName, col, col)).Scan(&colInfo.UniqueCount)
+		db.QueryRow(fmt.Sprintf("SELECT COUNT(DISTINCT \"%s\") FROM \"%s\" WHERE \"%s\" IS NOT NULL AND \"%s\" != ''", col, queryTable, col, col)).Scan(&colInfo.UniqueCount)
 
-		observedValues, err := collectDistinctColumnValues(db, tableName, col, schemaDistinctProbeRows)
+		observedValues, err := collectDistinctColumnValues(db, queryTable, col, schemaDistinctProbeRows)
 		if err == nil {
 			if len(observedValues) > 5 {
 				colInfo.SampleValues = append(colInfo.SampleValues, observedValues[:5]...)
@@ -142,7 +184,7 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 		var minVal, maxVal, avgVal sql.NullFloat64
 		err = db.QueryRow(fmt.Sprintf(
 			"SELECT MIN(CAST(\"%s\" AS REAL)), MAX(CAST(\"%s\" AS REAL)), AVG(CAST(\"%s\" AS REAL)) FROM \"%s\" WHERE \"%s\" GLOB '[0-9]*'",
-			col, col, col, tableName, col)).Scan(&minVal, &maxVal, &avgVal)
+			col, col, col, queryTable, col)).Scan(&minVal, &maxVal, &avgVal)
 		if err == nil && minVal.Valid {
 			colInfo.Type = "NUMERIC"
 			min := minVal.Float64
@@ -154,6 +196,11 @@ func ExtractSchema(db *sql.DB, tableName string) (*SchemaInfo, error) {
 		}
 
 		schema.Columns = append(schema.Columns, colInfo)
+	}
+
+	// Clean up sample view
+	if sampleTable != "" {
+		_, _ = db.Exec(fmt.Sprintf("DROP VIEW IF EXISTS \"%s\"", sampleTable))
 	}
 
 	return schema, nil
@@ -334,6 +381,118 @@ func minInt(a, b int) int {
 	return b
 }
 
+// QueryTimeoutForDB determines the query timeout based on whether any table
+// referenced in the query exceeds the large-table threshold.
+// Uses sqlite_stat1 when available to avoid expensive COUNT(*).
+func QueryTimeoutForDB(db *sql.DB, query string) time.Duration {
+	tables := extractTableReferences(query)
+	for _, t := range tables {
+		if err := ValidateSQLIdent(t); err != nil {
+			continue
+		}
+		// Try sqlite_stat1 first (populated by ANALYZE, no full scan needed)
+		var statRows string
+		err := db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE tbl = ? LIMIT 1`, t).Scan(&statRows)
+		if err == nil && statRows != "" {
+			// stat format: "1000000 500 10" — first number is row count
+			parts := strings.Fields(statRows)
+			if len(parts) > 0 {
+				if rc, err := strconv.Atoi(parts[0]); err == nil && rc >= largeTableThreshold {
+					return queryTimeoutLarge
+				}
+				continue
+			}
+		}
+		// Fall back to COUNT(*) only if stat1 not available
+		var rc int
+		err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", t)).Scan(&rc)
+		if err == nil && rc >= largeTableThreshold {
+			return queryTimeoutLarge
+		}
+	}
+	return queryTimeout
+}
+
+// extractTableReferences does a heuristic extraction of table names from a SQL query.
+func extractTableReferences(query string) []string {
+	tables := extractTableReferencesFromQuery(strings.ToUpper(query), query)
+	return tables
+}
+
+func extractTableReferencesFromQuery(upper, original string) []string {
+	var tables []string
+	keywords := []string{"FROM", "JOIN"}
+	for _, keyword := range keywords {
+		remaining := upper
+		origRemaining := original
+		for {
+			idx := strings.Index(remaining, keyword)
+			if idx == -1 {
+				break
+			}
+			rest := strings.TrimSpace(origRemaining[idx+len(keyword):])
+			if len(rest) > 0 {
+				if rest[0] == '"' {
+					end := strings.Index(rest[1:], "\"")
+					if end > 0 {
+						tables = append(tables, rest[1:end+1])
+					}
+				} else if rest[0] == '`' {
+					end := strings.Index(rest[1:], "`")
+					if end > 0 {
+						tables = append(tables, rest[1:end+1])
+					}
+				} else {
+					// Unquoted identifier: read until whitespace or comma or closing paren
+					name := readUnquotedIdent(rest)
+					if name != "" && !isSQLKeyword(name) {
+						tables = append(tables, name)
+					}
+				}
+			}
+			remaining = remaining[idx+len(keyword):]
+			origRemaining = origRemaining[idx+len(keyword):]
+		}
+	}
+	return tables
+}
+
+func readUnquotedIdent(s string) string {
+	var b strings.Builder
+	for i, ch := range s {
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == ',' || ch == ')' || ch == '(' || ch == ';' {
+			break
+		}
+		if i > 63 {
+			break
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
+}
+
+func isSQLKeyword(s string) bool {
+	switch strings.ToUpper(s) {
+	case "SELECT", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
+		"AS", "ON", "AND", "OR", "NOT", "IN", "IS", "NULL",
+		"LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "FULL",
+		"UNION", "INTERSECT", "EXCEPT", "WITH":
+		return true
+	}
+	return false
+}
+
+func sanitizeSampleTableName(tableName string) string {
+	name := strings.ToLower(tableName)
+	name = invalidSchemaSQLIdent.ReplaceAllString(name, "_")
+	if len(name) > 50 {
+		name = name[:50]
+	}
+	return name
+}
+
+var invalidSchemaSQLIdent = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
 // GetSampleRows 获取采样行数据
 func GetSampleRows(db *sql.DB, tableName string, limit int) ([]map[string]interface{}, error) {
 	query := fmt.Sprintf("SELECT * FROM \"%s\" LIMIT %d", tableName, limit)
@@ -369,28 +528,37 @@ func GetSampleRows(db *sql.DB, tableName string, limit int) ([]map[string]interf
 
 // ExecuteQuery 执行 SQL 查询 (带安全限制)
 func ExecuteQuery(db *sql.DB, query string) ([]map[string]interface{}, error) {
+	return ExecuteQueryWithTimeout(db, query, 0)
+}
+
+// ExecuteQueryWithTimeout 执行 SQL 查询，可指定超时。如果 timeout 为 0，自动检测：大表用 30s，否则 5s。
+func ExecuteQueryWithTimeout(db *sql.DB, query string, timeout time.Duration) ([]map[string]interface{}, error) {
 	normalizedQuery, err := normalizeReadOnlyQuery(query)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	if timeout == 0 {
+		timeout = queryTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("获取数据库连接失败: %w", err)
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
-		return nil, fmt.Errorf("启用只读查询模式失败: %w", err)
+		return nil, fmt.Errorf("failed to enable read-only query mode: %w", err)
 	}
 
 	wrappedQuery := fmt.Sprintf("SELECT * FROM (%s) AS _oda_query LIMIT %d", normalizedQuery, queryProbeRows)
 	rows, err := conn.QueryContext(ctx, wrappedQuery)
 	if err != nil {
-		return nil, fmt.Errorf("SQL 执行失败: %w", err)
+		return nil, fmt.Errorf("SQL execution failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -420,15 +588,15 @@ func ExecuteQuery(db *sql.DB, query string) ([]map[string]interface{}, error) {
 		}
 		result = append(result, row)
 		if len(result) >= queryProbeRows {
-			return nil, fmt.Errorf("查询结果超过 %d 行，请增加 WHERE 条件或更小的 LIMIT", queryRowLimit)
+			return nil, fmt.Errorf("query result exceeds %d rows, add WHERE conditions or use a smaller LIMIT", queryRowLimit)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		if errorsIsDeadline(err) || ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("SQL 查询超时（>%ds），请简化语句或缩小范围", int(queryTimeout/time.Second))
+			return nil, fmt.Errorf("SQL query timeout (>%ds), simplify the query or narrow the scope", int(timeout/time.Second))
 		}
-		return nil, fmt.Errorf("读取 SQL 结果失败: %w", err)
+		return nil, fmt.Errorf("failed to read SQL results: %w", err)
 	}
 	return result, nil
 }
@@ -436,26 +604,26 @@ func ExecuteQuery(db *sql.DB, query string) ([]map[string]interface{}, error) {
 func normalizeReadOnlyQuery(query string) (string, error) {
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
-		return "", fmt.Errorf("SQL 不能为空")
+		return "", fmt.Errorf("SQL cannot be empty")
 	}
 
 	trimmed = strings.TrimSuffix(trimmed, ";")
 	trimmed = strings.TrimSpace(trimmed)
 	if trimmed == "" {
-		return "", fmt.Errorf("SQL 不能为空")
+		return "", fmt.Errorf("SQL cannot be empty")
 	}
 
 	if hasMultipleStatements(trimmed) {
-		return "", fmt.Errorf("只允许单条 SQL 查询")
+		return "", fmt.Errorf("only single SQL statement allowed")
 	}
 
 	inspection := stripSQLStringsAndComments(trimmed)
 	upper := strings.ToUpper(strings.TrimSpace(inspection))
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
-		return "", fmt.Errorf("只允许只读 SELECT / WITH 查询")
+		return "", fmt.Errorf("only read-only SELECT / WITH queries allowed")
 	}
 	if forbiddenSQLKeywordPattern.MatchString(upper) {
-		return "", fmt.Errorf("检测到非只读 SQL 关键字，只允许只读查询")
+		return "", fmt.Errorf("non-read-only SQL keyword detected, only read-only queries allowed")
 	}
 
 	return trimmed, nil

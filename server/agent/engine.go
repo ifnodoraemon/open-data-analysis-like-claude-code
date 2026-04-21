@@ -27,7 +27,7 @@ const (
 	contextBudgetTokens         = 128000
 	contextCompactTriggerTokens = contextBudgetTokens * 9 / 10
 	recentContextWindow         = 12
-	historyDigestPrefix         = "=== 历史执行摘要 ==="
+	historyDigestPrefix         = "=== History Digest ==="
 	maxDigestBulletCount        = 24
 	maxMainLoopIterations       = 50
 )
@@ -71,7 +71,7 @@ func retryableToolExec(ctx context.Context, registry *tools.Registry, toolName s
 			return result, execErr
 		}
 		if attempt < len(delays) {
-			log.Printf("Tool %s 瞬态错误 (第 %d 次): %v — %s 后重试", toolName, attempt+1, execErr, delays[attempt])
+			log.Printf("Tool %s transient error (attempt %d): %v — retry after %s", toolName, attempt+1, execErr, delays[attempt])
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -161,27 +161,27 @@ func summarizeMessageForDigest(msg ConversationItem) string {
 	switch msg.Role {
 	case openai.ChatMessageRoleUser:
 		if text := digestSummary(msg.Content, 400); text != "" {
-			return "用户: " + text
+			return "user: " + text
 		}
 	case openai.ChatMessageRoleAssistant:
 		parts := make([]string, 0, len(msg.ToolCalls)+1)
 		// 取 thinking 末段结论，400 字
 		if text := digestSummary(msg.Content, 400); text != "" {
-			parts = append(parts, "助手: "+text)
+			parts = append(parts, "assistant: "+text)
 		}
 		if len(msg.ToolCalls) > 0 {
 			names := make([]string, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
 				names = append(names, tc.Function.Name)
 			}
-			parts = append(parts, "助手调用工具: "+strings.Join(names, ", "))
+			parts = append(parts, "tool calls: "+strings.Join(names, ", "))
 		}
 		return strings.Join(parts, " | ")
 	case openai.ChatMessageRoleTool:
 		// digestSummary 会优先提取 ui_summary 等语义字段，不截断语义完整的摘要
 		rawSummary := extractToolSummary(msg.Content)
 		if summary := digestSummary(rawSummary, 400); summary != "" {
-			return "工具结果: " + summary
+			return "tool result: " + summary
 		}
 	}
 	return ""
@@ -293,7 +293,7 @@ func buildHistoryDigest(existing string, messages []ConversationItem) string {
 
 	// 对新增 bullets 超限时截断，existing digest 整段保留不参与 bullet 计数
 	if len(bullets) > maxDigestBulletCount {
-		bullets = append(bullets[:maxDigestBulletCount-1], "- 更早的执行细节已被压缩。")
+		bullets = append(bullets[:maxDigestBulletCount-1], "- Earlier execution details have been compacted.")
 	}
 
 	// 拼接：existing digest（已有摘要）在前，新 bullets 在后
@@ -407,14 +407,14 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 						}
 					}
 				} else {
-					return "", fmt.Errorf("user_request_input 参数解析失败: %w", err), true
+					return "", fmt.Errorf("user_request_input parameter parse failed: %w", err), true
 				}
 			}
 			emit(WSEvent{Type: EventUserRequestInput, Data: payload})
 			return "", nil, true
 		},
 		"report_finalize": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
-			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "正在执行 report_finalize..."}})
+			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "Executing report_finalize..."}})
 			result, err := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 			if err == nil && result != "" {
 				result = applyReportHTMLGuardrail(result)
@@ -443,18 +443,18 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 	for i := 1; ; i++ {
 		select {
 		case <-ctx.Done():
-			emit(WSEvent{Type: EventRunCancelled, Data: ErrorData{Message: "任务被取消"}})
+			emit(WSEvent{Type: EventRunCancelled, Data: ErrorData{Message: "task cancelled"}})
 			return
 		default:
 		}
 
 		if i > maxMainLoopIterations {
-			emit(WSEvent{Type: EventError, Data: ErrorData{Message: fmt.Sprintf("主循环超过最大轮次 %d", maxMainLoopIterations)}})
+			emit(WSEvent{Type: EventError, Data: ErrorData{Message: fmt.Sprintf("main loop exceeded max iterations %d", maxMainLoopIterations)}})
 			return
 		}
 
 		// 通知前端: 正在思考
-		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("正在分析... (第 %d 轮)", i)}})
+		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("analyzing... (round %d)", i)}})
 
 		e.mu.Lock()
 		bundle := &PromptBundle{
@@ -495,7 +495,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 		e.mu.Unlock()
 
 		if len(resp.Choices) == 0 {
-			emit(WSEvent{Type: EventError, Data: ErrorData{Message: "LLM 返回空响应"}})
+			emit(WSEvent{Type: EventError, Data: ErrorData{Message: "LLM returned empty response"}})
 			return
 		}
 
@@ -594,7 +594,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 
 				success := toolCallSucceeded(result, execErr)
 				if execErr != nil {
-					result = fmt.Sprintf("工具执行错误: %s", execErr.Error())
+					result = fmt.Sprintf("tool execution error: %s", execErr.Error())
 					log.Printf("Tool %s error: %v", toolCall.Function.Name, execErr)
 				}
 				resultBytes := []byte(result)
@@ -638,7 +638,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 
 		// 保护性兜底：正常流程不会到达此处（有文本或 stop 的分支均已提前 return），
 		// 仅作为防御性路径保留，防止极端情况下 LLM 返回既无文本、无工具调用、也非 stop 的响应。
-		emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: "分析完成"}})
+		emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: "Analysis completed"}})
 		return
 	}
 
@@ -907,7 +907,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	}
 
 	if toolCallID == "" {
-		return fmt.Errorf("没有找到正在等待的用户确认 (user_request_input) 工具调用")
+		return fmt.Errorf("no pending user_request_input tool call found")
 	}
 
 	e.history = append(e.history, ConversationItem{

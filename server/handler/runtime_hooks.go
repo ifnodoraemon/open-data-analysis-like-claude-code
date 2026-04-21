@@ -144,7 +144,7 @@ func reportLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 				scope.session.FinishRun(scope.runID, "failed")
 			}
 			if scope.setRunStatus != nil {
-				msg := "报告生成成功但在保存或绑定时发生错误: " + err.Error()
+				msg := "report saved but binding failed: " + err.Error()
 				scope.setRunStatus(domain.RunStatusFailed, &msg)
 			}
 		}

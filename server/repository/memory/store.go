@@ -24,7 +24,7 @@ func (r *UserRepository) GetByID(ctx context.Context, userID string) (*domain.Us
 	defer r.mu.Unlock()
 	user, ok := r.users[userID]
 	if !ok {
-		return nil, fmt.Errorf("用户不存在: %s", userID)
+		return nil, fmt.Errorf("user does not exist: %s", userID)
 	}
 	copy := *user
 	return &copy, nil
@@ -43,7 +43,7 @@ func (r *UserRepository) UpdatePasswordHash(ctx context.Context, userID, passwor
 	defer r.mu.Unlock()
 	user, ok := r.users[userID]
 	if !ok {
-		return fmt.Errorf("用户不存在: %s", userID)
+		return fmt.Errorf("user does not exist: %s", userID)
 	}
 	user.PasswordHash = passwordHash
 	user.UpdatedAt = time.Now()
@@ -68,7 +68,7 @@ func (r *WorkspaceRepository) GetByID(ctx context.Context, workspaceID string) (
 	defer r.mu.Unlock()
 	workspace, ok := r.workspaces[workspaceID]
 	if !ok {
-		return nil, fmt.Errorf("工作区不存在: %s", workspaceID)
+		return nil, fmt.Errorf("workspace does not exist: %s", workspaceID)
 	}
 	copy := *workspace
 	return &copy, nil
@@ -140,7 +140,7 @@ func (r *FileRepository) GetByID(ctx context.Context, fileID string) (*domain.Fi
 	defer r.mu.Unlock()
 	file, ok := r.files[fileID]
 	if !ok {
-		return nil, fmt.Errorf("文件不存在: %s", fileID)
+		return nil, fmt.Errorf("file does not exist: %s", fileID)
 	}
 	copy := *file
 	return &copy, nil
@@ -181,7 +181,7 @@ func (r *ReportRepository) GetByRunID(ctx context.Context, runID string) (*domai
 	defer r.mu.Unlock()
 	report, ok := r.reports[runID]
 	if !ok {
-		return nil, fmt.Errorf("报告不存在: %s", runID)
+		return nil, fmt.Errorf("report does not exist: %s", runID)
 	}
 	copy := *report
 	return &copy, nil
@@ -212,7 +212,7 @@ func (r *RunRepository) GetByID(ctx context.Context, runID string) (*domain.Anal
 	defer r.mu.Unlock()
 	run, ok := r.runs[runID]
 	if !ok {
-		return nil, fmt.Errorf("任务不存在: %s", runID)
+		return nil, fmt.Errorf("task does not exist: %s", runID)
 	}
 	copy := *run
 	return &copy, nil
@@ -267,7 +267,7 @@ func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, status d
 	defer r.mu.Unlock()
 	run, ok := r.runs[runID]
 	if !ok {
-		return fmt.Errorf("任务不存在: %s", runID)
+		return fmt.Errorf("task does not exist: %s", runID)
 	}
 	run.Status = status
 	run.ErrorMessage = errMsg
@@ -283,7 +283,7 @@ func (r *RunRepository) UpdateSummary(ctx context.Context, runID, summary string
 	defer r.mu.Unlock()
 	run, ok := r.runs[runID]
 	if !ok {
-		return fmt.Errorf("任务不存在: %s", runID)
+		return fmt.Errorf("task does not exist: %s", runID)
 	}
 	run.Summary = summary
 	return nil
@@ -294,7 +294,7 @@ func (r *RunRepository) BindReportFile(ctx context.Context, runID, reportFileID 
 	defer r.mu.Unlock()
 	run, ok := r.runs[runID]
 	if !ok {
-		return fmt.Errorf("任务不存在: %s", runID)
+		return fmt.Errorf("task does not exist: %s", runID)
 	}
 	run.ReportFileID = &reportFileID
 	return nil

@@ -42,7 +42,7 @@ func (s *FileService) Upload(ctx context.Context, in UploadFileInput) (*domain.F
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("用户无权访问工作区")
+		return nil, fmt.Errorf("user not authorized to access workspace")
 	}
 
 	fileID := "f_" + uuid.New().String()[:8]
@@ -107,12 +107,12 @@ func (s *FileService) MaterializeToTemp(ctx context.Context, sessionID, workspac
 		return "", nil, err
 	}
 	if file.WorkspaceID != workspaceID {
-		return "", nil, fmt.Errorf("文件不属于当前工作区")
+		return "", nil, fmt.Errorf("file does not belong to current workspace")
 	}
 
 	sessionFiles, err := s.GetSessionFiles(ctx, sessionID)
 	if err != nil {
-		return "", nil, fmt.Errorf("读取会话文件列表失败: %w", err)
+		return "", nil, fmt.Errorf("failed to read session file list: %w", err)
 	}
 	found := false
 	for _, sf := range sessionFiles {
@@ -122,7 +122,7 @@ func (s *FileService) MaterializeToTemp(ctx context.Context, sessionID, workspac
 		}
 	}
 	if !found {
-		return "", nil, fmt.Errorf("安全拦截：无法跨会话访问未挂载到当前会话的文件")
+		return "", nil, fmt.Errorf("security block: cannot access file not mounted in current session")
 	}
 
 	reader, err := s.Storage.Get(ctx, file.StorageKey)
@@ -132,18 +132,18 @@ func (s *FileService) MaterializeToTemp(ctx context.Context, sessionID, workspac
 	defer reader.Close()
 
 	if err := os.MkdirAll(s.TempDir, 0o755); err != nil {
-		return "", nil, fmt.Errorf("创建临时目录失败: %w", err)
+		return "", nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
 	tempPath := filepath.Join(s.TempDir, fmt.Sprintf("%s-%s", file.ID, sanitizeFilename(file.DisplayName)))
 	dest, err := os.Create(tempPath)
 	if err != nil {
-		return "", nil, fmt.Errorf("创建临时文件失败: %w", err)
+		return "", nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer dest.Close()
 
 	if _, err := io.Copy(dest, reader); err != nil {
-		return "", nil, fmt.Errorf("写入临时文件失败: %w", err)
+		return "", nil, fmt.Errorf("failed to write temp file: %w", err)
 	}
 
 	return tempPath, file, nil
@@ -166,7 +166,7 @@ func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("用户无权访问工作区")
+		return nil, fmt.Errorf("user not authorized to access workspace")
 	}
 
 	fileID := "rep_" + in.RunID
@@ -222,7 +222,7 @@ func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*
 	if s.ReportRepo != nil {
 		snapshotJSON, err := json.Marshal(in.Snapshot)
 		if err != nil {
-			return nil, fmt.Errorf("序列化报告快照失败: %w", err)
+			return nil, fmt.Errorf("failed to serialize report snapshot: %w", err)
 		}
 		report := &domain.Report{
 			ID:                  "report_" + in.RunID,
@@ -245,7 +245,7 @@ func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*
 		if err := s.ReportRepo.Create(ctx, report); err != nil {
 			_ = s.Storage.Delete(ctx, obj.Key)
 			_ = s.FileRepo.Delete(ctx, file.ID)
-			return nil, fmt.Errorf("保存报告元数据失败: %w", err)
+			return nil, fmt.Errorf("failed to save report metadata: %w", err)
 		}
 	}
 	return file, nil
@@ -257,7 +257,7 @@ func (s *FileService) OpenForDownload(ctx context.Context, userID, workspaceID, 
 		return nil, nil, err
 	}
 	if !ok {
-		return nil, nil, fmt.Errorf("用户无权访问工作区")
+		return nil, nil, fmt.Errorf("user not authorized to access workspace")
 	}
 
 	file, err := s.FileRepo.GetByID(ctx, fileID)
@@ -265,7 +265,7 @@ func (s *FileService) OpenForDownload(ctx context.Context, userID, workspaceID, 
 		return nil, nil, err
 	}
 	if file.WorkspaceID != workspaceID {
-		return nil, nil, fmt.Errorf("文件不属于当前工作区")
+		return nil, nil, fmt.Errorf("file does not belong to current workspace")
 	}
 
 	reader, err := s.Storage.Get(ctx, file.StorageKey)
@@ -281,7 +281,7 @@ func (s *FileService) OpenStoredObject(ctx context.Context, userID, workspaceID,
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("用户无权访问工作区")
+		return nil, fmt.Errorf("user not authorized to access workspace")
 	}
 	return s.Storage.Get(ctx, storageKey)
 }

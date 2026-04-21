@@ -81,7 +81,7 @@ func (l *LLMClient) SimpleChatFunc() func(ctx context.Context, systemPrompt, use
 			return "", err
 		}
 		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("LLM 返回空响应")
+			return "", fmt.Errorf("LLM returned empty response")
 		}
 		return resp.Choices[0].Message.Content, nil
 	}
@@ -154,7 +154,7 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, too
 		}
 
 		if attempt < len(retryDelays) {
-			log.Printf("LLM 瞬态错误 (第 %d 次，%.0fs 后重试): %v", attempt+1, retryDelays[attempt].Seconds(), err)
+			log.Printf("LLM transient error (attempt %d, retry in %.0fs): %v", attempt+1, retryDelays[attempt].Seconds(), err)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -191,11 +191,11 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 
 	endpoint := strings.TrimSpace(config.Cfg.LLMAPIEndpoint)
 	if endpoint == "" {
-		return nil, fmt.Errorf("LLM_API_ENDPOINT 未配置")
+		return nil, fmt.Errorf("LLM_API_ENDPOINT not configured")
 	}
 	reqBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("序列化 Responses 请求失败: %w", err)
+		return nil, fmt.Errorf("failed to serialize Responses request: %w", err)
 	}
 	start := time.Now()
 	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
@@ -220,14 +220,14 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBytes))
 	if err != nil {
-		return nil, fmt.Errorf("创建 Responses 请求失败: %w", err)
+		return nil, fmt.Errorf("failed to create Responses request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+config.Cfg.LLMAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := l.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("OpenAI Responses API 调用失败: %w", err)
+		return nil, fmt.Errorf("OpenAI Responses API call failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -242,18 +242,18 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 			"response_sha256": blobSHA256(body),
 			"response_path":   responsePath,
 		})
-		return nil, fmt.Errorf("OpenAI Responses API 调用失败: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("OpenAI Responses API call failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, fmt.Errorf("读取 Responses 响应失败: %w", err)
+		return nil, fmt.Errorf("failed to read Responses body: %w", err)
 	}
 	responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
 
 	var apiResp responsesAPIResponse
 	if err := json.Unmarshal(respBytes, &apiResp); err != nil {
-		return nil, fmt.Errorf("解析 Responses 响应失败: %w", err)
+		return nil, fmt.Errorf("failed to parse Responses body: %w", err)
 	}
 	l.debugLog(span, "llm.response", map[string]interface{}{
 		"duration_ms":         time.Since(start).Milliseconds(),
@@ -632,7 +632,7 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 			"duration_ms":   time.Since(start).Milliseconds(),
 			"error_preview": clipText(err.Error(), 500),
 		})
-		return nil, fmt.Errorf("Anthropic API 调用失败: %w", err)
+		return nil, fmt.Errorf("Anthropic API call failed: %w", err)
 	}
 	if respBytes, marshalErr := json.Marshal(resp); marshalErr == nil {
 		responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)

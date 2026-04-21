@@ -54,6 +54,15 @@ func main() {
 		protected.Get("/api/python-files/{filename}", handler.ProxyPythonFileHandler)
 		protected.Post("/api/upload", handler.UploadHandler)
 		protected.Get("/ws", handler.WSHandler)
+
+		protected.Get("/api/sessions/{sessionID}/sources", handler.SessionSourcesHandler)
+		protected.Get("/api/semantic-profiles/{profileID}", handler.SemanticProfileDetailHandler)
+		protected.Post("/api/semantic-profiles/{profileID}/confirm", handler.ConfirmProfileHandler)
+		protected.Post("/api/data-sources", handler.CreateDataSourceHandler)
+		protected.Get("/api/data-sources", handler.ListDataSourcesHandler)
+		protected.Post("/api/data-sources/{sourceID}/test", handler.TestDataSourceHandler)
+		protected.Get("/api/data-sources/{sourceID}/catalog", handler.CatalogDataSourceHandler)
+		protected.Post("/api/data-sources/{sourceID}/import", handler.ImportDataSourceHandler)
 	})
 
 	port := config.Cfg.ServerPort

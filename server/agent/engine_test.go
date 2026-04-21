@@ -21,7 +21,7 @@ func TestCompactAssistantMessage(t *testing.T) {
 				Type: openai.ToolTypeFunction,
 				Function: openai.FunctionCall{
 					Name:      "report_create_chart",
-					Arguments: `{"chart_id":"chart_a","title":"图A","option":{"series":[{"data":[1,2,3]}]}}`,
+					Arguments: `{"chart_id":"chart_a","title":"Chart A","option":{"series":[{"data":[1,2,3]}]}}`,
 				},
 			},
 			{
@@ -29,7 +29,7 @@ func TestCompactAssistantMessage(t *testing.T) {
 				Type: openai.ToolTypeFunction,
 				Function: openai.FunctionCall{
 					Name:      "report_manage_blocks",
-					Arguments: `{"block_kind":"markdown","title":"趋势分析","content":"` + strings.Repeat("x", 400) + `"}`,
+					Arguments: `{"block_kind":"markdown","title":"Trend Analysis","content":"` + strings.Repeat("x", 400) + `"}`,
 				},
 			},
 		},
@@ -86,7 +86,7 @@ func TestCompactToolResult(t *testing.T) {
 	runPythonResult := `{
   "ok": false,
   "tool": "code_run_python",
-  "ui_summary": "Python 执行失败 (12ms)",
+  "ui_summary": "Python execution failed (12ms)",
   "error_code": "execution_failed",
   "detail": "NameError"
 }`
@@ -105,11 +105,11 @@ func TestExtractToolSummaryPrefersStructuredFacts(t *testing.T) {
 	raw := `{
   "ok": false,
   "tool": "code_run_python",
-  "ui_summary": "Python 执行失败 (12ms)",
+  "ui_summary": "Python execution failed (12ms)",
   "error_code": "execution_failed"
 }`
 	summary := extractToolSummary(raw)
-	if strings.Contains(summary, "Python 执行失败") {
+	if strings.Contains(summary, "Python execution failed") {
 		t.Fatalf("expected structured summary instead of ui_summary, got %q", summary)
 	}
 	if !strings.Contains(summary, "tool=code_run_python") || !strings.Contains(summary, "error_code=execution_failed") {
@@ -156,8 +156,8 @@ func TestInspectGoalsToolReturnsFactsOnly(t *testing.T) {
 	t.Parallel()
 
 	sm := NewSubgoalManager()
-	sm.AddGoal("分析销售", "")
-	sm.AddGoal("分析营销", "")
+	sm.AddGoal("Analyze sales", "")
+	sm.AddGoal("Analyze marketing", "")
 
 	tool := &InspectGoalsTool{Subgoals: sm}
 	result, err := tool.Execute(nil)
@@ -218,7 +218,7 @@ func TestInspectReportStateToolReturnsFactsOnly(t *testing.T) {
 	tool := &InspectReportStateTool{
 		ReportState: &tools.ReportState{
 			Blocks: []tools.ReportBlock{
-				{ID: "analysis", Kind: "markdown", Title: "销售分析", Content: "## 一、销售分析\n\n{{chart:chart_sales}}\n\n{{chart:chart_missing}}"},
+				{ID: "analysis", Kind: "markdown", Title: "Sales Analysis", Content: "## 1. Sales Analysis\n\n{{chart:chart_sales}}\n\n{{chart:chart_missing}}"},
 				{ID: "sales_chart", Kind: "chart", ChartID: "chart_sales"},
 			},
 			Charts: []tools.ChartData{

@@ -27,9 +27,9 @@ func TestValidateSQLIdent(t *testing.T) {
 					tt.input = tt.input[:i] + "a" + tt.input[i+1:]
 				}
 			}
-			err := validateSQLIdent(tt.input)
+			err := ValidateSQLIdent(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateSQLIdent(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				t.Errorf("ValidateSQLIdent(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 			}
 		})
 	}

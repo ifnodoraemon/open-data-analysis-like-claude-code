@@ -47,7 +47,7 @@ func (t *InspectGoalsTool) Name() string {
 }
 
 func (t *InspectGoalsTool) Description() string {
-	return "读取目标树的事实状态。返回目标数量、状态分布、活跃根目标、活跃分支与 finalize 就绪情况；不修改任何状态。"
+	return "Read the fact state of the goal tree. Returns goal count, status distribution, active root goals, active branches, and finalize readiness; does not modify any state."
 }
 
 func (t *InspectGoalsTool) Parameters() json.RawMessage {
@@ -62,7 +62,7 @@ func (t *InspectGoalsTool) Execute(args json.RawMessage) (string, error) {
 	payload := buildGoalStateFacts(t.Subgoals, true)
 	payload["ok"] = true
 	payload["tool"] = "state_goal_inspect"
-	payload["ui_summary"] = fmt.Sprintf("当前共有 %d 个目标，%d 条活跃分支。", payload["goal_count"], payload["active_branch_count"])
+	payload["ui_summary"] = fmt.Sprintf("Current goals: %d, active branches: %d.", payload["goal_count"], payload["active_branch_count"])
 
 	return marshalToolPayload(payload)
 }
@@ -81,7 +81,7 @@ func (t *InspectReportStateTool) Name() string {
 }
 
 func (t *InspectReportStateTool) Description() string {
-	return "读取当前报告状态的事实视图。返回 block、chart、引用关系、delivery_state 与 finalize 完整性计数；不修改任何状态。"
+	return "Read the fact view of the current report state. Returns blocks, charts, reference relationships, delivery_state, and finalize completeness counts; does not modify any state."
 }
 
 func (t *InspectReportStateTool) Parameters() json.RawMessage {
@@ -219,7 +219,7 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		"can_finalize_structurally":     len(finalizeIssues) == 0,
 		"finalize_issue_count":          len(finalizeIssues),
 		"finalize_issues":               finalizeIssues,
-		"ui_summary":                    fmt.Sprintf("当前报告共有 %d 个可渲染 block、%d 张图表。", renderableBlockCount, len(chartIDs)),
+		"ui_summary":                    fmt.Sprintf("Current report: %d renderable blocks, %d charts.", renderableBlockCount, len(chartIDs)),
 	}
 	return marshalToolPayload(payload)
 }
@@ -229,7 +229,7 @@ func (t *InspectReportEditStateTool) Name() string {
 }
 
 func (t *InspectReportEditStateTool) Description() string {
-	return "读取当前报告局部编辑范围的事实状态。返回目标 block、允许修改范围和关联图表；当用户请求修改已有报告的某一段时可调用。"
+	return "Read the fact state of the current report partial edit scope. Returns the target block, allowed modification scope, and associated charts. Does not modify any state."
 }
 
 func (t *InspectReportEditStateTool) Parameters() json.RawMessage {
@@ -255,9 +255,9 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 	payload["ok"] = true
 	payload["tool"] = "state_report_edit_inspect"
 	if active, _ := payload["active"].(bool); active {
-		payload["ui_summary"] = fmt.Sprintf("当前存在局部编辑范围，目标 block 为 %s。", t.EditState.TargetBlockID)
+		payload["ui_summary"] = fmt.Sprintf("Active partial edit scope, target block: %s.", t.EditState.TargetBlockID)
 	} else {
-		payload["ui_summary"] = "当前没有局部编辑范围。"
+		payload["ui_summary"] = "No active partial edit scope."
 	}
 	return marshalToolPayload(payload)
 }

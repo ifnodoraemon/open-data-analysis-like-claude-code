@@ -331,7 +331,7 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 	if err != nil {
 		errEv := agent.WSEvent{
 			Type: agent.EventError,
-			Data: agent.ErrorData{Message: "保存最终报告失败: " + err.Error()},
+			Data: agent.ErrorData{Message: "failed to save final report: " + err.Error()},
 		}
 		sendSessionEvent(conn, writeMu, sess.ID, runID, errEv)
 		saveEventToDB(ctx, sess.WorkspaceID, sess.ID, runID, errEv)
@@ -367,16 +367,16 @@ func (handlerReportSnapshotLoader) LoadReportSnapshot(ctx context.Context, sessi
 	}
 	run, err := runRepo.GetByID(ctx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("读取目标任务失败: %w", err)
+		return nil, fmt.Errorf("failed to read target task: %w", err)
 	}
 	if run.SessionID != sessionID || run.WorkspaceID != workspaceID || run.UserID != userID {
-		return nil, fmt.Errorf("目标任务不属于当前会话")
+		return nil, fmt.Errorf("target task does not belong to current session")
 	}
 	report, err := reportRepo.GetByRunID(ctx, runID)
 	if err == nil {
 		var snapshot domain.ReportSnapshot
 		if err := json.Unmarshal([]byte(report.SnapshotJSON), &snapshot); err != nil {
-			return nil, fmt.Errorf("解析报告快照失败: %w", err)
+			return nil, fmt.Errorf("failed to parse report snapshot: %w", err)
 		}
 		return &snapshot, nil
 	}
@@ -385,7 +385,7 @@ func (handlerReportSnapshotLoader) LoadReportSnapshot(ctx context.Context, sessi
 	if sessionReportSnapshot != nil {
 		return sessionReportSnapshot, nil
 	}
-	return nil, fmt.Errorf("目标任务尚未生成可编辑报告")
+	return nil, fmt.Errorf("target task has not generated an editable report yet")
 }
 
 func buildRunUserContent(sess *session.Session, userMsg agent.UserMessage) (string, error) {
@@ -396,7 +396,7 @@ func buildRunUserContent(sess *session.Session, userMsg agent.UserMessage) (stri
 func WSHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade 失败: %v", err)
+		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -410,22 +410,22 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		var hydrateErr error
 		shouldHydrate, hydrateErr = shouldHydrateSessionFromPersistence(r.Context(), identity.WorkspaceID, identity.UserID, sessionID)
 		if hydrateErr != nil {
-			log.Printf("检查会话补水状态失败 session_id=%s err=%v", sessionID, hydrateErr)
+			log.Printf("failed to check session hydration status session_id=%s err=%v", sessionID, hydrateErr)
 			return
 		}
 	}
 	sess, _, err := sessionManager.GetOrCreate(r.Context(), sessionID, identity.WorkspaceID, identity.UserID)
 	if err != nil {
-		log.Printf("创建会话失败: %v", err)
+		log.Printf("failed to create session: %v", err)
 		return
 	}
 	if shouldHydrate {
 		if err := recoverStaleSessionRuns(r.Context(), sess.ID); err != nil {
-			log.Printf("修复历史运行状态失败 session_id=%s err=%v", sess.ID, err)
+			log.Printf("failed to recover stale runs session_id=%s err=%v", sess.ID, err)
 			return
 		}
 		if err := hydrateSessionFromPersistence(r.Context(), sess); err != nil {
-			log.Printf("补水会话运行态失败 session_id=%s err=%v", sess.ID, err)
+			log.Printf("failed to hydrate session runtime state session_id=%s err=%v", sess.ID, err)
 			return
 		}
 	}
@@ -455,16 +455,16 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("会话 %s: WebSocket 连接关闭", sess.ID)
+				log.Printf("session %s: WebSocket connection closed", sess.ID)
 			} else {
-				log.Printf("会话 %s: 读取消息失败: %v", sess.ID, err)
+				log.Printf("session %s: failed to read message: %v", sess.ID, err)
 			}
 			break
 		}
 
 		var event agent.WSEvent
 		if err := json.Unmarshal(msg, &event); err != nil {
-			log.Printf("消息解析失败: %v", err)
+			log.Printf("message parse failed: %v", err)
 			continue
 		}
 
@@ -475,7 +475,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(dataBytes, &userMsg); err != nil {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 					Type: agent.EventError,
-					Data: agent.ErrorData{Message: "用户消息解析失败"},
+					Data: agent.ErrorData{Message: "failed to parse user message"},
 				})
 				continue
 			}
@@ -507,7 +507,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					return runRepo.UpdateStatus(persistCtx, activeRunID, domain.RunStatusRunning, nil)
 				})
 
-				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "已收到用户反馈。"}})
+				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "User feedback received."}})
 
 				// 恢复执行 (传入空 userInput，因为问题已作为 tool result)
 				resumeCtx := agent.WithTraceMetadata(requestCtx, agent.TraceMetadata{
@@ -569,7 +569,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				sess.CancelRun(runID)
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 					Type: agent.EventError,
-					Data: agent.ErrorData{Message: "创建任务记录失败: " + err.Error()},
+					Data: agent.ErrorData{Message: "failed to create task record: " + err.Error()},
 				})
 				continue
 			}
@@ -593,7 +593,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				return record, err
 			}()
 			if err == nil {
-				if record.Title == "" || record.Title == "未命名分析" {
+				if record.Title == "" || record.Title == "Untitled Analysis" {
 					_ = withPersistenceContext(requestCtx, func(persistCtx context.Context) error {
 						return sessionRepo.UpdateTitle(persistCtx, sess.ID, deriveSessionTitle(rawInput))
 					})
@@ -640,7 +640,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			if !sess.CancelRun(req.RunID) {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 					Type: agent.EventError,
-					Data: agent.ErrorData{Message: "当前没有可停止的任务"},
+					Data: agent.ErrorData{Message: "no running task to stop"},
 				})
 			}
 
@@ -664,7 +664,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			})
 
 		default:
-			log.Printf("未知事件类型: %s", event.Type)
+			log.Printf("unknown event type: %s", event.Type)
 		}
 	}
 }
@@ -680,7 +680,7 @@ func clipLogText(input string, max int) string {
 func deriveSessionTitle(input string) string {
 	title := strings.TrimSpace(input)
 	if title == "" {
-		return "未命名分析"
+		return "Untitled Analysis"
 	}
 	title = strings.ReplaceAll(title, "\n", " ")
 	title = strings.Join(strings.Fields(title), " ")
@@ -805,12 +805,12 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 
 	data, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("序列化事件失败: %v", err)
+		log.Printf("serialization failed: %v", err)
 		return
 	}
 
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-		log.Printf("发送事件失败: %v", err)
+		log.Printf("send failed: %v", err)
 	}
 }
 

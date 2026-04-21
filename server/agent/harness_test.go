@@ -160,7 +160,7 @@ func TestCompactWorkerBundleCompactsLongHistory(t *testing.T) {
 func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
 	t.Parallel()
 
-	existDigest := historyDigestPrefix + "\n- 用户: 早期任务\n- 工具结果: ok"
+	existDigest := historyDigestPrefix + "\n- user: early task\n- tool result: ok"
 	bundle := &PromptBundle{
 		Policy: "system",
 		Task:   "user task",
@@ -185,7 +185,7 @@ func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
 	if len(bundle.RuntimeContext) == 0 {
 		t.Fatal("expected digest block")
 	}
-	if !strings.Contains(bundle.RuntimeContext[0].Content, "早期任务") {
+	if !strings.Contains(bundle.RuntimeContext[0].Content, "early task") {
 		t.Fatalf("expected new digest to preserve previous content")
 	}
 }

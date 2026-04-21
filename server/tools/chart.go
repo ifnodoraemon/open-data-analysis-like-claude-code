@@ -62,7 +62,7 @@ func (t *CreateChartTool) Name() string { return "report_create_chart" }
 func (t *CreateChartTool) Strict() bool { return true }
 
 func (t *CreateChartTool) Description() string {
-	return "创建或更新一个 ECharts 图表。支持简化 DSL 或原生 option，返回 chart_id、chart_ref 与 delivery_state 等事实；会修改 report chart 状态，但不会自动创建或更新正文 block。若要在正文中内联展示图表，可在 markdown/html block 内容里使用 `{{chart:chart_id}}` 占位符。在局部编辑范围存在时，只允许修改被授权的 chart_id。"
+	return "Create or update an ECharts chart. Supports simplified DSL or native option; returns chart_id, chart_ref, and delivery_state facts. Modifies report chart state but does not auto-create or update content blocks. To embed a chart inline, use `{{chart:chart_id}}` placeholder in markdown/html block content. When a partial edit scope is active, only the authorized chart_id can be modified."
 }
 
 func (t *CreateChartTool) Parameters() json.RawMessage {
@@ -70,14 +70,14 @@ func (t *CreateChartTool) Parameters() json.RawMessage {
 		"type": "object",
 		"additionalProperties": false,
 		"properties": {
-			"chart_id": {"type": "string", "description": "图表唯一标识，如 chart_sales_trend"},
-			"title": {"type": "string", "description": "图表标题"},
-			"option": {"type": "object", "description": "可选。原生 ECharts option；存在时不再按 DSL 推导。"},
-			"chart_type": {"type": "string", "enum": ["bar", "line", "pie"], "description": "图表类型。"},
-			"categories": {"type": "array", "description": "柱状图/折线图的类目轴标签", "items": {"type": "string"}},
+			"chart_id": {"type": "string", "description": "Unique chart identifier, e.g. chart_sales_trend"},
+			"title": {"type": "string", "description": "Chart title"},
+			"option": {"type": "object", "description": "Optional. Native ECharts option; when present, DSL inference is skipped."},
+			"chart_type": {"type": "string", "enum": ["bar", "line", "pie"], "description": "Chart type."},
+			"categories": {"type": "array", "description": "Category axis labels for bar/line charts", "items": {"type": "string"}},
 			"series": {
 				"type": "array",
-				"description": "柱状图/折线图的序列定义；data 应来自 data_query_sql 结果",
+				"description": "Series definition for bar/line charts; data should come from data_query_sql results",
 				"items": {
 					"type": "object",
 					"additionalProperties": false,
@@ -95,7 +95,7 @@ func (t *CreateChartTool) Parameters() json.RawMessage {
 			},
 			"values": {
 				"type": "array",
-				"description": "饼图数据",
+				"description": "Pie chart data",
 				"items": {
 					"type": "object",
 					"additionalProperties": false,
@@ -119,7 +119,7 @@ func (t *CreateChartTool) Parameters() json.RawMessage {
 func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 	var params createChartParams
 	if err := json.Unmarshal(args, &params); err != nil {
-		return "", fmt.Errorf("参数解析失败: %w", err)
+		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 
 	t.ReportState.Lock()
@@ -128,11 +128,11 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 	if err != nil {
 		var validationErr reportChartValidationError
 		if errors.As(err, &validationErr) {
-			return chartValidationFeedback("invalid_chart_spec", validationErr.ChartID, validationErr.Title, "图表定义无效", validationErr.Detail), nil
+			return chartValidationFeedback("invalid_chart_spec", validationErr.ChartID, validationErr.Title, "invalid chart definition", validationErr.Detail), nil
 		}
 		var scopeErr reportChartScopeError
 		if errors.As(err, &scopeErr) {
-			return reportEditScopeFailure("report_create_chart", "chart_id", scopeErr.ChartID, "图表", fmt.Sprintf("图表 %s 超出当前局部编辑范围", scopeErr.ChartID), nil), nil
+			return reportEditScopeFailure("report_create_chart", "chart_id", scopeErr.ChartID, "chart", fmt.Sprintf("chart %s is outside current partial edit scope", scopeErr.ChartID), nil), nil
 		}
 		return "", err
 	}
@@ -141,7 +141,7 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		"chart_id":   result.ChartID,
 		"title":      result.Title,
 		"chart_ref":  result.ChartRef,
-		"ui_summary": fmt.Sprintf("图表 %s 已%s到 report state；delivery_state=draft", result.ChartID, map[bool]string{true: "更新", false: "写入"}[result.Replaced]),
+		"ui_summary": fmt.Sprintf("chart %s %s report state; delivery_state=draft", result.ChartID, map[bool]string{true: "updated in", false: "written to"}[result.Replaced]),
 	}), nil
 }
 
@@ -162,7 +162,7 @@ func buildOptionFromDSL(params createChartParams) (json.RawMessage, error) {
 	case "bar", "line":
 		return buildAxisChartOption(params, chartType)
 	default:
-		return nil, fmt.Errorf("必须提供 chart_type，当前仅支持 bar、line、pie")
+		return nil, fmt.Errorf("chart_type is required; currently only bar, line, pie are supported")
 	}
 }
 
@@ -173,10 +173,10 @@ func hasRawChartOption(option json.RawMessage) bool {
 
 func buildAxisChartOption(params createChartParams, defaultType string) (json.RawMessage, error) {
 	if len(params.Categories) == 0 {
-		return nil, fmt.Errorf("柱状图/折线图必须提供 categories")
+		return nil, fmt.Errorf("bar/line charts require categories")
 	}
 	if len(params.Series) == 0 {
-		return nil, fmt.Errorf("柱状图/折线图必须提供 series")
+		return nil, fmt.Errorf("bar/line charts require series")
 	}
 
 	legend := append([]string(nil), params.Legend...)
@@ -184,10 +184,10 @@ func buildAxisChartOption(params createChartParams, defaultType string) (json.Ra
 	series := make([]map[string]interface{}, 0, len(params.Series))
 	for i, item := range params.Series {
 		if len(item.Data) == 0 {
-			return nil, fmt.Errorf("series[%d].data 不能为空", i)
+			return nil, fmt.Errorf("series[%d].data cannot be empty", i)
 		}
 		if len(item.Data) != len(params.Categories) {
-			return nil, fmt.Errorf("series[%d].data 长度必须与 categories 一致", i)
+			return nil, fmt.Errorf("series[%d].data length must match categories", i)
 		}
 
 		seriesType := strings.ToLower(strings.TrimSpace(item.Type))
@@ -195,7 +195,7 @@ func buildAxisChartOption(params createChartParams, defaultType string) (json.Ra
 			seriesType = defaultType
 		}
 		if seriesType != "bar" && seriesType != "line" {
-			return nil, fmt.Errorf("series[%d].type 仅支持 bar 或 line", i)
+			return nil, fmt.Errorf("series[%d].type only supports bar or line", i)
 		}
 
 		name := strings.TrimSpace(item.Name)
@@ -203,7 +203,7 @@ func buildAxisChartOption(params createChartParams, defaultType string) (json.Ra
 			if len(params.Series) == 1 {
 				name = params.Title
 			} else {
-				name = fmt.Sprintf("系列%d", i+1)
+				name = fmt.Sprintf("series_%d", i+1)
 			}
 		}
 		legend = appendIfMissing(legend, name)
@@ -238,7 +238,7 @@ func buildAxisChartOption(params createChartParams, defaultType string) (json.Ra
 	if hasRightAxis {
 		rightAxisName := strings.TrimSpace(params.Y2AxisName)
 		if rightAxisName == "" {
-			rightAxisName = "右轴"
+			rightAxisName = "right_axis"
 		}
 		yAxis = append(yAxis, map[string]interface{}{
 			"type": "value",
@@ -277,7 +277,7 @@ func buildAxisChartOption(params createChartParams, defaultType string) (json.Ra
 
 func buildPieOption(params createChartParams) (json.RawMessage, error) {
 	if len(params.Values) == 0 {
-		return nil, fmt.Errorf("饼图必须提供 values")
+		return nil, fmt.Errorf("pie charts require values")
 	}
 
 	legend := append([]string(nil), params.Legend...)
@@ -285,7 +285,7 @@ func buildPieOption(params createChartParams) (json.RawMessage, error) {
 	for i, item := range params.Values {
 		name := strings.TrimSpace(item.Name)
 		if name == "" {
-			return nil, fmt.Errorf("values[%d].name 不能为空", i)
+			return nil, fmt.Errorf("values[%d].name cannot be empty", i)
 		}
 		legend = appendIfMissing(legend, name)
 

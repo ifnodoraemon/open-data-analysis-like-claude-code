@@ -20,7 +20,7 @@ func ensureSession(ctx context.Context, identity auth.Identity) (*domain.Session
 		ID:          sess.ID,
 		WorkspaceID: sess.WorkspaceID,
 		UserID:      sess.UserID,
-		Title:       "未命名分析",
+		Title:       "Untitled Analysis",
 		Status:      domain.SessionStatusActive,
 		CreatedAt:   sess.CreatedAt,
 		UpdatedAt:   sess.LastSeenAt,

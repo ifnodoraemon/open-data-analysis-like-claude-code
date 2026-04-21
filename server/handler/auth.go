@@ -95,18 +95,18 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "请求格式错误", http.StatusBadRequest)
+		http.Error(w, "invalid request format", http.StatusBadRequest)
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" {
-		http.Error(w, "邮箱和密码不能为空", http.StatusBadRequest)
+		http.Error(w, "email and password cannot be empty", http.StatusBadRequest)
 		return
 	}
 
 	if !checkLoginRate(req.Email) {
-		http.Error(w, "登录尝试过于频繁，请稍后重试", http.StatusTooManyRequests)
+		http.Error(w, "too many login attempts, please try again later", http.StatusTooManyRequests)
 		return
 	}
 
@@ -114,22 +114,22 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			recordLoginAttempt(req.Email)
-			http.Error(w, "邮箱或密码错误", http.StatusUnauthorized)
+			http.Error(w, "invalid email or password", http.StatusUnauthorized)
 			return
 		}
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if !auth.VerifyPassword(req.Password, user.PasswordHash) {
 		recordLoginAttempt(req.Email)
-		http.Error(w, "邮箱或密码错误", http.StatusUnauthorized)
+		http.Error(w, "invalid email or password", http.StatusUnauthorized)
 		return
 	}
 
 	workspaces, err := workspaceRepo.ListByUser(r.Context(), user.ID)
 	if err != nil || len(workspaces) == 0 {
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -147,7 +147,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := tokenManager.Sign(identity, 7*24*time.Hour)
 	if err != nil {
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -184,7 +184,7 @@ func selectWorkspace(workspaces []domain.Workspace, workspaceID string) (domain.
 				return workspace, nil
 			}
 		}
-		return domain.Workspace{}, fmt.Errorf("指定的工作区不存在或无权访问")
+		return domain.Workspace{}, fmt.Errorf("specified workspace does not exist or not authorized")
 	}
 	return workspaces[0], nil
 }
@@ -194,27 +194,27 @@ func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req switchWorkspaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "请求格式错误", http.StatusBadRequest)
+		http.Error(w, "invalid request format", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.WorkspaceID) == "" {
-		http.Error(w, "workspaceId 不能为空", http.StatusBadRequest)
+		http.Error(w, "workspaceId cannot be empty", http.StatusBadRequest)
 		return
 	}
 
 	ok, err := workspaceRepo.IsMember(r.Context(), req.WorkspaceID, identity.UserID)
 	if err != nil {
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
-		http.Error(w, "无权访问该工作区", http.StatusForbidden)
+		http.Error(w, "not authorized to access this workspace", http.StatusForbidden)
 		return
 	}
 
 	workspace, err := workspaceRepo.GetByID(r.Context(), req.WorkspaceID)
 	if err != nil {
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -227,7 +227,7 @@ func SwitchWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := tokenManager.Sign(newIdentity, 7*24*time.Hour)
 	if err != nil {
-		http.Error(w, "内部服务错误", http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 

@@ -31,6 +31,7 @@ const sessionStopTimeout = 10 * time.Second
 type Manager struct {
 	cacheRoot      string
 	fileService    *service.FileService
+	sourceService  *service.SourceService
 	sessionRepo    repository.SessionRepository
 	sessions       map[string]*Session
 	mu             sync.Mutex
@@ -38,11 +39,12 @@ type Manager struct {
 	cleanupStop    chan struct{}
 }
 
-func NewManager(cacheRoot string, fileService *service.FileService) *Manager {
+func NewManager(cacheRoot string, fileService *service.FileService, sourceService *service.SourceService) *Manager {
 	return &Manager{
-		cacheRoot:   cacheRoot,
-		fileService: fileService,
-		sessions:    make(map[string]*Session),
+		cacheRoot:     cacheRoot,
+		fileService:   fileService,
+		sourceService: sourceService,
+		sessions:      make(map[string]*Session),
 	}
 }
 
@@ -68,7 +70,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, workspaceID, userI
 	if sessionID != "" {
 		if sess, ok := m.sessions[sessionID]; ok {
 			if sess.WorkspaceID != workspaceID || sess.UserID != userID {
-				return nil, false, fmt.Errorf("无权访问该会话")
+				return nil, false, fmt.Errorf("not authorized to access this session")
 			}
 			sess.Touch()
 			return sess, false, nil
@@ -87,7 +89,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, workspaceID, userI
 		cancel()
 		if err == nil {
 			if record.WorkspaceID != workspaceID || record.UserID != userID {
-				return nil, false, fmt.Errorf("无权访问该会话")
+				return nil, false, fmt.Errorf("not authorized to access this session")
 			}
 			workspaceID = record.WorkspaceID
 			userID = record.UserID
@@ -97,7 +99,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, workspaceID, userI
 		}
 	}
 
-	sess, err := New(id, workspaceID, userID, m.cacheRoot, m.fileService)
+	sess, err := New(id, workspaceID, userID, m.cacheRoot, m.fileService, m.sourceService)
 	if err != nil {
 		return nil, false, err
 	}
@@ -108,7 +110,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, workspaceID, userI
 			ID:          id,
 			WorkspaceID: workspaceID,
 			UserID:      userID,
-			Title:       "未命名分析",
+			Title:       "Untitled Analysis",
 			Status:      domain.SessionStatusActive,
 			CreatedAt:   now,
 			UpdatedAt:   now,
@@ -140,18 +142,18 @@ func (m *Manager) Get(ctx context.Context, sessionID, workspaceID, userID string
 	sess, ok := m.sessions[sessionID]
 	if !ok {
 		if m.sessionRepo == nil {
-			return nil, fmt.Errorf("会话不存在: %s", sessionID)
+			return nil, fmt.Errorf("session does not exist: %s", sessionID)
 		}
 		qCtx, cancel := dbContext(ctx)
 		record, err := m.sessionRepo.GetByID(qCtx, sessionID)
 		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("会话不存在: %s", sessionID)
+			return nil, fmt.Errorf("session does not exist: %s", sessionID)
 		}
 		if record.WorkspaceID != workspaceID || record.UserID != userID {
-			return nil, fmt.Errorf("无权访问该会话")
+			return nil, fmt.Errorf("not authorized to access this session")
 		}
-		sess, err = New(record.ID, record.WorkspaceID, record.UserID, m.cacheRoot, m.fileService)
+		sess, err = New(record.ID, record.WorkspaceID, record.UserID, m.cacheRoot, m.fileService, m.sourceService)
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +163,7 @@ func (m *Manager) Get(ctx context.Context, sessionID, workspaceID, userID string
 		m.sessions[sessionID] = sess
 	}
 	if sess.WorkspaceID != workspaceID || sess.UserID != userID {
-		return nil, fmt.Errorf("无权访问该会话")
+		return nil, fmt.Errorf("not authorized to access this session")
 	}
 	sess.Touch()
 	if m.sessionRepo != nil {
@@ -181,7 +183,7 @@ func (m *Manager) Peek(sessionID, workspaceID, userID string) (*Session, bool, e
 		return nil, false, nil
 	}
 	if sess.WorkspaceID != workspaceID || sess.UserID != userID {
-		return nil, false, fmt.Errorf("无权访问该会话")
+		return nil, false, fmt.Errorf("not authorized to access this session")
 	}
 	return sess, true, nil
 }
@@ -192,7 +194,7 @@ func (m *Manager) Delete(sessionID, workspaceID, userID string) error {
 	if ok {
 		if sess.WorkspaceID != workspaceID || sess.UserID != userID {
 			m.mu.Unlock()
-			return fmt.Errorf("无权访问该会话")
+			return fmt.Errorf("not authorized to access this session")
 		}
 		delete(m.sessions, sessionID)
 	}
@@ -212,11 +214,11 @@ func (m *Manager) Stop(sessionID, workspaceID, userID string) error {
 		return nil
 	}
 	if sess.WorkspaceID != workspaceID || sess.UserID != userID {
-		return fmt.Errorf("无权访问该会话")
+		return fmt.Errorf("not authorized to access this session")
 	}
 	sess.CancelRun("")
 	if !sess.WaitUntilIdle(sessionStopTimeout) {
-		return fmt.Errorf("会话仍有任务在运行，无法删除")
+		return fmt.Errorf("session still has running tasks, cannot delete")
 	}
 	return nil
 }

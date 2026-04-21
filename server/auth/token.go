@@ -53,27 +53,27 @@ func (m *TokenManager) Sign(identity Identity, ttl time.Duration) (string, error
 func (m *TokenManager) Parse(token string) (Identity, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
-		return Identity{}, errors.New("token 格式错误")
+		return Identity{}, errors.New("invalid token format")
 	}
 
 	mac := hmac.New(sha256.New, m.secret)
 	_, _ = mac.Write([]byte(parts[0]))
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
-		return Identity{}, errors.New("token 签名无效")
+		return Identity{}, errors.New("invalid token signature")
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return Identity{}, fmt.Errorf("token 解析失败: %w", err)
+		return Identity{}, fmt.Errorf("token parse failed: %w", err)
 	}
 
 	var claims Claims
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return Identity{}, fmt.Errorf("token claims 解析失败: %w", err)
+		return Identity{}, fmt.Errorf("token claims parse failed: %w", err)
 	}
 	if claims.ExpiresAt < time.Now().Unix() {
-		return Identity{}, errors.New("token 已过期")
+		return Identity{}, errors.New("token expired")
 	}
 
 	return Identity{

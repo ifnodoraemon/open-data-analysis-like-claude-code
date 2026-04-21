@@ -16,11 +16,11 @@ func ConvertReportDOCXHandler(w http.ResponseWriter, r *http.Request) {
 	
 	r.Body = http.MaxBytesReader(w, r.Body, 5*1024*1024)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "无效的导出请求或请求体过大", http.StatusBadRequest)
+		http.Error(w, "invalid export request or body too large", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.HTML) == "" {
-		http.Error(w, "缺少报告 HTML", http.StatusBadRequest)
+		http.Error(w, "missing report HTML", http.StatusBadRequest)
 		return
 	}
 

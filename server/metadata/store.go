@@ -17,12 +17,12 @@ type Store struct {
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("创建 metadata 目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create metadata directory: %w", err)
 	}
 
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, fmt.Errorf("打开 metadata 数据库失败: %w", err)
+		return nil, fmt.Errorf("failed to open metadata database: %w", err)
 	}
 	if err := configureSQLite(db); err != nil {
 		_ = db.Close()
@@ -50,7 +50,7 @@ func configureSQLite(db *sql.DB) error {
 	}
 	for _, pragma := range pragmas {
 		if _, err := db.Exec(pragma); err != nil {
-			return fmt.Errorf("配置 SQLite 失败 (%s): %w", pragma, err)
+			return fmt.Errorf("failed to configure SQLite (%s): %w", pragma, err)
 		}
 	}
 	return nil
@@ -174,11 +174,107 @@ func (s *Store) migrate() error {
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_messages_run ON run_messages(run_id)`,
+
+		`CREATE TABLE IF NOT EXISTS data_sources (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			source_type TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			file_id TEXT,
+			created_by TEXT NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_data_sources_workspace ON data_sources(workspace_id)`,
+
+		`CREATE TABLE IF NOT EXISTS database_connections (
+			source_id TEXT PRIMARY KEY,
+			driver TEXT NOT NULL,
+			host TEXT NOT NULL,
+			port INTEGER NOT NULL,
+			database_name TEXT NOT NULL,
+			default_schema TEXT NOT NULL DEFAULT '',
+			ssl_mode TEXT NOT NULL DEFAULT 'disable',
+			username TEXT NOT NULL,
+			secret_ciphertext BLOB NOT NULL,
+			allowlist_json TEXT NOT NULL DEFAULT '[]',
+			last_tested_at DATETIME,
+			last_test_status TEXT NOT NULL DEFAULT '',
+			last_error_message TEXT,
+			FOREIGN KEY (source_id) REFERENCES data_sources(id) ON DELETE CASCADE
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS source_snapshots (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			upstream_kind TEXT NOT NULL,
+			upstream_schema TEXT NOT NULL DEFAULT '',
+			upstream_object TEXT NOT NULL DEFAULT '',
+			analysis_table_name TEXT NOT NULL,
+			row_count INTEGER NOT NULL DEFAULT 0,
+			column_count INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'creating',
+			error_message TEXT,
+			schema_signature TEXT NOT NULL DEFAULT '',
+			imported_at DATETIME NOT NULL,
+			rows_imported INTEGER NOT NULL DEFAULT 0,
+			import_duration_ms INTEGER NOT NULL DEFAULT 0,
+			profile_duration_ms INTEGER NOT NULL DEFAULT 0,
+			snapshot_size_bytes INTEGER NOT NULL DEFAULT 0,
+			profile_mode TEXT NOT NULL DEFAULT 'sampled',
+			FOREIGN KEY (source_id) REFERENCES data_sources(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_source_snapshots_session ON source_snapshots(session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_source_snapshots_source ON source_snapshots(source_id)`,
+
+		`CREATE TABLE IF NOT EXISTS session_source_bindings (
+			session_id TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			active_snapshot_id TEXT NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY (session_id, source_id),
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_id) REFERENCES data_sources(id) ON DELETE CASCADE
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS semantic_profiles (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			snapshot_id TEXT NOT NULL,
+			analysis_table_name TEXT NOT NULL,
+			schema_signature TEXT NOT NULL DEFAULT '',
+			profile_status TEXT NOT NULL DEFAULT 'draft',
+			profile_json TEXT NOT NULL DEFAULT '{}',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY (source_id) REFERENCES data_sources(id) ON DELETE CASCADE,
+			FOREIGN KEY (snapshot_id) REFERENCES source_snapshots(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_semantic_profiles_session ON semantic_profiles(session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_semantic_profiles_source ON semantic_profiles(source_id)`,
+
+		`CREATE TABLE IF NOT EXISTS semantic_confirmations (
+			id TEXT PRIMARY KEY,
+			profile_id TEXT NOT NULL,
+			workspace_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			confirmed_by TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT 'session',
+			overrides_json TEXT NOT NULL DEFAULT '{}',
+			created_at DATETIME NOT NULL,
+			FOREIGN KEY (profile_id) REFERENCES semantic_profiles(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_semantic_confirmations_profile ON semantic_confirmations(profile_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_semantic_confirmations_workspace ON semantic_confirmations(workspace_id)`,
 	}
 
 	for _, stmt := range stmts {
 		if _, err := s.DB.Exec(stmt); err != nil {
-			return fmt.Errorf("执行 metadata migration 失败: %w", err)
+			return fmt.Errorf("failed to execute metadata migration: %w", err)
 		}
 	}
 
@@ -204,10 +300,14 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if _, err := s.DB.Exec(`UPDATE files SET purpose = 'report' WHERE purpose = 'source' AND storage_key LIKE '%/report/%'`); err != nil {
-		return fmt.Errorf("回填 report 文件用途失败: %w", err)
+		return fmt.Errorf("failed to backfill report file usage: %w", err)
 	}
 	if _, err := s.DB.Exec(`UPDATE files SET purpose = 'artifact' WHERE purpose = 'source' AND storage_key LIKE '%/artifacts/%'`); err != nil {
-		return fmt.Errorf("回填 artifact 文件用途失败: %w", err)
+		return fmt.Errorf("failed to backfill artifact file usage: %w", err)
+	}
+
+	if err := s.backfillFileDataSources(); err != nil {
+		return fmt.Errorf("failed to backfill file-backed data sources: %w", err)
 	}
 
 	return nil
@@ -215,13 +315,49 @@ func (s *Store) migrate() error {
 
 var safeIdentPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+func (s *Store) backfillFileDataSources() error {
+	rows, err := s.DB.Query(`SELECT f.id, f.workspace_id, f.display_name, f.uploaded_by, f.created_at, f.updated_at FROM files f WHERE f.purpose = 'source' AND NOT EXISTS (SELECT 1 FROM data_sources ds WHERE ds.file_id = f.id)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type fileRow struct {
+		ID          string
+		WorkspaceID string
+		DisplayName string
+		UploadedBy  string
+		CreatedAt   string
+		UpdatedAt   string
+	}
+	var files []fileRow
+	for rows.Next() {
+		var f fileRow
+		if err := rows.Scan(&f.ID, &f.WorkspaceID, &f.DisplayName, &f.UploadedBy, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			continue
+		}
+		files = append(files, f)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		sourceID := "ds_" + f.ID
+		_, _ = s.DB.Exec(`INSERT OR IGNORE INTO data_sources (id, workspace_id, name, source_type, status, file_id, created_by, created_at, updated_at) VALUES (?, ?, ?, 'file_upload', 'active', ?, ?, ?, ?)`,
+			sourceID, f.WorkspaceID, f.DisplayName, f.ID, f.UploadedBy, f.CreatedAt, f.UpdatedAt)
+	}
+
+	return nil
+}
+
 func ensureColumn(db *sql.DB, table, column, definition string) error {
 	if !safeIdentPattern.MatchString(table) || !safeIdentPattern.MatchString(column) {
 		return fmt.Errorf("invalid identifier: table=%s column=%s", table, column)
 	}
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(\"%s\")", table))
 	if err != nil {
-		return fmt.Errorf("检查 %s.%s 失败: %w", table, column, err)
+		return fmt.Errorf("failed to check %s.%s: %w", table, column, err)
 	}
 	defer rows.Close()
 
@@ -231,18 +367,18 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 		var notNull, pk int
 		var defaultValue sql.NullString
 		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
-			return fmt.Errorf("读取 %s 表结构失败: %w", table, err)
+			return fmt.Errorf("failed to read %s table structure: %w", table, err)
 		}
 		if strings.EqualFold(name, column) {
 			return nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("遍历 %s 表结构失败: %w", table, err)
+		return fmt.Errorf("failed to iterate %s table structure: %w", table, err)
 	}
 
 	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", table, column, definition)); err != nil {
-		return fmt.Errorf("为 %s 添加列 %s 失败: %w", table, column, err)
+		return fmt.Errorf("failed to add column %s to %s: %w", table, column, err)
 	}
 	return nil
 }

@@ -79,7 +79,7 @@ func (t *ManageSubgoalsTool) Name() string {
 }
 
 func (t *ManageSubgoalsTool) Description() string {
-	return "记录或更新目标树中的节点状态。支持 add、complete、reject；只修改目标状态，不执行任务。返回变更后的 goal_id 与当前目标树事实。"
+	return "Record or update node states in the goal tree. Supports add, complete, reject; only modifies goal state, does not execute tasks. Returns the changed goal_id and current goal tree facts."
 }
 
 func (t *ManageSubgoalsTool) Parameters() json.RawMessage {
@@ -89,23 +89,23 @@ func (t *ManageSubgoalsTool) Parameters() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["add", "complete", "reject"],
-				"description": "要执行的操作。add（在看板上记录一个目标）, complete（标记目标已充分解决）, reject（任务无法完成放弃）."
+				"description": "Action to perform. add (record a goal on the board), complete (mark goal as fully resolved), reject (goal cannot be completed, abandon)."
 			},
 			"description": {
 				"type": "string",
-				"description": "仅 action=add 时需要。清晰描述记录的目标。"
+				"description": "Required only for action=add. Clear description of the goal to record."
 			},
 			"parent_goal_id": {
 				"type": "string",
-				"description": "仅 action=add 时可选。父目标 ID。用于表达当前目标是某个更大目标下的子步骤。"
+				"description": "Optional, only for action=add. Parent goal ID. Used to express that the current goal is a sub-step of a larger goal."
 			},
 			"goal_id": {
 				"type": "string",
-				"description": "仅 action=complete 或 reject 时需要。你要变更状态的目标 ID。"
+				"description": "Required for action=complete or reject. The goal ID whose status you want to change."
 			},
 			"result": {
 				"type": "string",
-				"description": "仅 action=complete 或 reject 时需要。给目标追加的最终结论或者放弃原因。"
+				"description": "Required for action=complete or reject. Final conclusion or reason for abandonment to append to the goal."
 			}
 		},
 		"required": ["action"]
@@ -145,8 +145,8 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		if strings.TrimSpace(payload.ParentGoalID) != "" {
 			result["parent_goal_id"] = payload.ParentGoalID
 		}
-		result["message"] = "已记录目标状态。该记录不会自动执行。"
-		result["ui_summary"] = fmt.Sprintf("已记录目标 %s。", id)
+		result["message"] = "Goal state recorded. This record does not auto-execute."
+		result["ui_summary"] = fmt.Sprintf("Goal %s recorded.", id)
 		return marshalToolPayload(result)
 	case "complete":
 		if payload.GoalID == "" {
@@ -163,8 +163,8 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		result["goal_id"] = payload.GoalID
 		result["status"] = StatusComplete
 		result["result"] = payload.Result
-		result["message"] = "已更新目标状态。"
-		result["ui_summary"] = fmt.Sprintf("已将目标 %s 标记为完成。", payload.GoalID)
+		result["message"] = "Goal state updated."
+		result["ui_summary"] = fmt.Sprintf("Goal %s marked as complete.", payload.GoalID)
 		return marshalToolPayload(result)
 	case "reject":
 		if payload.GoalID == "" {
@@ -181,8 +181,8 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		result["goal_id"] = payload.GoalID
 		result["status"] = StatusRejected
 		result["result"] = payload.Result
-		result["message"] = "已更新目标状态。"
-		result["ui_summary"] = fmt.Sprintf("已将目标 %s 标记为放弃。", payload.GoalID)
+		result["message"] = "Goal state updated."
+		result["ui_summary"] = fmt.Sprintf("Goal %s marked as rejected.", payload.GoalID)
 		return marshalToolPayload(result)
 	default:
 		return "", fmt.Errorf("unknown action: %s", payload.Action)
@@ -226,7 +226,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return "创建一个受限子代理并执行指定任务。读取 role_name、task_instruction、allowed_tools 与可选 goal_id/policy_appendix；allowed_tools 只描述子代理可见的工具边界，`user_request_input` 与 `report_finalize` 不能下放。成功时返回 child_run_id、delegate_summary、trace，失败时返回结构化错误、child_run_status 与可选 disallowed_tools。"
+	return "Create a constrained sub-agent and execute a specified task. Reads role_name, task_instruction, allowed_tools, and optional goal_id/policy_appendix; allowed_tools only describes the tool boundary visible to the sub-agent; user_request_input and report_finalize cannot be delegated. On success returns child_run_id, delegate_summary, trace; on failure returns structured error, child_run_status, and optional disallowed_tools."
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -235,24 +235,24 @@ func (t *DelegateTaskTool) Parameters() json.RawMessage {
 		"properties": {
 			"role_name": {
 				"type": "string",
-				"description": "子代理的标签，用于区分不同实例。"
+				"description": "Label for the sub-agent, used to distinguish different instances."
 			},
 			"policy_appendix": {
 				"type": "string",
-				"description": "附加给子代理的额外约束规则。仅限于行为准则，禁止在此放入背景事实、数据样例或历史记录。"
+				"description": "Additional constraint rules appended to the sub-agent. Limited to behavioral guidelines; background facts, data samples, or history records are prohibited."
 			},
 			"task_instruction": {
 				"type": "string",
-				"description": "子代理本次要完成的具体任务。"
+				"description": "The specific task for the sub-agent to complete."
 			},
 			"allowed_tools": {
 				"type": "array",
 				"items": {"type": "string"},
-				"description": "子代理允许使用的工具列表。该列表不能包含 user_request_input 或 report_finalize。"
+				"description": "List of tools the sub-agent is allowed to use. Cannot include user_request_input or report_finalize."
 			},
 			"goal_id": {
 				"type": "string",
-				"description": "可选。关联的目标 ID。"
+				"description": "Optional. Associated goal ID."
 			}
 		},
 		"required": ["role_name", "task_instruction", "allowed_tools"]
@@ -284,7 +284,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, nil, payload.GoalID, "missing_allowed_tools", "allowed_tools is required", nil), nil
 	}
 	if forbidden := disallowedDelegateTools(payload.AllowedTools); len(forbidden) > 0 {
-		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "disallowed_delegate_tools", "delegate 不能使用这些工具: "+strings.Join(forbidden, ", "), map[string]interface{}{
+		return delegateToolFailure("", payload.RoleName, payload.TaskInstruction, payload.AllowedTools, payload.GoalID, "disallowed_delegate_tools", "delegate cannot use these tools: "+strings.Join(forbidden, ", "), map[string]interface{}{
 			"disallowed_tools": forbidden,
 		}), nil
 	}
@@ -345,11 +345,11 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		}
 	}
 
-	childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 启动] 已派生子 Agent，工具边界: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
+	childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s started] Sub-agent spawned, tool boundary: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
 
 	childPrompt := BuildPolicyPrompt()
 	if extra := strings.TrimSpace(payload.PolicyAppendix); extra != "" {
-		childPrompt = childPrompt + "\n\n## 本次派生附加约束\n" + extra
+		childPrompt = childPrompt + "\n\n## Delegate Additional Constraints\n" + extra
 	}
 
 	llmClient := NewLLMClient()
@@ -366,14 +366,14 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 	for i := 0; i < maxWorkerIterations; i++ {
 		if childCtx.Err() != nil {
 			if t.Subgoals != nil && payload.GoalID != "" {
-				_ = t.Subgoals.UpdateGoalStatus(payload.GoalID, StatusPending, "任务被取消")
+				_ = t.Subgoals.UpdateGoalStatus(payload.GoalID, StatusPending, "task cancelled")
 				childEmit(WSEvent{
 					Type: EventStateSubgoalsUpdated,
 					Data: map[string]interface{}{"goals": t.Subgoals.ListAll()},
 				})
 			}
 			if persistence != nil && childRunID != "" {
-				cancelMsg := "任务被取消"
+				cancelMsg := "task cancelled"
 				// 使用独立的 Background context 确保取消后仍能写入 DB
 				bgCtx := context.Background()
 				_ = persistence.UpdateChildRunStatus(bgCtx, childRunID, string(domain.RunStatusCancelled), &cancelMsg)
@@ -434,13 +434,13 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		if choice.Message.Content != "" {
 			content := strings.TrimSpace(choice.Message.Content)
 			trace = append(trace, delegateTraceItem{Kind: "thinking", Summary: clipText(content, 160)})
-			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: fmt.Sprintf("[%s 思考] %s", payload.RoleName, content)}}
+			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: fmt.Sprintf("[%s thinking] %s", payload.RoleName, content)}}
 			childEmit(ev)
 		}
 
 		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
 			result := strings.TrimSpace(choice.Message.Content)
-			childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s 完成] %s", payload.RoleName, result)}})
+			childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s completed] %s", payload.RoleName, result)}})
 			childEmit(WSEvent{Type: EventRunCompleted, RunID: childRunID, Data: CompleteData{Summary: result}})
 			if persistence != nil && childRunID != "" {
 				_ = persistence.UpdateChildRunSummary(childCtx, childRunID, result)
@@ -537,7 +537,7 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 		"allowed_tools":    allowedTools,
 		"delegate_summary": summary,
 		"child_run_status": string(domain.RunStatusCompleted),
-		"ui_summary":       fmt.Sprintf("子 Agent %s 已完成: %s", roleName, summary),
+		"ui_summary":       fmt.Sprintf("Sub-agent %s completed: %s", roleName, summary),
 		"trace":            trace,
 	}
 	if strings.TrimSpace(goalID) != "" {
@@ -559,7 +559,7 @@ func delegateToolFailure(childRunID, roleName, taskInstruction string, allowedTo
 		"delegate_role":    roleName,
 		"task_instruction": taskInstruction,
 		"allowed_tools":    allowedTools,
-		"ui_summary":       fmt.Sprintf("子 Agent %s 执行失败。", roleName),
+		"ui_summary":       fmt.Sprintf("Sub-agent %s failed.", roleName),
 	}
 	if strings.TrimSpace(childRunID) != "" {
 		payload["child_run_id"] = childRunID
@@ -568,7 +568,7 @@ func delegateToolFailure(childRunID, roleName, taskInstruction string, allowedTo
 		payload["goal_id"] = goalID
 	}
 	if strings.TrimSpace(roleName) == "" {
-		payload["ui_summary"] = "子 Agent 执行失败。"
+		payload["ui_summary"] = "Sub-agent failed."
 	}
 	for key, value := range extra {
 		payload[key] = value
@@ -610,7 +610,7 @@ func validatePolicyAppendix(raw string) error {
 		return nil
 	}
 	if len([]rune(trimmed)) > 280 {
-		return fmt.Errorf("policy_appendix 过长；它只能包含简短约束，不能作为上下文转储")
+		return fmt.Errorf("policy_appendix too long; it can only contain short constraints, not context dumps")
 	}
 	lines := strings.Split(trimmed, "\n")
 	nonEmpty := 0
@@ -620,7 +620,7 @@ func validatePolicyAppendix(raw string) error {
 		}
 	}
 	if nonEmpty > 6 {
-		return fmt.Errorf("policy_appendix 行数过多；它只能包含少量约束规则")
+		return fmt.Errorf("policy_appendix has too many lines; it can only contain a few constraint rules")
 	}
 	lower := strings.ToLower(trimmed)
 	suspiciousTokens := []string{
@@ -629,7 +629,7 @@ func validatePolicyAppendix(raw string) error {
 	}
 	for _, token := range suspiciousTokens {
 		if strings.Contains(lower, strings.ToLower(token)) {
-			return fmt.Errorf("policy_appendix 只能写约束，不能包含背景事实、历史记录或结构化上下文转储")
+			return fmt.Errorf("policy_appendix can only contain constraints, not background facts, history records, or structured context dumps")
 		}
 	}
 	return nil

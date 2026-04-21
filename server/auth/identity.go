@@ -53,7 +53,7 @@ func Middleware(tokenManager *TokenManager) func(http.Handler) http.Handler {
 			}
 		}
 			if token == "" || tokenManager == nil {
-				writeAuthError(w, http.StatusUnauthorized, "未登录")
+				writeAuthError(w, http.StatusUnauthorized, "not authenticated")
 				return
 			}
 

@@ -15,10 +15,10 @@ import (
 	"github.com/ifnodoraemon/openDataAnalysis/session"
 	localstorage "github.com/ifnodoraemon/openDataAnalysis/storage/local"
 )
-
 var (
 	defaultIdentity           auth.Identity
 	fileService               *service.FileService
+	sourceService             *service.SourceService
 	metadataStore             *metadata.Store
 	tokenManager              *auth.TokenManager
 	userRepo                  repository.UserRepository
@@ -27,6 +27,12 @@ var (
 	sessionRepo               repository.SessionRepository
 	reportRepo                repository.ReportRepository
 	messageRepo               repository.MessageRepository
+	dataSourceRepo            repository.DataSourceRepository
+	dbConnectionRepo          repository.DatabaseConnectionRepository
+	snapshotRepo              repository.SourceSnapshotRepository
+	sessionSourceBindingRepo  repository.SessionSourceBindingRepository
+	semanticProfileRepo       repository.SemanticProfileRepository
+	semanticConfirmationRepo  repository.SemanticConfirmationRepository
 	ShutdownEventPersistWorker func()
 )
 
@@ -54,6 +60,12 @@ func Initialize() {
 	sessionRepo = sqliterepo.NewSessionRepository(store.DB)
 	runRepo = sqliterepo.NewRunRepository(store.DB)
 	messageRepo = sqliterepo.NewMessageRepository(store.DB)
+	dataSourceRepo = sqliterepo.NewDataSourceRepository(store.DB)
+	dbConnectionRepo = sqliterepo.NewDatabaseConnectionRepository(store.DB)
+	snapshotRepo = sqliterepo.NewSourceSnapshotRepository(store.DB)
+	sessionSourceBindingRepo = sqliterepo.NewSessionSourceBindingRepository(store.DB)
+	semanticProfileRepo = sqliterepo.NewSemanticProfileRepository(store.DB)
+	semanticConfirmationRepo = sqliterepo.NewSemanticConfirmationRepository(store.DB)
 
 	now := time.Now()
 	defaultPasswordHash, err := auth.HashPassword(config.Cfg.DefaultUserPassword)
@@ -93,7 +105,16 @@ func Initialize() {
 		TempDir:       config.Cfg.TempDir,
 	}
 
-	sessionManager = session.NewManager(config.Cfg.CacheRoot, fileService)
+	sourceService = service.NewSourceService(
+		dataSourceRepo,
+		dbConnectionRepo,
+		snapshotRepo,
+		sessionSourceBindingRepo,
+		semanticProfileRepo,
+		semanticConfirmationRepo,
+	)
+
+	sessionManager = session.NewManager(config.Cfg.CacheRoot, fileService, sourceService)
 	sessionManager.SetSessionRepository(sessionRepo)
 
 	// 注册全链路删除回调，供 TTL 清理器使用

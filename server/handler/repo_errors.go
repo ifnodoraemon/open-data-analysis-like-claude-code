@@ -16,7 +16,7 @@ func isRepoNotFound(err error) bool {
 		return true
 	}
 	text := strings.ToLower(strings.TrimSpace(err.Error()))
-	return strings.Contains(text, "不存在") || strings.Contains(text, "not found")
+	return strings.Contains(text, "does not exist") || strings.Contains(text, "not found")
 }
 
 func writeRepoLookupError(w http.ResponseWriter, err error, notFoundMessage string) bool {
@@ -28,6 +28,6 @@ func writeRepoLookupError(w http.ResponseWriter, err error, notFoundMessage stri
 		return true
 	}
 	log.Printf("internal repo error: %v", err)
-	http.Error(w, "内部服务错误", http.StatusInternalServerError)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
 	return true
 }

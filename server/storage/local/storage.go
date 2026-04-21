@@ -34,11 +34,11 @@ func New(rootDir, baseURL string) *Storage {
 func (s *Storage) resolvePath(key string) (string, error) {
 	cleanKey := filepath.Clean(filepath.FromSlash(key))
 	if strings.Contains(cleanKey, "..") {
-		return "", fmt.Errorf("非法的存储路径 (包含 ..): %s", key)
+		return "", fmt.Errorf("illegal storage path (contains ..): %s", key)
 	}
 	fullPath := filepath.Join(s.rootDir, cleanKey)
 	if !strings.HasPrefix(fullPath, s.rootDir) {
-		return "", fmt.Errorf("路径越界访问: %s", key)
+		return "", fmt.Errorf("path traversal detected: %s", key)
 	}
 	return fullPath, nil
 }
@@ -49,19 +49,19 @@ func (s *Storage) Put(ctx context.Context, req storage.PutObjectRequest) (*stora
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		return nil, fmt.Errorf("创建对象目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create object directory: %w", err)
 	}
 
 	f, err := os.Create(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("创建对象失败: %w", err)
+		return nil, fmt.Errorf("failed to create object: %w", err)
 	}
 	defer f.Close()
 
 	hasher := sha256.New()
 	written, err := io.Copy(io.MultiWriter(f, hasher), req.Body)
 	if err != nil {
-		return nil, fmt.Errorf("写入对象失败: %w", err)
+		return nil, fmt.Errorf("failed to write object: %w", err)
 	}
 
 	return &storage.StoredObject{
@@ -80,7 +80,7 @@ func (s *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	}
 	file, err := os.Open(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("打开对象失败: %w", err)
+		return nil, fmt.Errorf("failed to open object: %w", err)
 	}
 	return file, nil
 }
@@ -91,7 +91,7 @@ func (s *Storage) Delete(ctx context.Context, key string) error {
 		return err // 对于非法路径，直接返回错误或视为不出错
 	}
 	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除对象失败: %w", err)
+		return fmt.Errorf("failed to delete object: %w", err)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (s *Storage) Exists(ctx context.Context, key string) (bool, error) {
 
 func (s *Storage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	if s.baseURL == "" {
-		return "", fmt.Errorf("baseURL 未配置，无法生成下载地址")
+		return "", fmt.Errorf("baseURL not configured, cannot generate download URL")
 	}
 	return fmt.Sprintf("%s/objects/%s?ttl=%d", s.baseURL, url.PathEscape(key), int(ttl.Seconds())), nil
 }

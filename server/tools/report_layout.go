@@ -37,7 +37,7 @@ func applyReportLayoutMutation(state *ReportState, params reportLayoutParams) (r
 		state.NeedsFinalize = true
 		return reportLayoutResult{
 			Action:    action,
-			UISummary: "已重置报告布局；delivery_state=draft",
+			UISummary: "report layout reset; delivery_state=draft",
 		}, nil
 	case "merge":
 		if params.CustomCSS != "" {
@@ -54,7 +54,7 @@ func applyReportLayoutMutation(state *ReportState, params reportLayoutParams) (r
 			Action:       action,
 			HasCustomCSS: state.Layout.CustomCSS != "",
 			BodyClass:    state.Layout.BodyClass,
-			UISummary:    "已更新报告布局配置；delivery_state=draft",
+			UISummary:    "report layout updated; delivery_state=draft",
 		}, nil
 	default:
 		return reportLayoutResult{}, fmt.Errorf("unknown action: %s", action)

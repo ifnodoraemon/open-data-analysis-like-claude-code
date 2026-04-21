@@ -75,7 +75,7 @@ func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
 		WorkspaceRepo: workspaceRepo,
 		TempDir:       root + "/tmp",
 	}
-	sessionManager = session.NewManager(root+"/cache", fileService)
+	sessionManager = session.NewManager(root+"/cache", fileService, nil)
 	sessionManager.SetSessionRepository(sessionRepo)
 
 	now := time.Now()
@@ -370,7 +370,7 @@ func TestDeleteSessionResourcesCommitsMetadataEvenIfStorageCleanupFails(t *testi
 		FileRepo: fileRepo,
 		TempDir:  root + "/tmp",
 	}
-	sessionManager = session.NewManager(root+"/cache", fileService)
+	sessionManager = session.NewManager(root+"/cache", fileService, nil)
 	sessionManager.SetSessionRepository(sessionRepo)
 
 	now := time.Now()

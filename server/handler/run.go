@@ -21,21 +21,21 @@ const runPreviewLimit = 3
 func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
 	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
-		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		http.Error(w, "user not authorized to access workspace", http.StatusForbidden)
 		return
 	}
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	if sessionID == "" {
-		http.Error(w, "缺少 session_id", http.StatusBadRequest)
+		http.Error(w, "missing session_id", http.StatusBadRequest)
 		return
 	}
 
 	session, err := sessionRepo.GetByID(r.Context(), sessionID)
-	if writeRepoLookupError(w, err, "会话不存在") {
+	if writeRepoLookupError(w, err, "session does not exist") {
 		return
 	}
 	if session.UserID != identity.UserID || session.WorkspaceID != identity.WorkspaceID {
-		http.Error(w, "无权访问该会话", http.StatusForbidden)
+		http.Error(w, "not authorized to access this session", http.StatusForbidden)
 		return
 	}
 	if err := recoverStaleSessionRuns(r.Context(), sessionID); err != nil {
@@ -59,16 +59,16 @@ func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
 	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
-		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		http.Error(w, "user not authorized to access workspace", http.StatusForbidden)
 		return
 	}
 	runID := chi.URLParam(r, "runID")
 	run, err := runRepo.GetByID(r.Context(), runID)
-	if writeRepoLookupError(w, err, "任务不存在") {
+	if writeRepoLookupError(w, err, "task does not exist") {
 		return
 	}
 	if run.UserID != identity.UserID || run.WorkspaceID != identity.WorkspaceID {
-		http.Error(w, "无权访问该任务", http.StatusForbidden)
+		http.Error(w, "not authorized to access this task", http.StatusForbidden)
 		return
 	}
 	if err := recoverStaleSessionRuns(r.Context(), run.SessionID); err != nil {
@@ -100,16 +100,16 @@ func GetRunHandler(w http.ResponseWriter, r *http.Request) {
 func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
 	if ok, _ := workspaceRepo.IsMember(r.Context(), identity.WorkspaceID, identity.UserID); !ok {
-		http.Error(w, "用户无权访问工作区", http.StatusForbidden)
+		http.Error(w, "user not authorized to access workspace", http.StatusForbidden)
 		return
 	}
 	runID := chi.URLParam(r, "runID")
 	run, err := runRepo.GetByID(r.Context(), runID)
-	if writeRepoLookupError(w, err, "任务不存在") {
+	if writeRepoLookupError(w, err, "task does not exist") {
 		return
 	}
 	if run.UserID != identity.UserID || run.WorkspaceID != identity.WorkspaceID {
-		http.Error(w, "无权访问该任务", http.StatusForbidden)
+		http.Error(w, "not authorized to access this task", http.StatusForbidden)
 		return
 	}
 	if err := recoverStaleSessionRuns(r.Context(), run.SessionID); err != nil {
@@ -139,7 +139,7 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "任务报告文件不存在", http.StatusNotFound)
+			http.Error(w, "task report file does not exist", http.StatusNotFound)
 			return
 		}
 	}
@@ -148,14 +148,14 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if run.ReportFileID == nil || strings.TrimSpace(*run.ReportFileID) == "" {
-		http.Error(w, "任务尚未生成报告", http.StatusNotFound)
+		http.Error(w, "task has not generated a report yet", http.StatusNotFound)
 		return
 	}
 
 	reader, file, err := fileService.OpenForDownload(r.Context(), identity.UserID, identity.WorkspaceID, *run.ReportFileID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "任务报告文件不存在", http.StatusNotFound)
+			http.Error(w, "task report file does not exist", http.StatusNotFound)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
