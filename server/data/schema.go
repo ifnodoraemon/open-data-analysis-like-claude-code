@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	queryTimeout            = 5 * time.Second
-	queryTimeoutLarge       = 30 * time.Second
+	QueryTimeoutQuick    = 5 * time.Second
+	QueryTimeoutLarge    = 30 * time.Second
+	queryTimeout            = QueryTimeoutQuick
+	queryTimeoutLarge       = QueryTimeoutLarge
 	largeTableThreshold     = 100000
 	queryRowLimit           = 200
 	queryProbeRows          = queryRowLimit + 1
@@ -50,7 +52,7 @@ type ColumnInfo struct {
 	UniqueCount  int             `json:"uniqueCount"`
 	SampleValues []string        `json:"sampleValues"`
 	TimeProfile  *TimeColumnInfo `json:"timeProfile,omitempty"`
-	Estimated    bool            `json:"estimated,omitempty"`
+	Estimated    bool            `json:"estimated"`
 	// 数值列统计
 	Min    *float64 `json:"min,omitempty"`
 	Max    *float64 `json:"max,omitempty"`
@@ -102,14 +104,16 @@ func extractSchemaInternal(db *sql.DB, tableName string, sampled bool) (*SchemaI
 
 	// For sampled mode, create a temporary bounded sample view
 	sampleTable := ""
+	actuallySampled := false
 	if sampled && rowCount > 10000 {
 		sampleTable = fmt.Sprintf("_oda_sample_%s", sanitizeSampleTableName(tableName))
 		_, _ = db.Exec(fmt.Sprintf("DROP VIEW IF EXISTS \"%s\"", sampleTable))
 		_, err := db.Exec(fmt.Sprintf("CREATE TEMP VIEW \"%s\" AS SELECT * FROM \"%s\" LIMIT 10000", sampleTable, tableName))
 		if err != nil {
-			// If view creation fails, fall back to full table
 			log.Printf("[Warning] Failed to create sample view, falling back to full table: %v", err)
 			sampleTable = ""
+		} else {
+			actuallySampled = true
 		}
 	}
 	queryTable := tableName
@@ -141,7 +145,7 @@ func extractSchemaInternal(db *sql.DB, tableName string, sampled bool) (*SchemaI
 		if err := ValidateSQLIdent(col); err != nil {
 			continue
 		}
-		colInfo := ColumnInfo{Name: col, Type: "TEXT", Estimated: sampleTable != ""}
+		colInfo := ColumnInfo{Name: col, Type: "TEXT", Estimated: actuallySampled}
 
 		// 非空率
 		if sampled && sampleTable != "" {
@@ -588,13 +592,13 @@ func ExecuteQueryWithTimeout(db *sql.DB, query string, timeout time.Duration) ([
 		}
 		result = append(result, row)
 		if len(result) >= queryProbeRows {
-			return nil, fmt.Errorf("query result exceeds %d rows, add WHERE conditions or use a smaller LIMIT", queryRowLimit)
+			return nil, fmt.Errorf("query result exceeds %d row limit", queryRowLimit)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		if errorsIsDeadline(err) || ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("SQL query timeout (>%ds), simplify the query or narrow the scope", int(timeout/time.Second))
+			return nil, fmt.Errorf("SQL query timeout (>%ds)", int(timeout/time.Second))
 		}
 		return nil, fmt.Errorf("failed to read SQL results: %w", err)
 	}

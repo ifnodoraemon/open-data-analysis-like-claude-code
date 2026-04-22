@@ -76,7 +76,7 @@ Runtime 不应代替 Judge。
 - `state_goal_inspect`
 - `state_report_inspect`
 - `state_report_edit_inspect`
-- `state_session_files_inspect`
+- `state_session_sources_inspect`
 
 不要优先在 system prompt 或 runtime 注入“你现在应该如何行动”的判断文本。
 
@@ -222,7 +222,7 @@ runtime 不应替模型默认选一个，也不应在 handler 里偷偷替用户
 - `state_goal_inspect`
 - `state_report_inspect`
 - `state_report_edit_inspect`
-- `state_session_files_inspect`
+- `state_session_sources_inspect`
 
 这条约定的目的，是让“观察状态”成为模型的自主动作，而不是 runtime 的隐式指导。
 
@@ -247,3 +247,40 @@ runtime 不应替模型默认选一个，也不应在 handler 里偷偷替用户
 5. 这项改动会不会让系统更像 workflow engine，而不是 agent runtime？
 
 如果答案偏向“替模型判断”或“规定路径”，默认不应这样做。
+
+## 外部实践借鉴
+
+以下模式来自对 Harness AI Agent 架构的分析，经过筛选后纳入本项目的实践：
+
+### 借鉴：结构化错误分类与自恢复
+
+Harness 的 HQL 采用 fail-fast 模式，错误信息清晰且可直接重试。本项目遵循相同原则：
+
+- 工具返回结构化错误字段（`error`、`ok`），不返回 `next_action` 建议
+- 模型根据错误细节自主决定恢复策略，runtime 不替模型选择重试路径
+- 破坏性操作（如 report finalize）采用 fail-closed 模式：如果前提条件不满足，操作失败而不是静默降级
+
+### 不借鉴：Skills 层的 phase gates
+
+Harness 的 Skills 层编码了多步有序工作流（如"7-step Deploy New Service"），包含 phase gate（"do not proceed until this step is done"）。本项目明确反对这种模式，原因：
+
+- 数据分析路径是涌现的，不是预设的
+- Phase gate 本质上是隐式 workflow 编排，违反原则 1
+- 在分析场景中，"错误的探索顺序"成本远低于 DevOps 场景
+
+### 不借鉴：Skills 启动时自动注入上下文
+
+Harness 在 agent 启动时自动加载 Skills 指令（CLAUDE.md、AGENT.md）到 agent context。本项目采用 pull-based 暴露：状态通过 observation tool 按需获取，不在每轮 prompt 中预注入。
+
+### 不借鉴：混合 prompt 分层
+
+Harness 没有严格的四层 prompt 模型，Skills 混合了事实状态和操作指导。本项目严格执行四层分层（Policy / Task / RuntimeContext / History），防止上下文污染和层级越权。
+
+### 借鉴：Sondera Harness 的 STEER 模式
+
+Sondera Harness（Cedar-policy-based agent guardrail framework）提出 STEER 模式：当 guardrail 拒绝某个 action 时，返回拒绝原因（factual），由模型自主决定替代路径，而不是简单硬阻断。这与本项目的 agentic 原则高度契合：
+
+- 工具返回事实性错误（`ok=false`、`error_code`、`detail`），不附加恢复建议
+- 模型读取错误事实后自主选择恢复策略（修改 SQL、缩小查询范围、换用其他工具等）
+- 这与 BLOCK 模式不同：BLOCK 适合安全关键操作（如禁止的 DDL），而 STEER 适合可恢复的操作失败（如查询超时、行数超限）
+- 本项目的 finalize guardrail 本质是 BLOCK 模式（阻止非法最终输出），而查询失败等场景采用 STEER 模式（返回事实，模型自主恢复）

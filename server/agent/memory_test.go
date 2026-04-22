@@ -46,8 +46,8 @@ func TestSubgoalManager(t *testing.T) {
 	}
 
 	// Test AddGoal
-	id1 := sm.AddGoal("goal 1", "")
-	id2 := sm.AddGoal("goal 2", id1)
+	id1, _ := sm.AddGoal("goal 1", "")
+	id2, _ := sm.AddGoal("goal 2", id1)
 
 	canFinalize, blockers = sm.CanFinalize()
 	if canFinalize || len(blockers) != 1 {
@@ -86,8 +86,8 @@ func TestSubgoalManager(t *testing.T) {
 
 func TestSubgoalManagerAllowsFinalizeWhenClosedRootHasStaleChildren(t *testing.T) {
 	sm := NewSubgoalManager()
-	rootID := sm.AddGoal("root goal", "")
-	childID := sm.AddGoal("stale child", rootID)
+	rootID, _ := sm.AddGoal("root goal", "")
+	childID, _ := sm.AddGoal("stale child", rootID)
 
 	if err := sm.UpdateGoalStatus(rootID, StatusComplete, "done"); err != nil {
 		t.Fatalf("update root status: %v", err)

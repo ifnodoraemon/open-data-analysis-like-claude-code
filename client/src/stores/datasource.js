@@ -16,6 +16,13 @@ export const useDataSourceStore = defineStore('dataSource', () => {
       if (res.ok) {
         const data = await res.json()
         sessionSources.value = data.sources || []
+        semanticProfileSummaries.value = (data.profiles || []).map(p => ({
+          profile_id: p.profile_id,
+          source_id: p.source_id,
+          analysis_table_name: p.analysis_table_name,
+          profile_status: p.profile_status,
+          schema_signature: p.schema_signature
+        }))
       }
     } finally {
       loading.value = false
@@ -80,20 +87,25 @@ export const useDataSourceStore = defineStore('dataSource', () => {
   }
 
   async function importFromSource(sourceId, sessionId, schemaName, objectName) {
-    const res = await fetch(`/api/data-sources/${sourceId}/import`, {
-      method: 'POST',
-      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, schema_name: schemaName, object_name: objectName })
-    })
-    if (res.ok) {
-      await fetchSessionSources(sessionId)
-      return await res.json()
+    try {
+      const res = await fetch(`/api/data-sources/${sourceId}/import`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, schema_name: schemaName, object_name: objectName })
+      })
+      if (res.ok) {
+        await fetchSessionSources(sessionId)
+        return await res.json()
+      }
+      const errBody = await res.text().catch(() => '')
+      return { ok: false, error: errBody || `import failed (HTTP ${res.status})` }
+    } catch (e) {
+      return { ok: false, error: e.message || 'network error' }
     }
-    return null
   }
 
   function getAuthHeaders() {
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('oda_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 

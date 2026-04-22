@@ -57,6 +57,18 @@ func deleteSessionResources(ctx context.Context, session domain.Session) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM session_files WHERE session_id = ?`, session.ID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM semantic_confirmations WHERE session_id = ?`, session.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM semantic_profiles WHERE session_id = ?`, session.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM source_snapshots WHERE session_id = ?`, session.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session_source_bindings WHERE session_id = ?`, session.ID); err != nil {
+		return err
+	}
 	if len(plan.sourceFileIDs) > 0 {
 		if err := deleteFilesByIDs(ctx, tx, plan.sourceFileIDs); err != nil {
 			return err

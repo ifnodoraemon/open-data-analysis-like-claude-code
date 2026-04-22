@@ -159,3 +159,52 @@ func ValidateRelationHints(
 
 	return verified
 }
+
+var MetricQualifierTokens = map[string]struct{}{
+	"actual": {}, "adjusted": {}, "booked": {}, "confirmed": {},
+	"estimated": {}, "est": {}, "final": {}, "forecast": {},
+	"gross": {}, "net": {}, "planned": {}, "plan": {},
+	"projected": {}, "raw": {}, "recognized": {}, "target": {},
+	"tentative": {}, "unconfirmed": {},
+}
+
+func TokenizeColumnName(name string) []string {
+	return strings.FieldsFunc(strings.ToLower(strings.TrimSpace(name)), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+}
+
+func InferAmbiguousMetricGroups(columns []ColumnInfo) map[string][]string {
+	grouped := make(map[string][]string)
+	for _, column := range columns {
+		typ := strings.ToUpper(strings.TrimSpace(column.Type))
+		if typ != "NUMERIC" && typ != "INTEGER" && typ != "REAL" {
+			continue
+		}
+		tokens := TokenizeColumnName(column.Name)
+		if len(tokens) < 2 {
+			continue
+		}
+		core := make([]string, 0, len(tokens))
+		qualifierCount := 0
+		for _, token := range tokens {
+			if _, ok := MetricQualifierTokens[token]; ok {
+				qualifierCount++
+				continue
+			}
+			core = append(core, token)
+		}
+		if qualifierCount == 0 || len(core) == 0 {
+			continue
+		}
+		key := strings.Join(core, "_")
+		grouped[key] = append(grouped[key], column.Name)
+	}
+	result := make(map[string][]string)
+	for key, names := range grouped {
+		if len(names) >= 2 {
+			result[key] = names
+		}
+	}
+	return result
+}

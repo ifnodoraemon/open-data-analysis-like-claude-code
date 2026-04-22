@@ -82,3 +82,8 @@ func (r *SemanticConfirmationRepository) ListByWorkspace(ctx context.Context, wo
 	}
 	return results, rows.Err()
 }
+
+func (r *SemanticConfirmationRepository) DeleteByProfile(ctx context.Context, profileID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM semantic_confirmations WHERE profile_id = ?`, profileID)
+	return err
+}

@@ -29,6 +29,12 @@ func buildGoalStateFacts(subgoals *SubgoalManager, includeGoals bool) map[string
 		payload["goals"] = goals
 	}
 
+	activeRoots := 0
+	runningGoals := 0
+	pendingGoals := 0
+	completeGoals := 0
+	rejectedGoals := 0
+
 	activeRootIDs := make([]string, 0)
 	activeRootGoals := make([]map[string]interface{}, 0)
 	for _, goal := range goals {
@@ -39,19 +45,24 @@ func buildGoalStateFacts(subgoals *SubgoalManager, includeGoals bool) map[string
 				"description": goal.Description,
 				"status":      goal.Status,
 			})
-			payload["active_roots"] = payload["active_roots"].(int) + 1
+			activeRoots++
 		}
 		switch goal.Status {
 		case StatusRunning:
-			payload["running_goals"] = payload["running_goals"].(int) + 1
+			runningGoals++
 		case StatusPending:
-			payload["pending_goals"] = payload["pending_goals"].(int) + 1
+			pendingGoals++
 		case StatusComplete:
-			payload["complete_goals"] = payload["complete_goals"].(int) + 1
+			completeGoals++
 		case StatusRejected:
-			payload["rejected_goals"] = payload["rejected_goals"].(int) + 1
+			rejectedGoals++
 		}
 	}
+	payload["active_roots"] = activeRoots
+	payload["running_goals"] = runningGoals
+	payload["pending_goals"] = pendingGoals
+	payload["complete_goals"] = completeGoals
+	payload["rejected_goals"] = rejectedGoals
 	payload["active_root_goal_ids"] = activeRootIDs
 	payload["active_root_goals"] = activeRootGoals
 

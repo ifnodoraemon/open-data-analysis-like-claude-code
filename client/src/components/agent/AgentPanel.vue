@@ -29,7 +29,7 @@
     <div class="messages" ref="messagesEl">
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">🔍</div>
-        <p>上传数据文件，输入分析需求</p>
+        <p>添加数据源，输入分析需求</p>
         <p class="empty-hint">Agent 会基于目标与状态自主分析并组织输出</p>
       </div>
       <TransitionGroup name="fade">

@@ -61,7 +61,6 @@
 
 重点：
 
-- `data_load_file`
 - `data_describe_table`
 - 多文件 / 多表命名稳定性
 

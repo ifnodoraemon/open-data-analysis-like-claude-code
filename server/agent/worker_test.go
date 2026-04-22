@@ -164,7 +164,7 @@ func TestDelegateTaskToolContractDeclaresDisallowedTools(t *testing.T) {
 	t.Parallel()
 
 	tool := &DelegateTaskTool{}
-	if got := tool.Description(); !strings.Contains(got, "`user_request_input`") || !strings.Contains(got, "`report_finalize`") {
+	if got := tool.Description(); !strings.Contains(got, "user_request_input") || !strings.Contains(got, "report_finalize") {
 		t.Fatalf("expected description to declare disallowed tools, got %q", got)
 	}
 	if got := string(tool.Parameters()); !strings.Contains(got, "user_request_input") || !strings.Contains(got, "report_finalize") {

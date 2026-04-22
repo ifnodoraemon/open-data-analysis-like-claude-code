@@ -46,6 +46,9 @@ func (r *SessionSourceBindingRepository) GetBySessionAndSource(ctx context.Conte
 		`SELECT session_id, source_id, active_snapshot_id, created_at, updated_at FROM session_source_bindings WHERE session_id = ? AND source_id = ?`, sessionID, sourceID)
 	var b domain.SessionSourceBinding
 	if err := row.Scan(&b.SessionID, &b.SourceID, &b.ActiveSnapshotID, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &b, nil

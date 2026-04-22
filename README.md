@@ -73,7 +73,8 @@ Non-goals:
 
 Available core tools:
 
-- `data_load_file`
+- `state_session_sources_inspect`
+- `state_semantic_profile_inspect`
 - `data_list_tables`
 - `data_describe_table`
 - `data_query_sql`

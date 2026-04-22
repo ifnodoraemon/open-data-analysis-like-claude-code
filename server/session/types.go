@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +49,7 @@ type Session struct {
 	CreatedAt    time.Time
 	LastSeenAt   time.Time
 	mu           sync.Mutex
+	uploadMu     sync.RWMutex
 }
 
 func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileService, sourceService *service.SourceService) (*Session, error) {
@@ -143,11 +143,27 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			}
 			return nil
 		},
+		KnownRowCount: func(tableName string) (int, bool) {
+			if sourceService == nil {
+				return 0, false
+			}
+			sources, err := sourceService.GetSessionSources(context.Background(), id)
+			if err != nil {
+				return 0, false
+			}
+			for _, src := range sources {
+				if src.AnalysisTableName == tableName {
+					return src.RowCount, true
+				}
+			}
+			return 0, false
+		},
 		AmbiguityChecker: &sessionAmbiguityChecker{
 			sessionID:     id,
 			sourceService: sourceService,
 			reportState:   s.ReportState,
 		},
+		QueryLocker: s,
 	}
 
 	masterReg := tools.NewRegistry()
@@ -237,46 +253,6 @@ func (s *Session) FilesForClient() []agent.UploadedFile {
 	return clientFiles
 }
 
-func (s *Session) BuildFileFacts() ([]tools.SessionFileFact, error) {
-	files, err := s.FileService.GetSessionFiles(context.Background(), s.ID)
-	if err != nil {
-		return nil, err
-	}
-	facts := make([]tools.SessionFileFact, 0, len(files))
-	for _, file := range files {
-		fact := tools.SessionFileFact{
-			FileID:      file.ID,
-			DisplayName: file.DisplayName,
-		}
-		tableName := strings.TrimSuffix(file.DisplayName, filepath.Ext(file.DisplayName))
-		tableName = sanitizeTableName(tableName)
-		if tableName != "" {
-			fact.TableName = tableName
-		}
-		if s.Ingester != nil && tableName != "" {
-			schemaJSON, metaErr := s.Ingester.GetTableMetadata(tableName)
-			if metaErr == nil && strings.TrimSpace(schemaJSON) != "" {
-				fact.SchemaAvailable = true
-				var schemaPayload interface{}
-				if err := json.Unmarshal([]byte(schemaJSON), &schemaPayload); err == nil {
-					fact.SchemaSummary = schemaPayload
-				} else {
-					fact.SchemaSummary = schemaJSON
-				}
-			}
-		}
-		facts = append(facts, fact)
-	}
-	return facts, nil
-}
-
-// sanitizeTableName 保持与 Ingester 中相同的逻辑以便匹配表名
-func sanitizeTableName(name string) string {
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	return strings.ToLower(name)
-}
-
 func (s *Session) StartRun(parent context.Context) (string, context.Context, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -313,6 +289,22 @@ func (s *Session) FinishRun(runID, status string) bool {
 	}
 	s.LastSeenAt = time.Now()
 	return finished
+}
+
+func (s *Session) LockUpload() {
+	s.uploadMu.Lock()
+}
+
+func (s *Session) UnlockUpload() {
+	s.uploadMu.Unlock()
+}
+
+func (s *Session) RLockQuery() {
+	s.uploadMu.RLock()
+}
+
+func (s *Session) RUnlockQuery() {
+	s.uploadMu.RUnlock()
 }
 
 func (s *Session) SuspendRun(runID string) {
@@ -468,7 +460,9 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 	}
 	s.ReportState.Unlock()
 	if s.EditState != nil {
+		s.ReportState.RLock()
 		s.EditState.RefreshFromReportState(s.ReportState)
+		s.ReportState.RUnlock()
 	}
 }
 
@@ -613,7 +607,7 @@ func (c *sessionAmbiguityChecker) CheckAmbiguities() ([]tools.AmbiguityBlocker, 
 				continue
 			}
 			for _, amb := range facts.Ambiguities {
-				if reportText == "" || ambiguityIsReferenced(amb, p.AnalysisTableName, reportText) {
+				if reportText != "" && ambiguityIsReferenced(amb, p.AnalysisTableName, reportText) {
 					blockers = append(blockers, tools.AmbiguityBlocker{
 						Kind:        amb.Kind,
 						Description: fmt.Sprintf("table=%s: %s", p.AnalysisTableName, amb.Description),
@@ -639,6 +633,12 @@ func (c *sessionAmbiguityChecker) collectReportText() string {
 		b.WriteString(block.Content)
 		b.WriteString(" ")
 	}
+	for _, chart := range c.reportState.Charts {
+		if len(chart.Option) > 0 {
+			b.WriteString(string(chart.Option))
+			b.WriteString(" ")
+		}
+	}
 	return b.String()
 }
 
@@ -648,8 +648,18 @@ func ambiguityIsReferenced(amb service.Ambiguity, tableName string, reportText s
 		return true
 	}
 	for _, candidate := range amb.Candidates {
-		if strings.Contains(lower, strings.ToLower(candidate)) {
-			return true
+		c := strings.ToLower(candidate)
+		if len(c) <= 4 {
+			for _, word := range strings.Fields(lower) {
+				cleaned := strings.Trim(word, ".,;:!?()[]{}\"'")
+				if cleaned == c {
+					return true
+				}
+			}
+		} else {
+			if strings.Contains(lower, c) {
+				return true
+			}
 		}
 	}
 	return false

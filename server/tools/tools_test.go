@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -90,54 +89,6 @@ func TestListTablesToolReturnsStructuredTableList(t *testing.T) {
 	}
 	if len(payload.Tables) != 1 || payload.Tables[0] != "sales" {
 		t.Fatalf("unexpected tables: %#v", payload.Tables)
-	}
-}
-
-func TestLoadDataToolReturnsStructuredPayload(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	csvPath := filepath.Join(tmpDir, "sales.csv")
-	if err := os.WriteFile(csvPath, []byte("month,revenue\n2025-01,100\n2025-02,120\n"), 0o644); err != nil {
-		t.Fatalf("write csv: %v", err)
-	}
-
-	ing := data.NewIngester(tmpDir)
-	if err := ing.InitDB("session_load"); err != nil {
-		t.Fatalf("init db: %v", err)
-	}
-
-	tool := &LoadDataTool{
-		Ingester: ing,
-		FileMaterializer: func(fileID string) (*FileReference, error) {
-			return &FileReference{
-				FileID:      fileID,
-				DisplayName: "sales.csv",
-				StoredPath:  csvPath,
-			}, nil
-		},
-	}
-
-	result, err := tool.Execute(json.RawMessage(`{"file_id":"file_1"}`))
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-
-	var payload struct {
-		OK          bool   `json:"ok"`
-		Tool        string `json:"tool"`
-		TableName   string `json:"table_name"`
-		RowCount    int    `json:"row_count"`
-		ColumnCount int    `json:"column_count"`
-	}
-	if err := json.Unmarshal([]byte(result), &payload); err != nil {
-		t.Fatalf("expected json payload: %v", err)
-	}
-	if !payload.OK || payload.Tool != "data_load_file" {
-		t.Fatalf("unexpected payload: %#v", payload)
-	}
-	if payload.TableName != "sales" || payload.RowCount != 2 || payload.ColumnCount != 2 {
-		t.Fatalf("unexpected load result: %#v", payload)
 	}
 }
 
@@ -249,25 +200,28 @@ func TestDescribeDataToolExposesTimeCoverageFacts(t *testing.T) {
 	}
 
 	var payload struct {
-		OK                bool                  `json:"ok"`
-		TimeColumnCount   int                   `json:"time_column_count"`
-		TimeColumns       []data.TimeColumnInfo `json:"time_columns"`
-		PrimaryTimeColumn *data.TimeColumnInfo  `json:"primary_time_column"`
+		OK                  bool                      `json:"ok"`
+		TimeColumnCount     int                       `json:"time_column_count"`
+		TimeColumnCandidates []map[string]interface{} `json:"time_column_candidates"`
 	}
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
 		t.Fatalf("expected json payload: %v", err)
 	}
-	if !payload.OK || payload.TimeColumnCount != 1 || len(payload.TimeColumns) != 1 {
+	if !payload.OK || payload.TimeColumnCount != 1 || len(payload.TimeColumnCandidates) != 1 {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
-	if payload.PrimaryTimeColumn == nil {
-		t.Fatalf("expected primary time column, got nil")
+	candidate := payload.TimeColumnCandidates[0]
+	name, _ := candidate["column_name"].(string)
+	grain, _ := candidate["grain"].(string)
+	isPrimary, _ := candidate["heuristic_primary"].(bool)
+	if name != "dt" || grain != "day" {
+		t.Fatalf("unexpected time column candidate: %#v", candidate)
 	}
-	if payload.PrimaryTimeColumn.Name != "dt" || payload.PrimaryTimeColumn.Grain != "day" {
-		t.Fatalf("unexpected primary time column: %#v", payload.PrimaryTimeColumn)
+	if !isPrimary {
+		t.Fatalf("expected heuristic_primary=true")
 	}
-	if payload.PrimaryTimeColumn.CoverageStart != "2025-01-05" || payload.PrimaryTimeColumn.CoverageEnd != "2025-02-23" {
-		t.Fatalf("unexpected time coverage: %#v", payload.PrimaryTimeColumn)
+	if candidate["coverage_start"] != "2025-01-05" || candidate["coverage_end"] != "2025-02-23" {
+		t.Fatalf("unexpected time coverage: %#v", candidate)
 	}
 }
 
@@ -289,7 +243,7 @@ func TestDescribeDataToolReturnsStructuredFailure(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
 		t.Fatalf("expected json payload: %v", err)
 	}
-	if payload["ok"] != false || payload["error_code"] != "schema_lookup_failed" {
+	if payload["ok"] != false || payload["error_code"] != "row_count_failed" {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
 }
@@ -410,7 +364,7 @@ func TestManageReportBlocksAndFinalizeReturnStructuredPayloads(t *testing.T) {
 	if !finalizePayload.OK || finalizePayload.ReportTitle != "销售分析" || finalizePayload.BlockCount != 1 || finalizePayload.ChartCount != 0 {
 		t.Fatalf("unexpected finalize payload: %#v", finalizePayload)
 	}
-	if finalizePayload.UISummary != "delivery_state=finalized；block_count=1；chart_count=0" {
+	if finalizePayload.UISummary != "delivery_state=finalized; block_count=1; chart_count=0" {
 		t.Fatalf("unexpected finalize ui_summary: %#v", finalizePayload.UISummary)
 	}
 	if state.NeedsFinalize {

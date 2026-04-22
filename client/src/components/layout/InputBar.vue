@@ -1,17 +1,17 @@
 <template>
   <div class="input-bar">
-    <div class="upload-area" v-if="uploadedFiles.length > 0">
-      <span v-for="file in uploadedFiles" :key="file.fileId" class="file-tag">
-        📎 {{ file.name }}
-        <span class="file-size">({{ formatSize(file.size) }})</span>
+    <div class="upload-area" v-if="dataSourceStore.sessionSources.length > 0">
+      <span v-for="src in dataSourceStore.sessionSources" :key="src.source_id" class="source-tag">
+        🔗 {{ src.analysis_table_name || src.source_name }}
+        <span class="source-meta" v-if="src.row_count">({{ src.row_count }} rows)</span>
       </span>
     </div>
     <div class="input-row">
       <label
         class="upload-btn"
         :class="{ disabled: isUploading }"
-        title="上传数据文件"
-        aria-label="上传数据文件"
+        title="上传数据"
+        aria-label="上传数据"
       >
         📁
         <input
@@ -51,6 +51,7 @@
     </div>
     <DataSourceDrawer
       :open="showSourcesDrawer"
+      :sessionId="store.sessionId"
       :sessionSources="dataSourceStore.sessionSources"
       :workspaceDataSources="dataSourceStore.workspaceDataSources"
       :pendingProfiles="pendingProfiles"
@@ -71,12 +72,11 @@ const store = useAgentStore();
 const dataSourceStore = useDataSourceStore();
 const input = ref("");
 const isRunning = computed(() => store.isRunning);
-const uploadedFiles = computed(() => store.uploadedFiles);
 const isUploading = ref(false);
 const showSourcesDrawer = ref(false);
 
 const pendingProfiles = computed(() =>
-  dataSourceStore.sessionSources.filter(s => s.semantic_status !== 'confirmed' && s.semantic_status !== 'rejected' && s.semantic_status !== '')
+  dataSourceStore.sessionSources.filter(s => s.semantic_status === 'draft' || s.semantic_status === 'profiled')
 );
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -112,15 +112,15 @@ async function handleFile(e) {
       throw new Error(await res.text());
     }
     const data = await res.json();
-    store.addFile({ fileId: data.file_id, name: file.name, size: file.size });
+    await dataSourceStore.fetchSessionSources(sessionId);
     store.addMessage({
       type: "user",
-      content: `📎 已上传文件: ${file.name} (${formatSize(file.size)})`,
+      content: `📎 已添加数据源: ${file.name} (${formatSize(file.size)})`,
     });
   } catch (err) {
     store.addMessage({
       type: "error",
-      content: `文件上传失败: ${err.message}`,
+      content: `数据源添加失败: ${err.message}`,
     });
   } finally {
     isUploading.value = false;
@@ -159,7 +159,7 @@ function formatSize(bytes) {
   margin-bottom: 6px;
 }
 
-.file-tag {
+.source-tag {
   font-size: 0.75rem;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -168,7 +168,7 @@ function formatSize(bytes) {
   color: var(--text-secondary);
 }
 
-.file-size {
+.source-meta {
   color: var(--text-muted);
 }
 

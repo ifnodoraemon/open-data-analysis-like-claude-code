@@ -10,38 +10,140 @@
         <h4>当前会话 Snapshots</h4>
         <div v-if="sessionSources.length === 0" class="empty-hint">暂无数据源</div>
         <div v-for="source in sessionSources" :key="source.source_id" class="source-card">
-          <div class="source-name">{{ source.display_name }}</div>
-          <div class="source-meta">
-            <span class="badge" :class="source.source_type">{{ source.source_type }}</span>
-            <span v-if="source.analysis_table_name" class="table-name">{{ source.analysis_table_name }}</span>
-            <span v-if="source.row_count">{{ source.row_count.toLocaleString() }} rows</span>
-            <span v-if="source.large_dataset" class="badge large">large dataset</span>
-          </div>
-          <div class="source-status">
-            <span :class="['status', source.semantic_status]">{{ source.semantic_status }}</span>
-            <span v-if="source.profile_mode" class="profile-mode">{{ source.profile_mode }}</span>
-          </div>
-        </div>
+           <div class="source-name">{{ source.display_name }}</div>
+           <div class="source-meta">
+             <span class="badge" :class="source.source_type">{{ source.source_type }}</span>
+             <span v-if="source.analysis_table_name" class="table-name">{{ source.analysis_table_name }}</span>
+             <span v-if="source.row_count">{{ source.row_count.toLocaleString() }} rows</span>
+             <span v-if="source.large_dataset" class="badge large">large dataset</span>
+           </div>
+           <div class="source-status">
+             <span :class="['status', source.snapshot_status]">{{ source.snapshot_status }}</span>
+             <span v-if="source.profile_mode" class="profile-mode">{{ source.profile_mode }}</span>
+             <span v-if="source.error_message" class="error-msg">{{ source.error_message }}</span>
+           </div>
+           <div v-if="source.snapshot_status === 'creating'" class="import-progress">
+             导入中... {{ source.rows_imported?.toLocaleString() || 0 }} rows
+             <span v-if="source.import_duration_ms">({{ (source.import_duration_ms / 1000).toFixed(1) }}s)</span>
+           </div>
+         </div>
       </div>
 
       <div class="drawer-section">
-        <h4>工作区 SQL Sources</h4>
-        <div v-if="workspaceDataSources.length === 0" class="empty-hint">暂无 SQL 数据源</div>
+        <div class="section-header">
+          <h4>工作区 SQL Sources</h4>
+          <button class="btn-sm" @click="showCreateForm = !showCreateForm">+ 新增</button>
+        </div>
+        <div v-if="showCreateForm" class="create-form">
+          <input v-model="newSource.name" placeholder="名称" class="input-sm" />
+          <input v-model="newSource.host" placeholder="Host" class="input-sm" />
+          <input v-model.number="newSource.port" type="number" placeholder="Port" class="input-sm" />
+          <input v-model="newSource.database_name" placeholder="Database" class="input-sm" />
+          <input v-model="newSource.default_schema" placeholder="Schema" class="input-sm" />
+          <select v-model="newSource.ssl_mode" class="input-sm">
+            <option value="disable">disable</option>
+            <option value="require">require</option>
+            <option value="verify-full">verify-full</option>
+          </select>
+          <input v-model="newSource.username" placeholder="Username" class="input-sm" />
+          <input v-model="newSource.password" type="password" placeholder="Password" class="input-sm" />
+          <div class="allowlist-section">
+            <label class="allowlist-label">Allowlist (schema.name.kind)</label>
+            <div v-for="(entry, idx) in newSource.allowlist" :key="idx" class="allowlist-row">
+              <input v-model="entry.schema" placeholder="schema" class="input-xs" />
+              <input v-model="entry.name" placeholder="name" class="input-xs" />
+              <select v-model="entry.kind" class="input-xs">
+                <option value="table">table</option>
+                <option value="view">view</option>
+              </select>
+              <button class="btn-xs" @click="newSource.allowlist.splice(idx, 1)">×</button>
+            </div>
+            <button class="btn-xs" @click="newSource.allowlist.push({ schema: newSource.default_schema || 'public', name: '', kind: 'table' })">+ 添加</button>
+          </div>
+          <div class="form-actions">
+            <button class="btn-sm primary" @click="handleCreateSource" :disabled="creating">创建</button>
+            <button class="btn-sm" @click="showCreateForm = false">取消</button>
+          </div>
+        </div>
+        <div v-if="workspaceDataSources.length === 0 && !showCreateForm" class="empty-hint">暂无 SQL 数据源</div>
         <div v-for="ds in workspaceDataSources" :key="ds.id" class="source-card">
           <div class="source-name">{{ ds.name }}</div>
           <div class="source-meta">
             <span class="badge postgres">{{ ds.source_type }}</span>
             <span :class="['status', ds.status]">{{ ds.status }}</span>
+            <button class="btn-xs" @click="openImportFor(ds)">导入</button>
           </div>
         </div>
+      </div>
+
+      <div v-if="importingSource" class="drawer-section">
+        <h4>导入 {{ importingSource.name }}</h4>
+        <div v-if="importError" class="error-msg">{{ importError }}</div>
+        <div v-if="importCatalog.length > 0">
+          <div v-for="obj in importCatalog" :key="obj.schema + '.' + obj.name" class="source-card">
+            <span class="table-name">{{ obj.schema }}.{{ obj.name }}</span>
+            <span class="badge">{{ obj.kind }}</span>
+             <button class="btn-xs" @click="handleImport(importingSource.id, obj.schema, obj.name)" :disabled="isImporting">导入</button>
+          </div>
+        </div>
+        <div v-else class="empty-hint">此数据源无可导入对象</div>
+        <button class="btn-sm" @click="importingSource = null; importCatalog = []">关闭</button>
       </div>
 
       <div class="drawer-section">
         <h4>待确认语义项</h4>
         <div v-if="pendingProfiles.length === 0" class="empty-hint">无待确认项</div>
-        <div v-for="p in pendingProfiles" :key="p.profile_id" class="source-card">
-          <div class="source-name">{{ p.analysis_table_name }}</div>
-          <span class="status needs_confirmation">{{ p.profile_status }}</span>
+        <div v-for="p in pendingProfiles" :key="p.source_id" class="source-card">
+          <div class="source-name">{{ p.analysis_table_name || p.display_name }}</div>
+          <span :class="['status', p.semantic_status || 'profiled']">{{ p.semantic_status || 'profiled' }}</span>
+          <div v-if="selectedProfileId === p.profile_id" class="profile-detail">
+            <div v-if="profileDetail">
+              <div v-if="profileDetail.profile_json?.time_candidates?.length" class="candidate-section">
+                <strong>时间列候选</strong>
+                <div v-for="tc in profileDetail.profile_json.time_candidates" :key="tc.column_name" class="candidate-item">
+                  {{ tc.column_name }} <span class="grain" v-if="tc.grain">({{ tc.grain }})</span>
+                  <span v-if="tc.estimated" class="badge estimated">estimated</span>
+                </div>
+              </div>
+              <div v-if="profileDetail.profile_json?.metric_candidates?.length" class="candidate-section">
+                <strong>指标候选</strong>
+                <div v-for="mc in profileDetail.profile_json.metric_candidates" :key="mc.column_name" class="candidate-item">
+                  {{ mc.column_name }} <span class="semantic-key" v-if="mc.semantic_key">[{{ mc.semantic_key }}]</span>
+                  <span v-if="mc.estimated" class="badge estimated">estimated</span>
+                </div>
+              </div>
+              <div v-if="profileDetail.profile_json?.join_candidates?.length" class="candidate-section">
+                <strong>Join 候选</strong>
+                <div v-for="jc in profileDetail.profile_json.join_candidates" :key="jc.left_column + '-' + jc.right_column" class="candidate-item">
+                  {{ jc.left_table }}.{{ jc.left_column }} ↔ {{ jc.right_table }}.{{ jc.right_column }}
+                  <span class="reason" v-if="jc.reason">({{ jc.reason }})</span>
+                </div>
+              </div>
+              <div v-if="profileDetail.profile_json?.unit_candidates?.length" class="candidate-section">
+                <strong>单位候选</strong>
+                <div v-for="uc in profileDetail.profile_json.unit_candidates" :key="uc.column_name" class="candidate-item">
+                  {{ uc.column_name }} → {{ uc.detected_unit }}
+                </div>
+              </div>
+              <div v-if="profileDetail.profile_json?.warnings?.length" class="candidate-section">
+                <strong>Warnings</strong>
+                <div v-for="w in profileDetail.profile_json.warnings" :key="w" class="warning-item">{{ w }}</div>
+              </div>
+              <div v-if="profileDetail.profile_json?.ambiguities?.length" class="ambiguity-list">
+                <strong>歧义项</strong>
+                <div v-for="amb in profileDetail.profile_json.ambiguities" :key="amb.kind" class="ambiguity-item">
+                  <strong>{{ amb.kind }}</strong>: {{ amb.description }}
+                  <div class="candidates">候选: {{ amb.candidates?.join(', ') }}</div>
+                </div>
+              </div>
+              <div class="confirm-actions">
+                <button class="btn-sm primary" @click="handleConfirm(p.profile_id, 'session')">确认 (Session)</button>
+                <button class="btn-sm" @click="handleConfirm(p.profile_id, 'workspace')">确认 (Workspace)</button>
+              </div>
+            </div>
+            <div v-else class="empty-hint">加载中...</div>
+          </div>
+          <button v-else-if="p.profile_id" class="btn-xs" @click="loadProfileDetail(p.profile_id)">查看详情</button>
         </div>
       </div>
     </div>
@@ -49,16 +151,117 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useDataSourceStore } from '../../stores/datasource'
 
 const props = defineProps({
   open: Boolean,
   sessionSources: { type: Array, default: () => [] },
   workspaceDataSources: { type: Array, default: () => [] },
-  pendingProfiles: { type: Array, default: () => [] }
+  pendingProfiles: { type: Array, default: () => [] },
+  sessionId: { type: String, default: '' }
 })
 
 defineEmits(['close'])
+
+const store = useDataSourceStore()
+const showCreateForm = ref(false)
+const creating = ref(false)
+const importingSource = ref(null)
+const importCatalog = ref([])
+const selectedProfileId = ref(null)
+const importPollingTimer = ref(null)
+const isImporting = ref(false)
+const importError = ref('')
+const profileDetail = computed(() => store.semanticProfileDetails[selectedProfileId.value])
+
+const newSource = ref({
+  name: '', host: '', port: 5432, database_name: '', default_schema: 'public',
+  ssl_mode: 'require', username: '', password: '', allowlist: [{ schema: 'public', name: '', kind: 'table' }]
+})
+
+async function handleCreateSource() {
+  creating.value = true
+  try {
+    await store.createPostgresSource(newSource.value.name, { ...newSource.value })
+    showCreateForm.value = false
+    newSource.value = { name: '', host: '', port: 5432, database_name: '', default_schema: 'public', ssl_mode: 'require', username: '', password: '', allowlist: [{ schema: 'public', name: '', kind: 'table' }] }
+  } finally {
+    creating.value = false
+  }
+}
+
+async function openImportFor(ds) {
+  const res = await fetch(`/api/data-sources/${ds.id}/catalog`, { headers: getAuthHeaders() })
+  if (res.ok) {
+    const data = await res.json()
+    importCatalog.value = data.objects || []
+    importingSource.value = ds
+  }
+}
+
+async function handleImport(sourceId, schema, object) {
+  if (isImporting.value) return
+  isImporting.value = true
+  importError.value = ''
+  try {
+    const result = await store.importFromSource(sourceId, props.sessionId, schema, object)
+    if (result && result.ok === false) {
+      importError.value = result.error || '导入失败'
+      isImporting.value = false
+      return
+    }
+    importingSource.value = null
+    importCatalog.value = []
+    startImportPolling()
+  } catch (e) {
+    importError.value = e.message || '导入异常'
+  } finally {
+    isImporting.value = false
+  }
+}
+
+function startImportPolling() {
+  stopImportPolling()
+  importPollingTimer.value = setInterval(async () => {
+    await store.fetchSessionSources(props.sessionId)
+    const inProgress = store.sessionSources.some(s => s.snapshot_status === 'creating' || s.snapshot_status === 'importing')
+    if (!inProgress) {
+      stopImportPolling()
+    }
+  }, 3000)
+}
+
+function stopImportPolling() {
+  if (importPollingTimer.value) {
+    clearInterval(importPollingTimer.value)
+    importPollingTimer.value = null
+  }
+}
+
+async function loadProfileDetail(profileId) {
+  selectedProfileId.value = profileId
+  await store.fetchProfileDetail(profileId)
+}
+
+async function handleConfirm(profileId, scope) {
+  const detail = store.semanticProfileDetails[profileId]
+  if (!detail) return
+  const overrides = {}
+  if (detail.profile_json?.time_candidates?.length) {
+    overrides.time_candidates = detail.profile_json.time_candidates
+  }
+  const ok = await store.confirmProfile(profileId, scope, overrides)
+  if (ok) {
+    selectedProfileId.value = null
+    await store.fetchSessionSources(props.sessionId)
+  }
+}
+
+function getAuthHeaders() {
+  const token = localStorage.getItem('oda_token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 </script>
 
 <style scoped>
@@ -76,6 +279,8 @@ defineEmits(['close'])
 .drawer-header h3 { margin: 0; font-size: 16px; }
 .close-btn { background: none; border: none; font-size: 20px; cursor: pointer; }
 .drawer-section { margin-bottom: 20px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; }
+.section-header h4 { font-size: 13px; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
 .drawer-section h4 { font-size: 13px; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
 .empty-hint { color: #999; font-size: 13px; }
 .source-card { padding: 10px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 8px; }
@@ -93,4 +298,28 @@ defineEmits(['close'])
 .status.confirmed { color: #1565c0; }
 .status.failed, .status.invalid { color: #c62828; }
 .profile-mode { color: #999; font-size: 11px; margin-left: 6px; }
+.error-msg { color: #c62828; font-size: 11px; }
+.btn-sm { padding: 3px 10px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; }
+.btn-sm.primary { background: #1976d2; color: #fff; border-color: #1976d2; }
+.btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-xs { padding: 1px 6px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px; background: #f5f5f5; cursor: pointer; }
+.create-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding: 8px; background: #f9f9f9; border-radius: 4px; }
+.input-sm { padding: 4px 8px; font-size: 12px; border: 1px solid #ddd; border-radius: 3px; }
+.form-actions { display: flex; gap: 6px; margin-top: 4px; }
+.profile-detail { margin-top: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; }
+.ambiguity-list { margin-bottom: 8px; }
+.ambiguity-item { font-size: 12px; margin-bottom: 4px; }
+.candidates { color: #666; font-size: 11px; }
+.confirm-actions { display: flex; gap: 6px; margin-top: 6px; }
+.candidate-section { margin-bottom: 8px; }
+.candidate-section strong { font-size: 12px; color: #333; display: block; margin-bottom: 4px; }
+.candidate-item { font-size: 12px; padding: 2px 0; color: #555; }
+.grain, .semantic-key, .reason { color: #999; font-size: 11px; margin-left: 4px; }
+.badge.estimated { background: #fff3e0; color: #e65100; }
+.warning-item { font-size: 11px; color: #e65100; padding: 2px 0; }
+.allowlist-section { margin-top: 6px; }
+.allowlist-label { font-size: 11px; color: #666; display: block; margin-bottom: 4px; }
+.allowlist-row { display: flex; gap: 4px; margin-bottom: 4px; align-items: center; }
+.input-xs { padding: 2px 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 2px; width: 70px; }
+.source-card .import-progress { font-size: 11px; color: #1976d2; margin-top: 4px; }
 </style>

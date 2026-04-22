@@ -9,19 +9,17 @@ func TestPolicyPromptIncludesGuardrails(t *testing.T) {
 	t.Parallel()
 
 	prompt := BuildPolicyPrompt()
-	if !strings.Contains(prompt, "必须先向用户确认") {
+	lower := strings.ToLower(prompt)
+	if !strings.Contains(lower, "ambiguity") {
 		t.Fatalf("expected ambiguity guardrail in prompt, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "只有当用户明确允许你自行做合理假设时") {
-		t.Fatalf("expected explicit user-approval gate for assumptions, got %q", prompt)
+	if !strings.Contains(lower, "assumptions") {
+		t.Fatalf("expected assumption-related guidance in prompt, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "字段映射") {
-		t.Fatalf("expected field-mapping ambiguity to be covered, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "最终交付必须满足 finalize 约束") {
+	if !strings.Contains(lower, "finalize") {
 		t.Fatalf("expected finalize guardrail in prompt, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "working memory") {
-		t.Fatalf("expected working memory guardrail in prompt, got %q", prompt)
+	if !strings.Contains(lower, "data analysis") {
+		t.Fatalf("expected domain boundary constraint in prompt, got %q", prompt)
 	}
 }

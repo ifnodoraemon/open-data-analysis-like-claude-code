@@ -5,125 +5,32 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/data"
 )
 
-type FileReference struct {
-	FileID      string `json:"fileId"`
-	DisplayName string `json:"displayName"`
-	StoredPath  string `json:"storedPath"`
-}
-
-type SessionFileFact struct {
-	FileID          string      `json:"file_id"`
-	DisplayName     string      `json:"display_name"`
-	TableName       string      `json:"table_name,omitempty"`
-	SchemaSummary   interface{} `json:"schema_summary,omitempty"`
-	SchemaAvailable bool        `json:"schema_available"`
-}
-
-type FileFactsProvider func() ([]SessionFileFact, error)
-
 func init() {
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
-		return &ListTablesTool{Ingester: ctx.Ingester}
+		return &ListTablesTool{Ingester: ctx.Ingester, QueryLocker: ctx.QueryLocker}
 	})
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &DescribeDataTool{
 			Ingester:                  ctx.Ingester,
 			ConfirmedOverridesProvider: ctx.ConfirmedOverridesProvider,
+			KnownRowCount:             ctx.KnownRowCount,
+			QueryLocker:               ctx.QueryLocker,
 		}
 	})
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
-		return &QueryDataTool{Ingester: ctx.Ingester}
+		return &QueryDataTool{Ingester: ctx.Ingester, QueryLocker: ctx.QueryLocker}
 	})
-}
-
-type FileMaterializer func(fileID string) (*FileReference, error)
-
-type InspectSessionFilesTool struct {
-	Provider FileFactsProvider
-}
-
-// LoadDataTool 加载数据文件到 SQLite
-type LoadDataTool struct {
-	Ingester         *data.Ingester
-	FileMaterializer FileMaterializer
-}
-
-func (t *LoadDataTool) Name() string { return "data_load_file" }
-func (t *LoadDataTool) Description() string {
-	return "Import a user-uploaded CSV or Excel file into the internal SQLite database. Returns table_name, row_count, column_count. Side effect: creates a new table in the internal database; overwrites if a table with the same name already exists. Reads uploaded file list state; writes to database state. Failure conditions: file ID does not exist, unsupported file format, file content cannot be parsed. Limitations: only CSV and Excel formats are supported."
-}
-
-func (t *InspectSessionFilesTool) Name() string { return "state_session_files_inspect" }
-func (t *InspectSessionFilesTool) Description() string {
-	return "Read the fact state of uploaded files in the current session. Returns file ID, display name, inferred table name, and available schema summary. Does not modify any state."
-}
-func (t *InspectSessionFilesTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{},"required":[]}`)
-}
-
-func (t *InspectSessionFilesTool) Execute(args json.RawMessage) (string, error) {
-	if t.Provider == nil {
-		return "", fmt.Errorf("file facts provider is not initialized")
-	}
-	files, err := t.Provider()
-	if err != nil {
-		return "", err
-	}
-	payload := map[string]interface{}{
-		"file_count": len(files),
-		"files":      files,
-		"ui_summary": fmt.Sprintf("session has %d uploaded files.", len(files)),
-	}
-	return toolSuccess("state_session_files_inspect", payload), nil
-}
-func (t *LoadDataTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"file_id": {"type": "string", "description": "Unique identifier of the uploaded file"}
-		},
-		"required": ["file_id"]
-	}`)
-}
-
-func (t *LoadDataTool) Execute(args json.RawMessage) (string, error) {
-	var params struct {
-		FileID string `json:"file_id"`
-	}
-	if err := json.Unmarshal(args, &params); err != nil {
-		return "", fmt.Errorf("failed to parse parameters: %w", err)
-	}
-	if t.FileMaterializer == nil {
-		return "", fmt.Errorf("file materializer not configured")
-	}
-
-	fileRef, err := t.FileMaterializer(params.FileID)
-	if err != nil {
-		return "", err
-	}
-
-	tableName, rowCount, colCount, err := t.Ingester.ImportFile(fileRef.StoredPath)
-	if err != nil {
-		return "", err
-	}
-
-	return toolSuccess("data_load_file", map[string]interface{}{
-		"file_id":      fileRef.FileID,
-		"display_name": fileRef.DisplayName,
-		"table_name":   tableName,
-		"row_count":    rowCount,
-		"column_count": colCount,
-		"ui_summary":   fmt.Sprintf("data imported to table %s (%d rows, %d columns)", tableName, rowCount, colCount),
-	}), nil
 }
 
 // ListTablesTool 列出所有已导入的表
 type ListTablesTool struct {
-	Ingester *data.Ingester
+	Ingester    *data.Ingester
+	QueryLocker QueryLocker
 }
 
 func (t *ListTablesTool) Name() string { return "data_list_tables" }
@@ -140,7 +47,13 @@ func (t *ListTablesTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("database not initialized")
 	}
 
+	if t.QueryLocker != nil {
+		t.QueryLocker.RLockQuery()
+	}
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	if t.QueryLocker != nil {
+		t.QueryLocker.RUnlockQuery()
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to query table list: %w", err)
 	}
@@ -174,20 +87,24 @@ func (t *ListTablesTool) Execute(args json.RawMessage) (string, error) {
 type ConfirmedOverridesProvider func(tableName string) map[string]interface{}
 
 // DescribeDataTool 获取数据 Schema 和统计摘要
+type KnownRowCountProvider func(tableName string) (int, bool)
+
 type DescribeDataTool struct {
-	Ingester                 *data.Ingester
+	Ingester                  *data.Ingester
 	ConfirmedOverridesProvider ConfirmedOverridesProvider
+	KnownRowCount             KnownRowCountProvider
+	QueryLocker               QueryLocker
 }
 
 func (t *DescribeDataTool) Name() string { return "data_describe_table" }
 func (t *DescribeDataTool) Description() string {
-	return "Return the schema and statistical summary for a specified table, including column info, row count, basic statistics, sample values, and confirmed overrides. Does not include unconfirmed semantic candidates."
+	return "Return the schema and statistical summary for a specified table, including column info, row count, basic statistics, sample values, and confirmed overrides. Unconfirmed semantic candidates are returned with confirmed=false labels; only confirmed overrides are applied to the displayed values."
 }
 func (t *DescribeDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"		table_name": {"type": "string", "description": "Table name"}
+			"table_name": {"type": "string", "description": "Table name"}
 		},
 		"required": ["table_name"]
 	}`)
@@ -212,8 +129,31 @@ func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
 		}), nil
 	}
 
+	if t.QueryLocker != nil {
+		t.QueryLocker.RLockQuery()
+	}
+	defer func() {
+		if t.QueryLocker != nil {
+			t.QueryLocker.RUnlockQuery()
+		}
+	}()
+
 	var rowCount int
-	db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", params.TableName)).Scan(&rowCount)
+	useKnownRowCount := false
+	if t.KnownRowCount != nil {
+		if known, ok := t.KnownRowCount(params.TableName); ok {
+			rowCount = known
+			useKnownRowCount = true
+		}
+	}
+	if !useKnownRowCount {
+		if err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", params.TableName)).Scan(&rowCount); err != nil {
+			return toolFailure("data_describe_table", "row_count_failed", "failed to count rows", map[string]interface{}{
+				"table_name": params.TableName,
+				"detail":     err.Error(),
+			}), nil
+		}
+	}
 
 	var schema *data.SchemaInfo
 	var err error
@@ -228,33 +168,54 @@ func (t *DescribeDataTool) Execute(args json.RawMessage) (string, error) {
 			"detail":     err.Error(),
 		}), nil
 	}
-	ambiguousMetricGroups := inferAmbiguousMetricGroups(schema.Columns)
+	ambiguousMetricGroups := data.InferAmbiguousMetricGroups(schema.Columns)
 	uiSummary := fmt.Sprintf("table %s schema analysis complete, %d columns, %d rows", schema.TableName, len(schema.Columns), schema.RowCount)
 	if len(ambiguousMetricGroups) > 0 {
 		uiSummary += fmt.Sprintf("; %d ambiguous metric candidate groups found", len(ambiguousMetricGroups))
 	}
 	primaryTimeColumn := choosePrimaryTimeColumn(schema.TimeColumns)
 	if primaryTimeColumn != nil && primaryTimeColumn.CoverageStart != "" && primaryTimeColumn.CoverageEnd != "" {
-		uiSummary += fmt.Sprintf("; time field %s is %s grain, covering %s to %s", primaryTimeColumn.Name, primaryTimeColumn.Grain, primaryTimeColumn.CoverageStart, primaryTimeColumn.CoverageEnd)
+		uiSummary += fmt.Sprintf("; candidate primary time field %s is %s grain, covering %s to %s", primaryTimeColumn.Name, primaryTimeColumn.Grain, primaryTimeColumn.CoverageStart, primaryTimeColumn.CoverageEnd)
 	}
 
+	timeColumnCandidates := make([]map[string]interface{}, 0, len(schema.TimeColumns))
+	for _, tc := range schema.TimeColumns {
+		candidate := map[string]interface{}{
+			"column_name":   tc.Name,
+			"grain":         tc.Grain,
+			"confirmed":     false,
+		}
+		if tc.CoverageStart != "" {
+			candidate["coverage_start"] = tc.CoverageStart
+		}
+		if tc.CoverageEnd != "" {
+			candidate["coverage_end"] = tc.CoverageEnd
+		}
+		if primaryTimeColumn != nil && tc.Name == primaryTimeColumn.Name {
+			candidate["heuristic_primary"] = true
+		}
+		timeColumnCandidates = append(timeColumnCandidates, candidate)
+	}
+
+	schemaForResult := *schema
+	schemaForResult.TimeColumns = nil
+
 	result := map[string]interface{}{
-		"table_name":                   schema.TableName,
-		"row_count":                    schema.RowCount,
-		"column_count":                 len(schema.Columns),
-		"schema":                       schema,
+		"table_name":                   schemaForResult.TableName,
+		"row_count":                    schemaForResult.RowCount,
+		"column_count":                 len(schemaForResult.Columns),
+		"schema":                       schemaForResult,
 		"time_column_count":            len(schema.TimeColumns),
-		"time_columns":                 schema.TimeColumns,
-		"primary_time_column":          primaryTimeColumn,
+		"time_column_candidates":       timeColumnCandidates,
 		"ambiguous_metric_group_count": len(ambiguousMetricGroups),
 		"ambiguous_metric_groups":      ambiguousMetricGroups,
-		"note":                         "time_columns and ambiguous_metric_groups are inferred candidates, not confirmed facts; check confirmed_overrides for user-validated selections",
+		"note":                         "time_column_candidates and ambiguous_metric_groups are inferred candidates, not confirmed facts; check confirmed_sections for user-validated selections",
 		"ui_summary":                   uiSummary,
 	}
 
 	if t.ConfirmedOverridesProvider != nil {
 		if overrides := t.ConfirmedOverridesProvider(params.TableName); len(overrides) > 0 {
-			result["confirmed_overrides"] = overrides
+			result["confirmed_sections"] = overrides
 		}
 	}
 
@@ -278,84 +239,21 @@ func choosePrimaryTimeColumn(columns []data.TimeColumnInfo) *data.TimeColumnInfo
 	return &best
 }
 
-var metricQualifierTokens = map[string]struct{}{
-	"actual":      {},
-	"adjusted":    {},
-	"booked":      {},
-	"confirmed":   {},
-	"estimated":   {},
-	"est":         {},
-	"final":       {},
-	"forecast":    {},
-	"gross":       {},
-	"net":         {},
-	"planned":     {},
-	"plan":        {},
-	"projected":   {},
-	"raw":         {},
-	"recognized":  {},
-	"target":      {},
-	"tentative":   {},
-	"unconfirmed": {},
-}
-
-func inferAmbiguousMetricGroups(columns []data.ColumnInfo) map[string][]string {
-	grouped := make(map[string][]string)
-	for _, column := range columns {
-		if !strings.EqualFold(strings.TrimSpace(column.Type), "NUMERIC") {
-			continue
-		}
-		tokens := tokenizeColumnName(column.Name)
-		if len(tokens) < 2 {
-			continue
-		}
-		core := make([]string, 0, len(tokens))
-		qualifierCount := 0
-		for _, token := range tokens {
-			if _, ok := metricQualifierTokens[token]; ok {
-				qualifierCount++
-				continue
-			}
-			core = append(core, token)
-		}
-		if qualifierCount == 0 || len(core) == 0 {
-			continue
-		}
-		key := strings.Join(core, "_")
-		grouped[key] = append(grouped[key], column.Name)
-	}
-
-	result := make(map[string][]string)
-	for key, names := range grouped {
-		if len(names) < 2 {
-			continue
-		}
-		sort.Strings(names)
-		result[key] = names
-	}
-	return result
-}
-
-func tokenizeColumnName(name string) []string {
-	return strings.FieldsFunc(strings.ToLower(strings.TrimSpace(name)), func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	})
-}
-
-// QueryDataTool 执行 SQL 查询
 type QueryDataTool struct {
-	Ingester *data.Ingester
+	Ingester    *data.Ingester
+	QueryLocker QueryLocker
 }
 
 func (t *QueryDataTool) Name() string { return "data_query_sql" }
 func (t *QueryDataTool) Description() string {
-	return "Execute a single read-only SQL query on the internal database. Only SELECT or WITH statements are allowed; INSERT/UPDATE/DELETE/DDL are forbidden. Side effects: none (read-only). Returns sql, row_count, columns, and rows. Maximum 200 rows returned; queries exceeding this must add LIMIT. Failure conditions: SQL syntax error, reference to nonexistent table or column, execution timeout. Limitations: only SQLite dialect supported. Large tables (>100K rows) get a 30s timeout; others get 5s."
+	return "Execute a single read-only SQL query on the internal database. Only SELECT or WITH statements are allowed; INSERT/UPDATE/DELETE/DDL are forbidden. Side effects: none (read-only). Returns sql, row_count, columns, and rows. Maximum 200 rows returned; queries exceeding this row limit will fail. Failure conditions: SQL syntax error, reference to nonexistent table or column, execution timeout, row limit exceeded. Limitations: only SQLite dialect supported. Large tables (>100K rows) get a 30s timeout; others get 5s."
 }
 func (t *QueryDataTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"sql": {"type": "string", "description": "The SQL SELECT query to execute"}
+			"sql": {"type": "string", "description": "The SQL SELECT query to execute"},
+			"timeout_mode": {"type": "string", "description": "Timeout mode: 'auto' (default, detects from table size), 'quick' (5s), 'large_aggregate' (30s for complex aggregates on any table size)", "enum": ["auto", "quick", "large_aggregate"], "default": "auto"}
 		},
 		"required": ["sql"]
 	}`)
@@ -363,7 +261,8 @@ func (t *QueryDataTool) Parameters() json.RawMessage {
 
 func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
 	var params struct {
-		SQL string `json:"sql"`
+		SQL         string `json:"sql"`
+		TimeoutMode string `json:"timeout_mode"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("failed to parse parameters: %w", err)
@@ -374,8 +273,23 @@ func (t *QueryDataTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("database not initialized")
 	}
 
-	timeout := data.QueryTimeoutForDB(db, params.SQL)
+	var timeout time.Duration
+	switch params.TimeoutMode {
+	case "quick":
+		timeout = data.QueryTimeoutQuick
+	case "large_aggregate":
+		timeout = data.QueryTimeoutLarge
+	default:
+		timeout = data.QueryTimeoutForDB(db, params.SQL)
+	}
+
+	if t.QueryLocker != nil {
+		t.QueryLocker.RLockQuery()
+	}
 	rows, err := data.ExecuteQueryWithTimeout(db, params.SQL, timeout)
+	if t.QueryLocker != nil {
+		t.QueryLocker.RUnlockQuery()
+	}
 	if err != nil {
 		return toolFailure("data_query_sql", "query_failed", "SQL execution failed", map[string]interface{}{
 			"sql":    params.SQL,

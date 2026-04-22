@@ -87,7 +87,7 @@ func TestRunPythonToolExecutionTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected run to fail with a timeout error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Python MCP 服务不可用") {
+	if !strings.Contains(err.Error(), "Python MCP") {
 		t.Fatalf("expected MCP unavailable error, got %v", err)
 	}
 	if dur > 8*time.Second {

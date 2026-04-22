@@ -156,8 +156,8 @@ func TestInspectGoalsToolReturnsFactsOnly(t *testing.T) {
 	t.Parallel()
 
 	sm := NewSubgoalManager()
-	sm.AddGoal("Analyze sales", "")
-	sm.AddGoal("Analyze marketing", "")
+	_, _ = sm.AddGoal("Analyze sales", "")
+	_, _ = sm.AddGoal("Analyze marketing", "")
 
 	tool := &InspectGoalsTool{Subgoals: sm}
 	result, err := tool.Execute(nil)

@@ -30,6 +30,11 @@ type SubgoalChecker interface {
 	CanFinalize() (bool, []string)
 }
 
+type QueryLocker interface {
+	RLockQuery()
+	RUnlockQuery()
+}
+
 // ToolContext 提供给工具初始化时的上下文依赖
 type ToolContext struct {
 	Ingester                *data.Ingester
@@ -45,6 +50,8 @@ type ToolContext struct {
 	ProfileDetailProvider     ProfileDetailProvider
 	ConfirmedOverridesProvider ConfirmedOverridesProvider
 	AmbiguityChecker          AmbiguityChecker
+	KnownRowCount             KnownRowCountProvider
+	QueryLocker               QueryLocker
 }
 
 // ToolBuilder 是负责动态创建有状态工具的函数

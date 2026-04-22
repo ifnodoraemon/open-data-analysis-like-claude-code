@@ -37,6 +37,10 @@ func (ing *Ingester) GetDB() *sql.DB {
 	return ing.db
 }
 
+func (ing *Ingester) DBPath() string {
+	return ing.dbPath
+}
+
 // InitDB 初始化 SQLite 缓存数据库
 func (ing *Ingester) InitDB(sessionID string) error {
 	if err := os.MkdirAll(ing.CacheDir, 0o755); err != nil {
@@ -687,13 +691,17 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 		log.Printf("[Warning] Failed to save schema metadata for %s: %v", tableName, err)
 	}
 
-	// 4. 构建索引 — 仅覆盖候选时间列、id 列、低基数且可能作为 filter 的列
+	// 4. 构建索引 — 覆盖候选时间列、id 列、候选 join key 列
 	for _, col := range schema.Columns {
 		isTimeCol := col.TimeProfile != nil
 		isID := strings.HasSuffix(strings.ToLower(col.Name), "_id") || strings.ToLower(col.Name) == "id"
-		isLowCardinalityFilter := schema.RowCount > 0 && col.UniqueCount > 1 && col.UniqueCount < 100 && col.NonNullRate > 0.5
+		isJoinKey := isID
+		nameLower := strings.ToLower(col.Name)
+		if strings.HasSuffix(nameLower, "_key") || strings.HasSuffix(nameLower, "_fk") || strings.Contains(nameLower, "join") {
+			isJoinKey = true
+		}
 
-		if isTimeCol || isID || isLowCardinalityFilter {
+		if isTimeCol || isID || isJoinKey {
 			idxName := fmt.Sprintf("idx_%s_%s", sanitizeTableName(tableName), sanitizeColumnName(col.Name))
 			createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (\"%s\")", idxName, tableName, col.Name)
 			_, err := ing.db.Exec(createIdxSQL)
@@ -802,23 +810,42 @@ func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string
 	return nil
 }
 
-// GetActiveTables 获取当前 metadata 中记录的所有表名
+// GetActiveTables 获取当前所有已导入的分析表名。
+// 合并 _oda_table_metadata（旧路径）和 sqlite_master（source-first 路径）的结果。
 func (ing *Ingester) GetActiveTables() []string {
 	if ing.db == nil {
 		return nil
 	}
-	ing.ensureMetadataTable()
+	seen := make(map[string]struct{})
 	var tables []string
-	rows, err := ing.db.Query(`SELECT table_name FROM _oda_table_metadata`)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if rows.Scan(&name) == nil {
-			tables = append(tables, name)
+
+	rows, err := ing.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_oda_%'`)
+	if err == nil {
+		for rows.Next() {
+			var name string
+			if rows.Scan(&name) == nil {
+				if _, ok := seen[name]; !ok {
+					seen[name] = struct{}{}
+					tables = append(tables, name)
+				}
+			}
 		}
+		rows.Close()
+	}
+
+	ing.ensureMetadataTable()
+	metaRows, err := ing.db.Query(`SELECT table_name FROM _oda_table_metadata`)
+	if err == nil {
+		for metaRows.Next() {
+			var name string
+			if metaRows.Scan(&name) == nil {
+				if _, ok := seen[name]; !ok {
+					seen[name] = struct{}{}
+					tables = append(tables, name)
+				}
+			}
+		}
+		metaRows.Close()
 	}
 	return tables
 }

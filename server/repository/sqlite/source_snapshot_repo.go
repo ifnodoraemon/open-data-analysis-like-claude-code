@@ -89,3 +89,15 @@ func (r *SourceSnapshotRepository) UpdateRuntimeFacts(ctx context.Context, id st
 		rowsImported, importDurationMs, profileDurationMs, snapshotSizeBytes, string(profileMode), id)
 	return err
 }
+
+func (r *SourceSnapshotRepository) UpdateSnapshotCompletion(ctx context.Context, id string, rowCount, colCount int, schemaSignature string, rowsImported, importDurationMs, profileDurationMs int, snapshotSizeBytes int64, profileMode domain.ProfileMode) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE source_snapshots SET row_count = ?, column_count = ?, schema_signature = ?, rows_imported = ?, import_duration_ms = ?, profile_duration_ms = ?, snapshot_size_bytes = ?, profile_mode = ? WHERE id = ?`,
+		rowCount, colCount, schemaSignature, rowsImported, importDurationMs, profileDurationMs, snapshotSizeBytes, string(profileMode), id)
+	return err
+}
+
+func (r *SourceSnapshotRepository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM source_snapshots WHERE id = ?`, id)
+	return err
+}

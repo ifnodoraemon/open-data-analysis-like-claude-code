@@ -94,7 +94,6 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.ReportState.RLock()
-	defer t.ReportState.RUnlock()
 
 	type reportBlockSnapshot struct {
 		ID                         string   `json:"id"`
@@ -190,14 +189,18 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 			textBlocksWithoutCharts++
 		}
 	}
-	delivery := tools.DescribeReportDeliveryState(t.ReportState)
-	finalizeIssues := tools.ReportFinalizeIssuesForAgent(t.ReportState)
-	renderableBlockCount := tools.RenderableReportBlockCount(t.ReportState)
+
+	delivery := tools.DescribeReportDeliveryStateLocked(t.ReportState)
+	finalizeIssues := tools.ReportFinalizeIssuesForAgentLocked(t.ReportState)
+	renderableBlockCount := tools.RenderableReportBlockCountLocked(t.ReportState)
+	blockCount := len(t.ReportState.Blocks)
+
+	t.ReportState.RUnlock()
 
 	payload := map[string]interface{}{
 		"ok":                            true,
 		"tool":                          "state_report_inspect",
-		"block_count":                   len(t.ReportState.Blocks),
+		"block_count":                   blockCount,
 		"renderable_block_count":        renderableBlockCount,
 		"chart_count":                   len(chartIDs),
 		"blocks":                        blocks,
@@ -242,6 +245,7 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 	}
 	payload := t.EditState.Snapshot()
 	if t.ReportState != nil && t.EditState.Active() {
+		t.ReportState.RLock()
 		if block, ok := findEditTargetBlock(t.ReportState, t.EditState.TargetBlockID); ok {
 			payload["target_block"] = map[string]interface{}{
 				"id":       block.ID,
@@ -251,6 +255,7 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 				"content":  block.Content,
 			}
 		}
+		t.ReportState.RUnlock()
 	}
 	payload["ok"] = true
 	payload["tool"] = "state_report_edit_inspect"

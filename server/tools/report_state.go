@@ -102,14 +102,18 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 }
 
 func DescribeReportDeliveryState(state *ReportState) ReportDeliveryState {
-	delivery := ReportDeliveryState{
-		DeliveryState: "empty",
-	}
 	if state == nil {
-		return delivery
+		return ReportDeliveryState{DeliveryState: "empty"}
 	}
 	state.RLock()
 	defer state.RUnlock()
+	return describeReportDeliveryStateLocked(state)
+}
+
+func DescribeReportDeliveryStateLocked(state *ReportState) ReportDeliveryState {
+	if state == nil {
+		return ReportDeliveryState{DeliveryState: "empty"}
+	}
 	return describeReportDeliveryStateLocked(state)
 }
 

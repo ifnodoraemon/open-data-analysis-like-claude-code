@@ -322,7 +322,11 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 	}
 
 	if bundle.Policy != "" {
-		req.Instructions = bundle.Policy
+		instructions := bundle.Policy
+		if bundle.PolicyAppendix != "" {
+			instructions += "\n\n## Delegate Additional Constraints\n" + bundle.PolicyAppendix
+		}
+		req.Instructions = instructions
 	}
 
 	for _, block := range bundle.RuntimeContext {
@@ -523,6 +527,9 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
 
 	systemPrompt := bundle.Policy
+	if bundle.PolicyAppendix != "" {
+		systemPrompt += "\n\n## Delegate Additional Constraints\n" + bundle.PolicyAppendix
+	}
 
 	var anthropicMsgs []anthropic.Message
 	var currentUserContent []anthropic.MessageContent

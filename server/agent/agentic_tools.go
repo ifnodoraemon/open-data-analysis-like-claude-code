@@ -12,8 +12,12 @@ func init() {
 		if ctx.Memory == nil {
 			return nil
 		}
+		memory, ok := ctx.Memory.(*WorkingMemory)
+		if !ok {
+			return nil
+		}
 		return &SaveMemoryTool{
-			Memory: ctx.Memory.(*WorkingMemory),
+			Memory: memory,
 		}
 	})
 	tools.RegisterGlobalTool(func(ctx tools.ToolContext) tools.Tool {
@@ -84,7 +88,17 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	_, existed := t.Memory.Snapshot()[payload.Key]
-	t.Memory.SaveFact(payload.Key, payload.Fact)
+	saved := t.Memory.SaveFact(payload.Key, payload.Fact)
+	if !saved {
+		return marshalToolPayload(map[string]interface{}{
+			"ok":                      false,
+			"tool":                    "memory_save_fact",
+			"memory_key":              payload.Key,
+			"error":                   fmt.Sprintf("working memory full (%d facts max)", maxFacts),
+			"fact_count":              len(t.Memory.Snapshot()),
+			"ui_summary":              fmt.Sprintf("Working memory full, cannot save [%s].", payload.Key),
+		})
+	}
 	facts := t.Memory.Snapshot()
 	if t.EmitFunc != nil {
 		t.EmitFunc(WSEvent{
@@ -101,7 +115,6 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 		"overwrote_existing":      existed,
 		"affects_report_delivery": false,
 		"affects_goal_state":      false,
-		"message":                 "Working memory updated.",
 		"ui_summary":              fmt.Sprintf("Working memory written [%s].", payload.Key),
 	})
 }
@@ -216,17 +229,16 @@ func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	return marshalToolPayload(map[string]interface{}{
-		"ok":                  true,
-		"tool":                "user_request_input",
-		"question":            payload.Question,
-		"reason":              payload.Reason,
-		"scope":               payload.Scope,
-		"context_ref":         payload.ContextRef,
-		"required":            payload.Required,
-		"allow_multiple":      payload.AllowMultiple,
-		"options":             payload.Options,
-		"run_status":          "waiting_user_input",
-		"message":             "User input request sent, waiting for user reply.",
-		"ui_summary":          "User input request sent.",
+		"ok":             true,
+		"tool":           "user_request_input",
+		"question":       payload.Question,
+		"reason":         payload.Reason,
+		"scope":          payload.Scope,
+		"context_ref":    payload.ContextRef,
+		"required":       payload.Required,
+		"allow_multiple": payload.AllowMultiple,
+		"options":        payload.Options,
+		"run_status":     "waiting_user_input",
+		"ui_summary":     "User input request sent.",
 	})
 }

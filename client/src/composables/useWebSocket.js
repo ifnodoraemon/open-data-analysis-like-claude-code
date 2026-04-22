@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import { useAgentStore } from "../stores/agent";
+import { useDataSourceStore } from "../stores/datasource";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -42,6 +43,7 @@ function getReconnectDelay() {
 
 export function useWebSocket() {
   const store = useAgentStore();
+  const dataSourceStore = useDataSourceStore();
 
   function authHeaders() {
     return store.token ? { Authorization: `Bearer ${store.token}` } : {};
@@ -77,12 +79,15 @@ export function useWebSocket() {
     store.updateReport(runtimeState?.report_html || "");
   }
 
-  function applySessionState(sessionId, files, runs, runtimeState = null) {
-    store.resetAnalysis({ keepFiles: false });
+  function applySessionState(sessionId, runs, runtimeState = null) {
+    store.resetAnalysis();
     store.setSession(sessionId || "");
-    store.replaceFiles(files || []);
     store.setRuns(runs || []);
     applyRuntimeState(runtimeState);
+    if (sessionId) {
+      dataSourceStore.fetchSessionSources(sessionId);
+      dataSourceStore.fetchWorkspaceDataSources();
+    }
 
     const latestRun = (runs || [])[0];
     store.setSelectedRun(latestRun?.id || "");
@@ -107,7 +112,7 @@ export function useWebSocket() {
   function restoreBootstrapState(data) {
     const nextSessionId = data.session?.id || "";
     store.setSessions(data.sessions || []);
-    return applySessionState(nextSessionId, data.files || [], data.runs || [], data.runtimeState);
+    return applySessionState(nextSessionId, data.runs || [], data.runtimeState);
   }
 
   async function bootstrap() {
@@ -165,7 +170,7 @@ export function useWebSocket() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     if (data.session) store.upsertSession(data.session);
-    const latestRun = applySessionState(data.session?.id || "", data.files || [], data.runs || [], data.runtimeState);
+    const latestRun = applySessionState(data.session?.id || "", data.runs || [], data.runtimeState);
     if (refreshSessions) await loadSessions();
     return { ...data.session, latestRun };
   }
@@ -200,7 +205,7 @@ export function useWebSocket() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     disconnect();
-    const latestRun = applySessionState(data.session?.id || "", data.files || [], data.runs || [], data.runtimeState);
+    const latestRun = applySessionState(data.session?.id || "", data.runs || [], data.runtimeState);
     try {
       if (
         !data.runtimeState?.report_html &&
@@ -364,8 +369,10 @@ export function useWebSocket() {
     switch (event.type) {
       case "session_ready": {
         store.setSession(event.data.sessionId);
-        store.replaceFiles(event.data.files || []);
         applyRuntimeState(event.data);
+        if (event.data.sessionId) {
+          dataSourceStore.fetchSessionSources(event.data.sessionId);
+        }
         const existingSession = store.sessions.find((s) => s.id === event.data.sessionId);
         store.upsertSession({
           id: event.data.sessionId,
@@ -375,8 +382,10 @@ export function useWebSocket() {
         break;
       }
       case "session_reset":
-        store.resetAnalysis({ keepFiles: event.data.keepFiles });
-        store.replaceFiles(event.data.files || []);
+        store.resetAnalysis();
+        if (store.sessionId) {
+          dataSourceStore.fetchSessionSources(store.sessionId);
+        }
         break;
       case "run_started":
         store.startRun(event.data.runId);
@@ -492,7 +501,7 @@ export function useWebSocket() {
     store.setToken(data.token);
     store.setIdentity(data.user, data.workspace);
     store.setWorkspaces(data.workspaces || []);
-    store.resetAnalysis({ keepFiles: false });
+    store.resetAnalysis();
     store.setSessions([]);
     store.setBootstrapState("idle");
   }
@@ -508,7 +517,7 @@ export function useWebSocket() {
     disconnect();
     store.setToken(data.token);
     store.setWorkspace(data.workspace);
-    store.resetAnalysis({ keepFiles: false });
+    store.resetAnalysis();
     store.setSessions([]);
     store.setBootstrapState("idle");
     await initializeApp();
@@ -563,13 +572,13 @@ export function useWebSocket() {
     send("stop_run", { runId: store.activeRunId }, store.activeRunId);
   }
 
-  function resetSession(keepFiles = true) {
-    send("reset_session", { keepFiles });
+  function resetSession() {
+    send("reset_session", {});
   }
 
   async function createNewSession() {
     disconnect();
-    store.resetAnalysis({ keepFiles: false });
+    store.resetAnalysis();
     store.updateReport("");
     await createSession({ refreshSessions: true });
     await connect();

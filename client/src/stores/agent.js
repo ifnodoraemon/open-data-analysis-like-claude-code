@@ -7,7 +7,6 @@ export const useAgentStore = defineStore("agent", () => {
   const messages = ref([]);
   const reportHTML = ref("");
   const isRunning = ref(false);
-  const uploadedFiles = ref([]);
   const token = ref(localStorage.getItem("oda_token") || "");
   const sessionId = ref("");
   const activeRunId = ref("");
@@ -227,22 +226,7 @@ let _msgSeq = 0;
     }
   }
 
-  function addFile(file) {
-    const existing = uploadedFiles.value.findIndex(
-      (item) => item.fileId === file.fileId,
-    );
-    if (existing >= 0) {
-      uploadedFiles.value.splice(existing, 1, file);
-      return;
-    }
-    uploadedFiles.value.push(file);
-  }
-
-  function replaceFiles(files) {
-    uploadedFiles.value = files;
-  }
-
-  function resetAnalysis({ keepFiles = true } = {}) {
+  function resetAnalysis() {
     messages.value = [];
     reportHTML.value = "";
     isRunning.value = false;
@@ -252,9 +236,6 @@ let _msgSeq = 0;
     runs.value = [];
     subgoals.value = [];
     memoryFacts.value = {};
-    if (!keepFiles) {
-      uploadedFiles.value = [];
-    }
   }
 
   function logout() {
@@ -263,7 +244,7 @@ let _msgSeq = 0;
     workspace.value = null;
     workspaces.value = [];
     sessions.value = [];
-    resetAnalysis({ keepFiles: false });
+    resetAnalysis();
     connectionState.value = "disconnected";
     bootstrapState.value = "idle";
     bootstrapError.value = "";
@@ -274,7 +255,6 @@ let _msgSeq = 0;
     messages,
     reportHTML,
     isRunning,
-    uploadedFiles,
     token,
     sessionId,
     activeRunId,
@@ -312,8 +292,6 @@ let _msgSeq = 0;
     setBootstrapState,
     startRun,
     finishRun,
-    addFile,
-    replaceFiles,
     resetAnalysis,
     logout,
   };

@@ -29,6 +29,7 @@ type RuntimeContextBlock struct {
 // PromptBundle 内部抽象的分层 Prompt 语义模型
 type PromptBundle struct {
 	Policy         string
+	PolicyAppendix string
 	Task           string
 	RuntimeContext []RuntimeContextBlock
 	History        []ConversationItem

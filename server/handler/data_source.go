@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -70,7 +71,7 @@ func SemanticProfileDetailHandler(w http.ResponseWriter, r *http.Request) {
 		"session_id":       profile.SessionID,
 		"source_id":        profile.SourceID,
 		"snapshot_id":      profile.SnapshotID,
-		"table_name":       profile.AnalysisTableName,
+		"analysis_table_name": profile.AnalysisTableName,
 		"schema_signature": profile.SchemaSignature,
 		"profile_status":   string(profile.ProfileStatus),
 		"profile_json":     json.RawMessage(profile.ProfileJSON),
@@ -94,10 +95,36 @@ func ConfirmProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	profileID := chi.URLParam(r, "profileID")
 
+	profile, _, err := sourceService.GetProfileDetail(r.Context(), profileID)
+	if err != nil {
+		http.Error(w, "failed to get profile", http.StatusNotFound)
+		return
+	}
+	ds, err := dataSourceRepo.GetByID(r.Context(), profile.SourceID)
+	if err != nil || ds.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "not authorized", http.StatusForbidden)
+		return
+	}
+
 	var req ConfirmProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+	if req.Scope != "session" && req.Scope != "workspace" {
+		http.Error(w, "scope must be 'session' or 'workspace'", http.StatusBadRequest)
+		return
+	}
+	if req.Scope == "session" && req.SessionID == "" {
+		http.Error(w, "session_id is required when scope is 'session'", http.StatusBadRequest)
+		return
+	}
+	if req.SessionID != "" {
+		sess, sessErr := sessionRepo.GetByID(r.Context(), req.SessionID)
+		if sessErr != nil || sess.WorkspaceID != identity.WorkspaceID {
+			http.Error(w, "session not found or not authorized", http.StatusForbidden)
+			return
+		}
 	}
 
 	overridesJSON, _ := json.Marshal(req.Overrides)
@@ -225,12 +252,6 @@ func CreateDataSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dbConnectionRepo.Create(r.Context(), conn); err != nil {
-		_ = dataSourceRepo.Delete(r.Context(), ds.ID)
-		http.Error(w, fmt.Sprintf("failed to save connection config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -270,7 +291,9 @@ func TestDataSourceHandler(w http.ResponseWriter, r *http.Request) {
 				conn.LastErrorMessage = &msg
 			}
 		}
-		_ = dbConnectionRepo.Update(r.Context(), conn)
+		if err := dbConnectionRepo.Update(r.Context(), conn); err != nil {
+			log.Printf("TestDataSourceHandler: failed to persist test result source_id=%s err=%v", sourceID, err)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -347,29 +370,43 @@ func ImportDataSourceHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to get session", http.StatusInternalServerError)
 		return
 	}
+	if sess.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "session does not belong to this workspace", http.StatusForbidden)
+		return
+	}
 
+	sess.LockUpload()
 	result, err := sourceService.ImportPostgresSnapshot(
 		r.Context(), sourceID, req.SessionID, req.SchemaName, req.ObjectName,
 		sess.Ingester, config.Cfg.AuthSecret,
 	)
+	sess.UnlockUpload()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("import failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"source_id":           sourceID,
 		"snapshot_id":         result.SnapshotID,
+		"semantic_profile_id": result.ProfileID,
 		"analysis_table_name": result.TableName,
 		"row_count":           result.RowCount,
 		"column_count":        result.ColCount,
+		"rows_imported":       result.RowsImported,
 		"import_duration_ms":  result.ImportDurationMs,
 		"profile_duration_ms": result.ProfileDurationMs,
+		"snapshot_size_bytes":  result.SnapshotSizeBytes,
 		"profile_mode":        string(result.ProfileMode),
-	})
-}
+		"large_dataset":       result.RowCount >= 1000000,
+	}
+	if result.ProfErr != nil {
+		resp["ingest_status"] = "partial"
+		resp["message"] = fmt.Sprintf("import succeeded but semantic profiling failed: %v", result.ProfErr)
+	} else {
+		resp["ingest_status"] = "success"
+	}
 
-func encryptPassword(password, authSecret string) ([]byte, error) {
-	return service.EncryptPassword(password, authSecret)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }

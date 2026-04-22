@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -50,6 +51,36 @@ type FileMaterializeResult struct {
 	ColCount   int
 }
 
+func (s *SourceService) cleanupOldSnapshots(ctx context.Context, sessionID, sourceID string) {
+	oldSnapshots, err := s.SnapshotRepo.ListBySource(ctx, sourceID)
+	if err != nil {
+		log.Printf("cleanupOldSnapshots: ListBySource failed source_id=%s err=%v", sourceID, err)
+		return
+	}
+	for _, snap := range oldSnapshots {
+		if snap.SessionID != sessionID {
+			continue
+		}
+		profiles, profErr := s.SemanticProfileRepo.ListBySource(ctx, sourceID)
+		if profErr != nil {
+			log.Printf("cleanupOldSnapshots: ListBySource profiles failed source_id=%s err=%v", sourceID, profErr)
+		}
+		for _, p := range profiles {
+			if p.SnapshotID == snap.ID {
+				if delErr := s.SemanticConfirmationRepo.DeleteByProfile(ctx, p.ID); delErr != nil {
+					log.Printf("cleanupOldSnapshots: delete confirmations failed profile_id=%s err=%v", p.ID, delErr)
+				}
+				if delErr := s.SemanticProfileRepo.Delete(ctx, p.ID); delErr != nil {
+					log.Printf("cleanupOldSnapshots: delete profile failed profile_id=%s err=%v", p.ID, delErr)
+				}
+			}
+		}
+		if delErr := s.SnapshotRepo.Delete(ctx, snap.ID); delErr != nil {
+			log.Printf("cleanupOldSnapshots: delete snapshot failed snapshot_id=%s err=%v", snap.ID, delErr)
+		}
+	}
+}
+
 func (s *SourceService) EnsureFileSource(ctx context.Context, workspaceID, fileID, displayName, uploadedBy string) (*domain.DataSource, error) {
 	existing, err := s.DataSourceRepo.GetByFileID(ctx, fileID)
 	if err != nil {
@@ -76,6 +107,8 @@ func (s *SourceService) EnsureFileSource(ctx context.Context, workspaceID, fileI
 }
 
 func (s *SourceService) CreateSnapshot(ctx context.Context, sessionID, sourceID, upstreamKind, upstreamSchema, upstreamObject, analysisTableName string, rowCount, colCount int, schemaSignature string, rowsImported, importDurationMs, profileDurationMs int, snapshotSizeBytes int64, profileMode domain.ProfileMode) (*domain.SourceSnapshot, error) {
+	s.cleanupOldSnapshots(ctx, sessionID, sourceID)
+
 	snapshot := &domain.SourceSnapshot{
 		ID:                "snap_" + uuid.New().String()[:12],
 		SessionID:         sessionID,
@@ -135,15 +168,18 @@ func (s *SourceService) GetSessionSources(ctx context.Context, sessionID string)
 		return nil, err
 	}
 	var summaries []SessionSourceSummary
+	var partialErrors []string
 	for _, b := range bindings {
 		ds, err := s.DataSourceRepo.GetByID(ctx, b.SourceID)
 		if err != nil {
 			log.Printf("GetSessionSources: source lookup failed source_id=%s err=%v", b.SourceID, err)
+			partialErrors = append(partialErrors, fmt.Sprintf("source_id=%s: %v", b.SourceID, err))
 			continue
 		}
 		snapshot, err := s.SnapshotRepo.GetByID(ctx, b.ActiveSnapshotID)
 		if err != nil {
 			log.Printf("GetSessionSources: snapshot lookup failed snapshot_id=%s err=%v", b.ActiveSnapshotID, err)
+			partialErrors = append(partialErrors, fmt.Sprintf("snapshot_id=%s: %v", b.ActiveSnapshotID, err))
 			continue
 		}
 		profiles, profErr := s.SemanticProfileRepo.ListBySource(ctx, b.SourceID)
@@ -152,34 +188,53 @@ func (s *SourceService) GetSessionSources(ctx context.Context, sessionID string)
 		}
 		var semanticStatus string
 		var profileID string
+		var ambiguityCount int
+		var confirmedOverrideCount int
 		if len(profiles) > 0 {
 			semanticStatus = string(profiles[0].ProfileStatus)
 			profileID = profiles[0].ID
+			var facts ProfiledFacts
+			if err := json.Unmarshal([]byte(profiles[0].ProfileJSON), &facts); err == nil {
+				ambiguityCount = len(facts.Ambiguities)
+			}
+			confs, confErr := s.SemanticConfirmationRepo.ListByProfile(ctx, profiles[0].ID)
+			if confErr == nil {
+				confirmedOverrideCount = len(confs)
+			}
 		} else {
 			semanticStatus = "pending"
 		}
 		summaries = append(summaries, SessionSourceSummary{
-			SourceID:          ds.ID,
-			DisplayName:       ds.Name,
-			SourceType:        string(ds.SourceType),
-			ActiveSnapshotID:  b.ActiveSnapshotID,
-			AnalysisTableName: snapshot.AnalysisTableName,
-			SnapshotStatus:    string(snapshot.Status),
-			SemanticStatus:    semanticStatus,
-			ProfileID:         profileID,
-			RowCount:          snapshot.RowCount,
-			ColCount:          snapshot.ColumnCount,
-			LastImportedAt:    snapshot.ImportedAt,
-			LargeDataset:      snapshot.RowCount >= 1000000,
-			RowsImported:      snapshot.RowsImported,
-			ImportDurationMs:  snapshot.ImportDurationMs,
-			ProfileDurationMs: snapshot.ProfileDurationMs,
-			SnapshotSizeBytes: snapshot.SnapshotSizeBytes,
-			ProfileMode:       string(snapshot.ProfileMode),
-			ErrorMessage:      func() string { if snapshot.ErrorMessage != nil { return *snapshot.ErrorMessage }; return "" }(),
+			SourceID:               ds.ID,
+			DisplayName:            ds.Name,
+			SourceType:             string(ds.SourceType),
+			ActiveSnapshotID:       b.ActiveSnapshotID,
+			AnalysisTableName:      snapshot.AnalysisTableName,
+			SnapshotStatus:         string(snapshot.Status),
+			SemanticStatus:         semanticStatus,
+			ProfileID:              profileID,
+			AmbiguityCount:         ambiguityCount,
+			ConfirmedOverrideCount: confirmedOverrideCount,
+			RowCount:               snapshot.RowCount,
+			ColCount:               snapshot.ColumnCount,
+			LastImportedAt:         snapshot.ImportedAt,
+			LargeDataset:           snapshot.RowCount >= 1000000,
+			RowsImported:           snapshot.RowsImported,
+			ImportDurationMs:       snapshot.ImportDurationMs,
+			ProfileDurationMs:      snapshot.ProfileDurationMs,
+			SnapshotSizeBytes:      snapshot.SnapshotSizeBytes,
+			ProfileMode:            string(snapshot.ProfileMode),
+			ErrorMessage:           func() string { if snapshot.ErrorMessage != nil { return *snapshot.ErrorMessage }; return "" }(),
 		})
 	}
+	if len(partialErrors) > 0 {
+		return summaries, fmt.Errorf("partial errors: %s", strings.Join(partialErrors, "; "))
+	}
 	return summaries, nil
+}
+
+func (s *SourceService) RecordSnapshotError(ctx context.Context, snapshotID, errMsg string) error {
+	return s.SnapshotRepo.UpdateStatus(ctx, snapshotID, domain.SnapshotStatusFailed, &errMsg)
 }
 
 func (s *SourceService) GetSessionProfiles(ctx context.Context, sessionID string) ([]SemanticProfileSummary, error) {
@@ -214,6 +269,8 @@ func (s *SourceService) GetProfileDetail(ctx context.Context, profileID string) 
 
 type ProfiledFacts struct {
 	Schema            *data.SchemaInfo     `json:"schema"`
+	ProfileMode       string               `json:"profile_mode"`
+	SnapshotSizeBytes int64                `json:"snapshot_size_bytes,omitempty"`
 	SemanticCandidates []SemanticCandidate `json:"semantic_candidates"`
 	JoinCandidates    []JoinCandidate      `json:"join_candidates"`
 	MetricCandidates  []MetricCandidate    `json:"metric_candidates"`
@@ -227,33 +284,38 @@ type SemanticCandidate struct {
 	ColumnName    string `json:"column_name"`
 	BusinessAlias string `json:"business_alias"`
 	Role          string `json:"role"`
+	Estimated     bool   `json:"estimated"`
 }
 
 type JoinCandidate struct {
-	LeftTable  string `json:"left_table"`
-	LeftColumn string `json:"left_column"`
-	RightTable string `json:"right_table"`
+	LeftTable   string `json:"left_table"`
+	LeftColumn  string `json:"left_column"`
+	RightTable  string `json:"right_table"`
 	RightColumn string `json:"right_column"`
-	Reason     string `json:"reason"`
+	Reason      string `json:"reason"`
+	Estimated   bool   `json:"estimated"`
 }
 
 type MetricCandidate struct {
-	ColumnName string `json:"column_name"`
+	ColumnName  string `json:"column_name"`
 	SemanticKey string `json:"semantic_key"`
+	Estimated   bool   `json:"estimated"`
 }
 
 type TimeCandidate struct {
-	ColumnName string `json:"column_name"`
-	Grain      string `json:"grain"`
+	ColumnName    string `json:"column_name"`
+	Grain         string `json:"grain"`
 	CoverageStart string `json:"coverage_start,omitempty"`
 	CoverageEnd   string `json:"coverage_end,omitempty"`
+	Estimated     bool   `json:"estimated"`
 }
 
 type UnitCandidate struct {
-	ColumnName      string  `json:"column_name"`
-	DetectedUnit    string  `json:"detected_unit"`
-	Scale           float64 `json:"scale,omitempty"`
-	ConflictWith    *string `json:"conflict_with,omitempty"`
+	ColumnName   string  `json:"column_name"`
+	DetectedUnit string  `json:"detected_unit"`
+	Scale        float64 `json:"scale,omitempty"`
+	ConflictWith *string `json:"conflict_with,omitempty"`
+	Estimated    bool    `json:"estimated"`
 }
 
 type Ambiguity struct {
@@ -262,9 +324,12 @@ type Ambiguity struct {
 	Candidates  []string `json:"candidates"`
 }
 
-func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfile *data.SemanticProfile, activeTables []string) ProfiledFacts {
+func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfile *data.SemanticProfile, activeTables []string, profileMode string, snapshotSizeBytes int64) ProfiledFacts {
+	isEstimated := profileMode != string(domain.ProfileModeExact)
 	facts := ProfiledFacts{
-		Schema: schema,
+		Schema:            schema,
+		ProfileMode:       profileMode,
+		SnapshotSizeBytes: snapshotSizeBytes,
 	}
 
 	for _, col := range schema.Columns {
@@ -272,6 +337,7 @@ func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfi
 			ColumnName:    col.Name,
 			BusinessAlias: "",
 			Role:          inferColumnRole(col),
+			Estimated:     isEstimated,
 		})
 	}
 
@@ -295,6 +361,7 @@ func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfi
 			Grain:         tc.Grain,
 			CoverageStart: tc.CoverageStart,
 			CoverageEnd:   tc.CoverageEnd,
+			Estimated:     isEstimated,
 		})
 	}
 
@@ -310,7 +377,7 @@ func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfi
 		})
 	}
 
-	ambiguousMetricGroups := inferAmbiguousMetricGroups(schema)
+	ambiguousMetricGroups := data.InferAmbiguousMetricGroups(schema.Columns)
 	for key, names := range ambiguousMetricGroups {
 		facts.Ambiguities = append(facts.Ambiguities, Ambiguity{
 			Kind:        "ambiguous_metrics",
@@ -321,6 +388,7 @@ func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfi
 			facts.MetricCandidates = append(facts.MetricCandidates, MetricCandidate{
 				ColumnName:  name,
 				SemanticKey: key,
+				Estimated:   isEstimated,
 			})
 		}
 	}
@@ -333,8 +401,35 @@ func (s *SourceService) BuildProfileFacts(schema *data.SchemaInfo, semanticProfi
 				RightTable:  rel.TargetTable,
 				RightColumn: rel.TargetColumn,
 				Reason:      rel.Reason,
+				Estimated:   true,
 			})
 		}
+	}
+
+	facts.UnitCandidates = inferUnitCandidates(schema.Columns, isEstimated)
+	if len(facts.UnitCandidates) > 1 {
+		var candidates []string
+		for _, uc := range facts.UnitCandidates {
+			candidates = append(candidates, uc.ColumnName+"("+uc.DetectedUnit+")")
+		}
+		facts.Ambiguities = append(facts.Ambiguities, Ambiguity{
+			Kind:        "ambiguous_units",
+			Description: "multiple columns with conflicting unit candidates",
+			Candidates:  candidates,
+		})
+	}
+
+	if semanticProfile != nil {
+		for _, col := range semanticProfile.Columns {
+			if len(col.Warnings) > 0 {
+				for _, w := range col.Warnings {
+					facts.Warnings = append(facts.Warnings, fmt.Sprintf("column %s: %s", col.Name, w))
+				}
+			}
+		}
+	}
+	if string(profileMode) != string(domain.ProfileModeExact) {
+		facts.Warnings = append(facts.Warnings, "profile is based on sampled data; statistics are estimated, not exact")
 	}
 
 	return facts
@@ -362,8 +457,18 @@ func (s *SourceService) CreateSemanticProfile(ctx context.Context, sessionID, wo
 		return nil, fmt.Errorf("failed to create semantic profile: %w", err)
 	}
 
-	wsConfirmation, _ := s.SemanticProfileRepo.FindWorkspaceConfirmation(ctx, workspaceID, schemaSignature)
+	wsConfirmation, wsErr := s.SemanticProfileRepo.FindWorkspaceConfirmation(ctx, workspaceID, schemaSignature)
+	if wsErr != nil {
+		log.Printf("CreateSemanticProfile: FindWorkspaceConfirmation failed workspace_id=%s signature=%s err=%v", workspaceID, schemaSignature, wsErr)
+	}
 	if wsConfirmation != nil {
+		merged := s.applyConfirmations(ctx, string(profileJSON), workspaceID, schemaSignature, "")
+		if err := s.SemanticProfileRepo.UpdateProfileJSON(ctx, profile.ID, merged); err != nil {
+			log.Printf("CreateSemanticProfile: merge workspace overrides failed profile_id=%s err=%v", profile.ID, err)
+		} else {
+			profileJSON = []byte(merged)
+			profile.ProfileJSON = merged
+		}
 		_ = s.SemanticProfileRepo.UpdateStatus(ctx, profile.ID, domain.ProfileStatusConfirmed)
 		profile.ProfileStatus = domain.ProfileStatusConfirmed
 		log.Printf("workspace confirmation auto-applied for profile %s (signature=%s)", profile.ID, schemaSignature)
@@ -373,9 +478,33 @@ func (s *SourceService) CreateSemanticProfile(ctx context.Context, sessionID, wo
 }
 
 func (s *SourceService) ConfirmProfile(ctx context.Context, profileID, workspaceID, sessionID, confirmedBy, scope, overridesJSON string) (*domain.SemanticProfile, error) {
+	if scope != string(domain.ConfirmationScopeSession) && scope != string(domain.ConfirmationScopeWorkspace) {
+		return nil, fmt.Errorf("invalid confirmation scope: %q; must be \"session\" or \"workspace\"", scope)
+	}
 	profile, err := s.SemanticProfileRepo.GetByID(ctx, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get profile: %w", err)
+	}
+	if sessionID != "" && profile.SessionID != sessionID {
+		return nil, fmt.Errorf("profile %s does not belong to session %s", profileID, sessionID)
+	}
+
+	var facts ProfiledFacts
+	if err := json.Unmarshal([]byte(profile.ProfileJSON), &facts); err != nil {
+		return nil, fmt.Errorf("failed to parse profile json: %w", err)
+	}
+	if len(facts.Ambiguities) > 0 {
+		trimmed := strings.TrimSpace(overridesJSON)
+		if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+			return nil, fmt.Errorf("profile has %d unresolved ambiguities; empty overrides cannot confirm them", len(facts.Ambiguities))
+		}
+		var overrides map[string]interface{}
+		if err := json.Unmarshal([]byte(overridesJSON), &overrides); err != nil {
+			return nil, fmt.Errorf("invalid overrides_json: %w", err)
+		}
+		if len(overrides) == 0 {
+			return nil, fmt.Errorf("profile has %d unresolved ambiguities; empty overrides cannot confirm them", len(facts.Ambiguities))
+		}
 	}
 
 	confirmation := &domain.SemanticConfirmation{
@@ -393,6 +522,7 @@ func (s *SourceService) ConfirmProfile(ctx context.Context, profileID, workspace
 	}
 
 	merged := s.applyConfirmations(ctx, profile.ProfileJSON, workspaceID, profile.SchemaSignature, sessionID)
+	merged = removeResolvedAmbiguities(merged)
 	if err := s.SemanticProfileRepo.UpdateProfileJSON(ctx, profileID, merged); err != nil {
 		log.Printf("ConfirmProfile: UpdateProfileJSON failed profile_id=%s err=%v", profileID, err)
 	}
@@ -412,16 +542,25 @@ func (s *SourceService) applyConfirmations(ctx context.Context, profileJSON, wor
 	}
 
 	if workspaceID != "" && schemaSignature != "" {
-		wsConf, _ := s.SemanticProfileRepo.FindWorkspaceConfirmation(ctx, workspaceID, schemaSignature)
+		wsConf, wsErr := s.SemanticProfileRepo.FindWorkspaceConfirmation(ctx, workspaceID, schemaSignature)
+		if wsErr != nil {
+			log.Printf("applyConfirmations: FindWorkspaceConfirmation failed workspace_id=%s signature=%s err=%v", workspaceID, schemaSignature, wsErr)
+		}
 		if wsConf != nil {
 			profile = deepMergeOverrideIntoProfile(profile, wsConf.OverridesJSON)
 		}
 	}
 
 	if sessionID != "" {
-		sessionConfs, _ := s.SemanticConfirmationRepo.ListBySession(ctx, sessionID)
-		for _, sc := range sessionConfs {
-			profile = deepMergeOverrideIntoProfile(profile, sc.OverridesJSON)
+		sessionConfs, sessErr := s.SemanticConfirmationRepo.ListBySession(ctx, sessionID)
+		if sessErr != nil {
+			log.Printf("applyConfirmations: ListBySession failed session_id=%s err=%v", sessionID, sessErr)
+		}
+		for i := range sessionConfs {
+			sc := &sessionConfs[i]
+			if sc.Scope == domain.ConfirmationScopeSession {
+				profile = deepMergeOverrideIntoProfile(profile, sc.OverridesJSON)
+			}
 		}
 	}
 
@@ -459,24 +598,78 @@ func deepMergeValues(base, override interface{}) interface{} {
 	return override
 }
 
-// Deprecated: use deepMergeOverrideIntoProfile instead
-func mergeOverrideIntoProfile(profile map[string]interface{}, overridesJSON string) map[string]interface{} {
-	var overrides map[string]interface{}
-	if err := json.Unmarshal([]byte(overridesJSON), &overrides); err != nil {
-		return profile
-	}
-	for k, v := range overrides {
-		profile[k] = v
-	}
-	return profile
-}
-
 func marshalProfile(profile map[string]interface{}) string {
 	result, err := json.Marshal(profile)
 	if err != nil {
 		return "{}"
 	}
 	return string(result)
+}
+
+func removeResolvedAmbiguities(profileJSON string) string {
+	var profile map[string]interface{}
+	if err := json.Unmarshal([]byte(profileJSON), &profile); err != nil {
+		return profileJSON
+	}
+	ambiguitiesRaw, ok := profile["ambiguities"]
+	if !ok {
+		return profileJSON
+	}
+	ambiguities, ok := ambiguitiesRaw.([]interface{})
+	if !ok || len(ambiguities) == 0 {
+		return profileJSON
+	}
+
+	hasTimeOverride := hasKeyInProfile(profile, "time_candidates")
+	hasMetricOverride := hasKeyInProfile(profile, "metric_candidates")
+	hasJoinOverride := hasKeyInProfile(profile, "join_candidates")
+	hasUnitOverride := hasKeyInProfile(profile, "unit_candidates")
+
+	var remaining []interface{}
+	for _, ambRaw := range ambiguities {
+		amb, ok := ambRaw.(map[string]interface{})
+		if !ok {
+			remaining = append(remaining, ambRaw)
+			continue
+		}
+		kind, _ := amb["kind"].(string)
+		if hasTimeOverride && kind == "multiple_time_columns" {
+			continue
+		}
+		if hasMetricOverride && kind == "ambiguous_metrics" {
+			continue
+		}
+		if hasJoinOverride && kind == "ambiguous_join" {
+			continue
+		}
+		if hasUnitOverride && kind == "ambiguous_units" {
+			continue
+		}
+		remaining = append(remaining, ambRaw)
+	}
+	if len(remaining) < len(ambiguities) {
+		profile["ambiguities"] = remaining
+		result, err := json.Marshal(profile)
+		if err != nil {
+			return profileJSON
+		}
+		return string(result)
+	}
+	return profileJSON
+}
+
+func hasKeyInProfile(profile map[string]interface{}, key string) bool {
+	val, exists := profile[key]
+	if !exists {
+		return false
+	}
+	switch v := val.(type) {
+	case []interface{}:
+		return len(v) > 0
+	case map[string]interface{}:
+		return len(v) > 0
+	}
+	return val != nil
 }
 
 func (s *SourceService) CreatePostgresSource(ctx context.Context, workspaceID, name, createdBy string, conn *domain.DatabaseConnection) (*domain.DataSource, error) {
@@ -494,12 +687,16 @@ func (s *SourceService) CreatePostgresSource(ctx context.Context, workspaceID, n
 		return nil, err
 	}
 	conn.SourceID = ds.ID
+	if err := s.DBConnectionRepo.Create(ctx, conn); err != nil {
+		return nil, fmt.Errorf("failed to persist database connection: %w", err)
+	}
 	log.Printf("Created postgres data source id=%s name=%s", ds.ID, name)
 	return ds, nil
 }
 
 func ComputeSchemaSignature(schema *data.SchemaInfo) string {
 	h := sha256.New()
+	h.Write([]byte(schema.TableName + ":"))
 	for _, col := range schema.Columns {
 		h.Write([]byte(col.Name + ":" + col.Type + ":"))
 	}
@@ -520,73 +717,61 @@ func inferColumnRole(col data.ColumnInfo) string {
 	return "dimension"
 }
 
-func inferAmbiguousMetricGroups(schema *data.SchemaInfo) map[string][]string {
-	grouped := make(map[string][]string)
-	for _, column := range schema.Columns {
-		if !strings.EqualFold(strings.TrimSpace(column.Type), "NUMERIC") {
+var unitPatterns = []struct {
+	Pattern string
+	Unit    string
+	Scale   float64
+}{
+	{`(?i)amount|revenue|sales|price|cost|fee|pay`, "currency", 1},
+	{`(?i)weight|mass|kg|gram`, "mass", 1},
+	{`(?i)length|distance|height|width|meter|km`, "length", 1},
+	{`(?i)percent|rate|ratio|pct`, "percentage", 1},
+}
+
+func inferUnitCandidates(columns []data.ColumnInfo, isEstimated bool) []UnitCandidate {
+	var candidates []UnitCandidate
+	for _, col := range columns {
+		if col.Type != "NUMERIC" && col.Type != "INTEGER" && col.Type != "REAL" {
 			continue
 		}
-		tokens := tokenizeColumnName(column.Name)
-		if len(tokens) < 2 {
-			continue
-		}
-		core := make([]string, 0, len(tokens))
-		qualifierCount := 0
-		for _, token := range tokens {
-			if _, ok := metricQualifierTokens[token]; ok {
-				qualifierCount++
-				continue
+		nameLower := strings.ToLower(col.Name)
+		for _, p := range unitPatterns {
+			matched, _ := regexp.MatchString(p.Pattern, nameLower)
+			if matched {
+				candidates = append(candidates, UnitCandidate{
+					ColumnName:   col.Name,
+					DetectedUnit: p.Unit,
+					Scale:        p.Scale,
+					Estimated:    isEstimated,
+				})
+				break
 			}
-			core = append(core, token)
-		}
-		if qualifierCount == 0 || len(core) == 0 {
-			continue
-		}
-		key := strings.Join(core, "_")
-		grouped[key] = append(grouped[key], column.Name)
-	}
-	result := make(map[string][]string)
-	for key, names := range grouped {
-		if len(names) >= 2 {
-			result[key] = names
 		}
 	}
-	return result
-}
-
-var metricQualifierTokens = map[string]struct{}{
-	"actual": {}, "adjusted": {}, "booked": {}, "confirmed": {},
-	"estimated": {}, "est": {}, "final": {}, "forecast": {},
-	"gross": {}, "net": {}, "planned": {}, "plan": {},
-	"projected": {}, "raw": {}, "recognized": {}, "target": {},
-	"tentative": {}, "unconfirmed": {},
-}
-
-func tokenizeColumnName(name string) []string {
-	return strings.FieldsFunc(strings.ToLower(strings.TrimSpace(name)), func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	})
+	return candidates
 }
 
 type SessionSourceSummary struct {
-	SourceID          string    `json:"source_id"`
-	DisplayName       string    `json:"display_name"`
-	SourceType        string    `json:"source_type"`
-	ActiveSnapshotID  string    `json:"active_snapshot_id"`
-	AnalysisTableName string    `json:"analysis_table_name"`
-	SnapshotStatus    string    `json:"snapshot_status"`
-	SemanticStatus    string    `json:"semantic_status"`
-	ProfileID         string    `json:"profile_id,omitempty"`
-	RowCount          int       `json:"row_count"`
-	ColCount          int       `json:"column_count"`
-	LastImportedAt    time.Time `json:"last_imported_at"`
-	LargeDataset      bool      `json:"large_dataset"`
-	RowsImported      int       `json:"rows_imported"`
-	ImportDurationMs  int       `json:"import_duration_ms"`
-	ProfileDurationMs int       `json:"profile_duration_ms"`
-	SnapshotSizeBytes int64     `json:"snapshot_size_bytes"`
-	ProfileMode       string    `json:"profile_mode"`
-	ErrorMessage      string    `json:"error_message,omitempty"`
+	SourceID               string    `json:"source_id"`
+	DisplayName            string    `json:"display_name"`
+	SourceType             string    `json:"source_type"`
+	ActiveSnapshotID       string    `json:"active_snapshot_id"`
+	AnalysisTableName      string    `json:"analysis_table_name"`
+	SnapshotStatus         string    `json:"snapshot_status"`
+	SemanticStatus         string    `json:"semantic_status"`
+	ProfileID              string    `json:"profile_id,omitempty"`
+	AmbiguityCount         int       `json:"ambiguity_count"`
+	ConfirmedOverrideCount int       `json:"confirmed_override_count"`
+	RowCount               int       `json:"row_count"`
+	ColCount               int       `json:"column_count"`
+	LastImportedAt         time.Time `json:"last_imported_at"`
+	LargeDataset           bool      `json:"large_dataset"`
+	RowsImported           int       `json:"rows_imported"`
+	ImportDurationMs       int       `json:"import_duration_ms"`
+	ProfileDurationMs      int       `json:"profile_duration_ms"`
+	SnapshotSizeBytes      int64     `json:"snapshot_size_bytes"`
+	ProfileMode            string    `json:"profile_mode"`
+	ErrorMessage           string    `json:"error_message,omitempty"`
 }
 
 type SemanticProfileSummary struct {

@@ -28,19 +28,19 @@ func NewWorkingMemory() *WorkingMemory {
 	}
 }
 
-// SaveFact 保存一条核心记忆，若 key 已存在则覆盖更新
-func (m *WorkingMemory) SaveFact(key, fact string) {
+func (m *WorkingMemory) SaveFact(key, fact string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.Facts) >= maxFacts {
 		if _, exists := m.Facts[key]; !exists {
-			return
+			return false
 		}
 	}
 	if len(fact) > maxFactLen {
 		fact = fact[:maxFactLen]
 	}
 	m.Facts[key] = fact
+	return true
 }
 
 // RemoveFact 移除一条核心记忆
@@ -136,12 +136,12 @@ func NewSubgoalManager() *SubgoalManager {
 }
 
 // AddGoal 增加一个新的子任务
-func (s *SubgoalManager) AddGoal(description, parentGoalID string) string {
+func (s *SubgoalManager) AddGoal(description, parentGoalID string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if len(s.Goals) >= maxGoals {
-		return ""
+		return "", fmt.Errorf("subgoal limit (%d) reached", maxGoals)
 	}
 	if len(description) > maxGoalDescLen {
 		description = description[:maxGoalDescLen]
@@ -156,7 +156,7 @@ func (s *SubgoalManager) AddGoal(description, parentGoalID string) string {
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	})
-	return id
+	return id, nil
 }
 
 // UpdateGoalStatus 更新任务状态（完成、拒绝等）

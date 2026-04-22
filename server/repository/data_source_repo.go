@@ -28,6 +28,8 @@ type SourceSnapshotRepository interface {
 	ListBySource(ctx context.Context, sourceID string) ([]domain.SourceSnapshot, error)
 	UpdateStatus(ctx context.Context, id string, status domain.SnapshotStatus, errorMsg *string) error
 	UpdateRuntimeFacts(ctx context.Context, id string, rowsImported, importDurationMs, profileDurationMs int, snapshotSizeBytes int64, profileMode domain.ProfileMode) error
+	UpdateSnapshotCompletion(ctx context.Context, id string, rowCount, colCount int, schemaSignature string, rowsImported, importDurationMs, profileDurationMs int, snapshotSizeBytes int64, profileMode domain.ProfileMode) error
+	Delete(ctx context.Context, id string) error
 }
 
 type SessionSourceBindingRepository interface {
@@ -44,6 +46,7 @@ type SemanticProfileRepository interface {
 	UpdateStatus(ctx context.Context, id string, status domain.ProfileStatus) error
 	UpdateProfileJSON(ctx context.Context, id string, profileJSON string) error
 	FindWorkspaceConfirmation(ctx context.Context, workspaceID, schemaSignature string) (*domain.SemanticConfirmation, error)
+	Delete(ctx context.Context, id string) error
 }
 
 type SemanticConfirmationRepository interface {
@@ -51,4 +54,5 @@ type SemanticConfirmationRepository interface {
 	ListByProfile(ctx context.Context, profileID string) ([]domain.SemanticConfirmation, error)
 	ListBySession(ctx context.Context, sessionID string) ([]domain.SemanticConfirmation, error)
 	ListByWorkspace(ctx context.Context, workspaceID string) ([]domain.SemanticConfirmation, error)
+	DeleteByProfile(ctx context.Context, profileID string) error
 }

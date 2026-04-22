@@ -92,6 +92,10 @@ func RenderableReportBlockCount(state *ReportState) int {
 	return renderableReportBlockCount(state.Blocks)
 }
 
+func RenderableReportBlockCountLocked(state *ReportState) int {
+	return RenderableReportBlockCount(state)
+}
+
 func reportFinalizeIssues(state *ReportState) []string {
 	if state == nil {
 		return []string{"report_state_missing"}
@@ -181,5 +185,9 @@ func normalizeSectionTitle(value string) string {
 }
 
 func ReportFinalizeIssuesForAgent(state *ReportState) []string {
+	return reportFinalizeIssues(state)
+}
+
+func ReportFinalizeIssuesForAgentLocked(state *ReportState) []string {
 	return reportFinalizeIssues(state)
 }

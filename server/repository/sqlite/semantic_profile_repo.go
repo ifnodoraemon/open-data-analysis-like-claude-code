@@ -107,3 +107,8 @@ func (r *SemanticProfileRepository) FindWorkspaceConfirmation(ctx context.Contex
 	c.Scope = domain.ConfirmationScope(scope)
 	return &c, nil
 }
+
+func (r *SemanticProfileRepository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM semantic_profiles WHERE id = ?`, id)
+	return err
+}

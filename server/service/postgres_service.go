@@ -12,9 +12,12 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/ifnodoraemon/openDataAnalysis/data"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
@@ -22,12 +25,16 @@ import (
 
 type PGImportResult struct {
 	SnapshotID        string
+	ProfileID         string
 	TableName         string
 	RowCount          int
 	ColCount          int
+	RowsImported      int
 	ImportDurationMs  int
 	ProfileDurationMs int
+	SnapshotSizeBytes int64
 	ProfileMode       domain.ProfileMode
+	ProfErr           error
 }
 
 func EncryptPassword(password, authSecret string) ([]byte, error) {
@@ -165,18 +172,55 @@ func (s *SourceService) ImportPostgresSnapshot(ctx context.Context, sourceID, se
 		return nil, err
 	}
 
+	resolvedSchema := schemaName
+	if resolvedSchema == "" {
+		resolvedSchema = conn.DefaultSchema
+	}
+
+	allowlist, allowErr := ParseAllowlist(conn.AllowlistJSON)
+	if allowErr != nil {
+		return nil, fmt.Errorf("failed to parse allowlist: %w", allowErr)
+	}
+	if !isInAllowlist(allowlist, resolvedSchema, objectName) {
+		return nil, fmt.Errorf("object %s.%s is not in the data source allowlist", resolvedSchema, objectName)
+	}
+
 	pgDB, err := OpenPostgresConnection(ctx, conn, authSecret)
 	if err != nil {
 		return nil, err
 	}
 	defer pgDB.Close()
 
-	schema := schemaName
-	if schema == "" {
-		schema = conn.DefaultSchema
-	}
+	schema := resolvedSchema
 
 	tableName := sanitizePGTableName(objectName)
+
+	preSnapshot := &domain.SourceSnapshot{
+		ID:                "snap_" + uuid.New().String()[:12],
+		SessionID:         sessionID,
+		SourceID:          sourceID,
+		UpstreamKind:      "postgres_connection",
+		UpstreamSchema:    schema,
+		UpstreamObject:    objectName,
+		AnalysisTableName: tableName,
+		Status:            domain.SnapshotStatusCreating,
+		ImportedAt:        time.Now(),
+	}
+	if err := s.SnapshotRepo.Create(ctx, preSnapshot); err != nil {
+		return nil, fmt.Errorf("failed to create pre-import snapshot: %w", err)
+	}
+	binding := &domain.SessionSourceBinding{
+		SessionID:        sessionID,
+		SourceID:         sourceID,
+		ActiveSnapshotID: preSnapshot.ID,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+	if err := s.SessionSourceBindingRepo.Upsert(ctx, binding); err != nil {
+		bindErr := "failed to create session source binding"
+		_ = s.SnapshotRepo.UpdateStatus(ctx, preSnapshot.ID, domain.SnapshotStatusFailed, &bindErr)
+		return nil, fmt.Errorf("failed to upsert session source binding: %w", err)
+	}
 
 	importStart := time.Now()
 
@@ -184,12 +228,14 @@ func (s *SourceService) ImportPostgresSnapshot(ctx context.Context, sourceID, se
 	importDuration := time.Since(importStart)
 
 	if err != nil {
+		importErrMsg := err.Error()
+		_ = s.SnapshotRepo.UpdateStatus(ctx, preSnapshot.ID, domain.SnapshotStatusFailed, &importErrMsg)
 		return nil, fmt.Errorf("import failed: %w", err)
 	}
 
 	// Determine profile mode from row count
 	var rowCountForMode int
-	sessIngester.GetDB().QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", tableName)).Scan(&rowCountForMode)
+	rowCountForMode = rowCount
 	var profileMode domain.ProfileMode = domain.ProfileModeSampled
 	if rowCountForMode < 10000 {
 		profileMode = domain.ProfileModeExact
@@ -211,17 +257,33 @@ func (s *SourceService) ImportPostgresSnapshot(ctx context.Context, sourceID, se
 
 	profileStart := time.Now()
 	var semanticProfile *data.SemanticProfile
-	facts := s.BuildProfileFacts(schemaInfo, semanticProfile, nil)
+	if sessIngester.SemanticEnricher != nil {
+		activeTables := sessIngester.GetActiveTables()
+		semCtx, semCancel := context.WithTimeout(ctx, 30*time.Second)
+		sp, semErr := data.AnalyzeTableSemantics(semCtx, sessIngester.SemanticEnricher, schemaInfo, activeTables)
+		semCancel()
+		if semErr != nil {
+			log.Printf("pg import: LLM semantic analysis skipped table=%s err=%v", tableName, semErr)
+		} else {
+			semanticProfile = sp
+		}
+	}
+	snapshotSizeBytes := int64(0)
+	if dbPath := sessIngester.DBPath(); dbPath != "" {
+		if fi, fiErr := os.Stat(dbPath); fiErr == nil {
+			snapshotSizeBytes = fi.Size()
+		}
+	}
+
+	facts := s.BuildProfileFacts(schemaInfo, semanticProfile, nil, string(profileMode), snapshotSizeBytes)
 	profileDuration := time.Since(profileStart)
 
-	snapshot, err := s.CreateSnapshot(
-		ctx, sessionID, sourceID,
-		"postgres_connection", schema, objectName,
-		tableName, rowCount, colCount, schemaSig,
-		rowCount, int(importDuration.Milliseconds()), int(profileDuration.Milliseconds()), 0, profileMode,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create snapshot: %w", err)
+	if err := s.SnapshotRepo.UpdateStatus(ctx, preSnapshot.ID, domain.SnapshotStatusReady, nil); err != nil {
+		log.Printf("pg import: failed to update snapshot status to ready snapshot_id=%s err=%v", preSnapshot.ID, err)
+	}
+	if err := s.SnapshotRepo.UpdateSnapshotCompletion(ctx, preSnapshot.ID, rowCount, colCount, schemaSig,
+		rowCount, int(importDuration.Milliseconds()), int(profileDuration.Milliseconds()), snapshotSizeBytes, profileMode); err != nil {
+		log.Printf("pg import: failed to update snapshot completion facts snapshot_id=%s err=%v", preSnapshot.ID, err)
 	}
 
 	ds, err := s.DataSourceRepo.GetByID(ctx, sourceID)
@@ -229,34 +291,53 @@ func (s *SourceService) ImportPostgresSnapshot(ctx context.Context, sourceID, se
 		return nil, err
 	}
 
-	_, profErr := s.CreateSemanticProfile(
-		ctx, sessionID, ds.WorkspaceID, sourceID, snapshot.ID,
+	profile, profErr := s.CreateSemanticProfile(
+		ctx, sessionID, ds.WorkspaceID, sourceID, preSnapshot.ID,
 		tableName, schemaSig, facts,
 	)
+	profileID := ""
+	if profile != nil {
+		profileID = profile.ID
+	}
 	if profErr != nil {
 		log.Printf("pg import: create semantic profile failed source_id=%s err=%v", sourceID, profErr)
+		errMsg := profErr.Error()
+		if updateErr := s.SnapshotRepo.UpdateStatus(ctx, preSnapshot.ID, domain.SnapshotStatusFailed, &errMsg); updateErr != nil {
+			log.Printf("pg import: failed to write profile error to snapshot snapshot_id=%s err=%v", preSnapshot.ID, updateErr)
+		}
 	}
 
 	return &PGImportResult{
-		SnapshotID:        snapshot.ID,
+		SnapshotID:        preSnapshot.ID,
+		ProfileID:         profileID,
 		TableName:         tableName,
 		RowCount:          rowCount,
 		ColCount:          colCount,
+		RowsImported:      rowCount,
 		ImportDurationMs:  int(importDuration.Milliseconds()),
 		ProfileDurationMs: int(profileDuration.Milliseconds()),
+		SnapshotSizeBytes: snapshotSizeBytes,
 		ProfileMode:       profileMode,
+		ProfErr:           profErr,
 	}, nil
 }
 
+var pgIdentifierPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
 func sanitizePGIdentifier(name string) string {
-	clean := strings.ReplaceAll(name, `"`, "")
-	clean = strings.TrimSpace(clean)
+	clean := strings.TrimSpace(name)
+	if clean == "" || !pgIdentifierPattern.MatchString(clean) {
+		return "_invalid"
+	}
 	return clean
 }
 
 func (s *SourceService) streamImportToSQLite(ctx context.Context, pgDB *sql.DB, schema, object string, ingester *data.Ingester, tableName string) (int, int, error) {
 	schema = sanitizePGIdentifier(schema)
 	object = sanitizePGIdentifier(object)
+	if err := data.ValidateSQLIdent(tableName); err != nil {
+		return 0, 0, fmt.Errorf("invalid SQLite table name after sanitization: %w", err)
+	}
 	qualifiedName := fmt.Sprintf("\"%s\".\"%s\"", schema, object)
 
 	query := fmt.Sprintf("SELECT * FROM %s", qualifiedName)
@@ -305,6 +386,7 @@ func (s *SourceService) streamImportToSQLite(ctx context.Context, pgDB *sql.DB, 
 
 	for rows.Next() {
 		if err := rows.Scan(valPtrs...); err != nil {
+			log.Printf("pg import: scan error on row %d table=%s err=%v", rowCount, tableName, err)
 			continue
 		}
 		row := make([]string, colCount)
@@ -312,7 +394,7 @@ func (s *SourceService) streamImportToSQLite(ctx context.Context, pgDB *sql.DB, 
 			if vals[i] == nil {
 				row[i] = ""
 			} else {
-				row[i] = fmt.Sprintf("%v", vals[i])
+				row[i] = formatPGValue(vals[i])
 			}
 		}
 		batch = append(batch, row)
@@ -330,8 +412,6 @@ func (s *SourceService) streamImportToSQLite(ctx context.Context, pgDB *sql.DB, 
 		}
 		rowCount += len(batch)
 	}
-
-	_ = ingester.GenerateSchemaMetadata(tableName)
 
 	return rowCount, colCount, nil
 }
@@ -358,16 +438,49 @@ func sanitizePGTableName(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = strings.ReplaceAll(name, ".", "_")
 	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, " ", "_")
 	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
 		name = "t_" + name
+	}
+	if name == "" || !pgIdentifierPattern.MatchString(name) {
+		return "_table_invalid"
 	}
 	return name
 }
 
 func sanitizePGColumnName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	return name
+	clean := strings.ToLower(strings.TrimSpace(name))
+	clean = strings.ReplaceAll(clean, ".", "_")
+	clean = strings.ReplaceAll(clean, "-", "_")
+	clean = strings.ReplaceAll(clean, " ", "_")
+	if clean == "" || !pgIdentifierPattern.MatchString(clean) {
+		return "_col_invalid"
+	}
+	return clean
+}
+
+func isInAllowlist(entries []AllowlistEntry, schema, object string) bool {
+	for _, e := range entries {
+		if e.Schema == schema && e.Name == object {
+			return true
+		}
+		if strings.EqualFold(e.Schema, schema) && strings.EqualFold(e.Name, object) {
+			return true
+		}
+	}
+	return false
+}
+
+func formatPGValue(v interface{}) string {
+	switch tv := v.(type) {
+	case time.Time:
+		return tv.Format("2006-01-02 15:04:05")
+	case *time.Time:
+		if tv == nil {
+			return ""
+		}
+		return tv.Format("2006-01-02 15:04:05")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

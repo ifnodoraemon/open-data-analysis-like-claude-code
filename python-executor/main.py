@@ -372,20 +372,20 @@ def list_tools() -> dict:
             {
                 "name": "code_run_python",
                 "description": (
-                    "在安全的 Python 环境中执行代码。预装了 pandas, numpy, matplotlib, scipy。"
-                    "可以进行数据处理、统计分析、机器学习、绘图等操作。"
-                    "生成的图表文件会保存在工作目录中。"
+                    "Execute Python code in a sandboxed environment. Pre-installed: pandas, numpy, matplotlib, scipy. "
+                    "Can perform data processing, statistical analysis, ML, and charting. "
+                    "Generated chart files are saved to the workspace directory."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": "要执行的 Python 代码",
+                            "description": "Python code to execute",
                         },
                         "timeout": {
                             "type": "integer",
-                            "description": f"超时时间（秒），默认 30，最大 {MAX_TIMEOUT}",
+                            "description": f"Timeout in seconds, default 30, max {MAX_TIMEOUT}",
                             "default": 30,
                         },
                     },
@@ -394,6 +394,30 @@ def list_tools() -> dict:
             }
         ]
     }
+
+
+@app.post("/execute-tool")
+async def execute_tool(request: Request) -> dict:
+    """MCP-compatible tool execution endpoint.
+
+    Accepts a JSON body with `tool_name` and `args` fields,
+    dispatches to the appropriate internal handler.
+    This allows the python-executor to be used as an MCP tool server.
+    """
+    _verify_proxy_token(request)
+
+    body = await request.json()
+    tool_name = body.get("tool_name", "")
+    args = body.get("args", {})
+
+    if tool_name != "code_run_python":
+        raise HTTPException(400, f"Unknown tool: {tool_name}")
+
+    code = args.get("code", "")
+    timeout = args.get("timeout", 30)
+
+    req = ExecuteRequest(code=code, timeout=timeout)
+    return await execute_code(req, request)
 
 
 def _apply_resource_limits() -> None:

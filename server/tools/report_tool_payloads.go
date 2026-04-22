@@ -16,7 +16,9 @@ func reportDraftPayload(state *ReportState, fields map[string]interface{}) map[s
 	payload["is_finalized"] = delivery.IsFinalized
 	payload["needs_finalize"] = delivery.NeedsFinalize
 	payload["requires_finalize_for_delivery"] = delivery.HasContent
-	payload["message"] = reportDraftMessage
+	if _, hasUISummary := payload["ui_summary"]; !hasUISummary {
+		payload["ui_summary"] = reportDraftMessage
+	}
 	return payload
 }
 
@@ -34,7 +36,6 @@ func reportFinalizeBlockedFailure(state *ReportState, blockers []string) string 
 			"active_branch_count": len(blockers),
 			"active_branches":     blockers,
 			"can_finalize":        false,
-			"message":             "detected unclosed root goals / active branches; delivery_state stays draft.",
 			"ui_summary":          formatFinalizeBlockedSummary(len(blockers)),
 		},
 	))
@@ -47,7 +48,6 @@ func reportFinalizeIssuesFailure(state *ReportState, issues []string) string {
 			"can_finalize":         false,
 			"finalize_issue_count": len(issues),
 			"finalize_issues":      issues,
-			"message":              "report structure validation failed; delivery_state stays draft.",
 			"ui_summary":           formatFinalizeIssuesSummary(len(issues)),
 		},
 	))
@@ -58,7 +58,6 @@ func reportAlreadyFinalizedFailure(state *ReportState) string {
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
 			"can_finalize": false,
-			"message":      "delivery_state is already finalized; no new draft changes detected.",
 			"ui_summary":   "delivery_state=finalized; no new draft changes detected.",
 		},
 	))
@@ -69,7 +68,6 @@ func reportFinalizeSuccess(fields map[string]interface{}) string {
 	payload["delivery_state"] = "finalized"
 	payload["is_finalized"] = true
 	payload["needs_finalize"] = false
-	payload["message"] = "delivery_state updated to finalized."
 	return toolSuccess("report_finalize", payload)
 }
 
@@ -93,9 +91,9 @@ func mergePayloads(base map[string]interface{}, extra map[string]interface{}) ma
 }
 
 func formatFinalizeBlockedSummary(count int) string {
-	return "finalize blocked：active_branch_count=" + strconv.Itoa(count)
+	return "finalize blocked: active_branch_count=" + strconv.Itoa(count)
 }
 
 func formatFinalizeIssuesSummary(count int) string {
-	return "finalize blocked：finalize_issue_count=" + strconv.Itoa(count)
+	return "finalize blocked: finalize_issue_count=" + strconv.Itoa(count)
 }

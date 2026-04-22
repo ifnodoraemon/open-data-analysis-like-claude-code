@@ -92,17 +92,31 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	runtimeSession.LockUpload()
 	ingestResult, ingestErr := materializeAndProfile(r.Context(), runtimeSession, source, uploaded)
+	runtimeSession.UnlockUpload()
 	if ingestErr != nil {
 		log.Printf("upload: materialize failed file_id=%s err=%v", uploaded.ID, ingestErr)
 		resp["ingest_status"] = "failed"
 		resp["message"] = fmt.Sprintf("file uploaded but import failed: %v", ingestErr)
 	} else {
 		resp["snapshot_id"] = ingestResult.SnapshotID
-		resp["table_name"] = ingestResult.TableName
+		resp["semantic_profile_id"] = ingestResult.ProfileID
+		resp["analysis_table_name"] = ingestResult.TableName
 		resp["row_count"] = ingestResult.RowCount
 		resp["column_count"] = ingestResult.ColCount
-		resp["ingest_status"] = "success"
+		resp["rows_imported"] = ingestResult.RowsImported
+		resp["import_duration_ms"] = ingestResult.ImportDurationMs
+		resp["profile_duration_ms"] = ingestResult.ProfileDurationMs
+		resp["snapshot_size_bytes"] = ingestResult.SnapshotSizeBytes
+		resp["profile_mode"] = ingestResult.ProfileMode
+		resp["large_dataset"] = ingestResult.RowCount >= 1000000
+		if ingestResult.ProfErr != nil {
+			resp["ingest_status"] = "partial"
+			resp["message"] = fmt.Sprintf("file imported but semantic profiling failed: %v", ingestResult.ProfErr)
+		} else {
+			resp["ingest_status"] = "success"
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -110,10 +124,17 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type ingestResult struct {
-	SnapshotID string
-	TableName  string
-	RowCount   int
-	ColCount   int
+	SnapshotID        string
+	ProfileID         string
+	TableName         string
+	RowCount          int
+	ColCount          int
+	RowsImported      int
+	ImportDurationMs  int
+	ProfileDurationMs int
+	SnapshotSizeBytes int64
+	ProfileMode       string
+	ProfErr           error
 }
 
 func materializeAndProfile(ctx context.Context, sess *session.Session, source *domain.DataSource, file *domain.File) (*ingestResult, error) {
@@ -130,16 +151,10 @@ func materializeAndProfile(ctx context.Context, sess *session.Session, source *d
 		return nil, fmt.Errorf("import failed: %w", err)
 	}
 
-	// Determine profile mode from row count (cheap COUNT(*) first)
-	if err := data.ValidateSQLIdent(tableName); err != nil {
-		return nil, fmt.Errorf("invalid table name after import: %w", err)
-	}
-	var rowCountForMode int
-	sess.Ingester.GetDB().QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", tableName)).Scan(&rowCountForMode)
 	var profileMode domain.ProfileMode = domain.ProfileModeSampled
-	if rowCountForMode < 10000 {
+	if rowCount < 10000 {
 		profileMode = domain.ProfileModeExact
-	} else if rowCountForMode < 100000 {
+	} else if rowCount < 100000 {
 		profileMode = domain.ProfileModeMixed
 	}
 
@@ -169,31 +184,54 @@ func materializeAndProfile(ctx context.Context, sess *session.Session, source *d
 		}
 	}
 
-	facts := sourceService.BuildProfileFacts(schema, semanticProfile, nil)
+	snapshotSizeBytes := file.SizeBytes
+	if dbPath := sess.Ingester.DBPath(); dbPath != "" {
+		if fi, fiErr := os.Stat(dbPath); fiErr == nil {
+			snapshotSizeBytes = fi.Size()
+		}
+	}
+
+	facts := sourceService.BuildProfileFacts(schema, semanticProfile, nil, string(profileMode), snapshotSizeBytes)
 	profileDuration := time.Since(profileStart)
 
 	snapshot, err := sourceService.CreateSnapshot(
 		ctx, sess.ID, source.ID,
 		"file_upload", "", file.DisplayName,
 		tableName, rowCount, colCount, schemaSig,
-		rowCount, int(importDuration.Milliseconds()), int(profileDuration.Milliseconds()), file.SizeBytes, profileMode,
+		rowCount, int(importDuration.Milliseconds()), int(profileDuration.Milliseconds()), snapshotSizeBytes, profileMode,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot: %w", err)
 	}
 
-	_, profErr := sourceService.CreateSemanticProfile(
+	profile, profErr := sourceService.CreateSemanticProfile(
 		ctx, sess.ID, sess.WorkspaceID, source.ID, snapshot.ID,
 		tableName, schemaSig, facts,
 	)
 	if profErr != nil {
 		log.Printf("upload: create semantic profile failed source_id=%s err=%v", source.ID, profErr)
+		errMsg := profErr.Error()
+		if updateErr := sourceService.RecordSnapshotError(ctx, snapshot.ID, errMsg); updateErr != nil {
+			log.Printf("upload: failed to write profile error to snapshot snapshot_id=%s err=%v", snapshot.ID, updateErr)
+		}
+	}
+
+	profileID := ""
+	if profile != nil {
+		profileID = profile.ID
 	}
 
 	return &ingestResult{
-		SnapshotID: snapshot.ID,
-		TableName:  tableName,
-		RowCount:   rowCount,
-		ColCount:   colCount,
+		SnapshotID:        snapshot.ID,
+		ProfileID:         profileID,
+		TableName:         tableName,
+		RowCount:          rowCount,
+		ColCount:          colCount,
+		RowsImported:      rowCount,
+		ImportDurationMs:  int(importDuration.Milliseconds()),
+		ProfileDurationMs: int(profileDuration.Milliseconds()),
+		SnapshotSizeBytes: snapshotSizeBytes,
+		ProfileMode:       string(profileMode),
+		ProfErr:           profErr,
 	}, nil
 }

@@ -26,7 +26,7 @@ func init() {
 
 func (t *RunPythonTool) Name() string { return "code_run_python" }
 func (t *RunPythonTool) Description() string {
-	return "Execute Python code in a sandboxed environment and return stdout, stderr, generated files, and duration."
+	return "Execute Python code in a sandboxed environment via MCP service. Returns stdout, stderr, generated file URLs, execution duration, and truncation flag. Side effects: may produce output files accessible via API. Failure conditions: MCP service unavailable, timeout exceeded, runtime error. The code runs in an isolated container with no persistent state between calls; data must be re-read or passed explicitly."
 }
 
 func (t *RunPythonTool) Parameters() json.RawMessage {
@@ -100,7 +100,10 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 		Timeout: params.Timeout,
 	})
 
-	req, err := http.NewRequest(http.MethodPost, endpoint+"/execute", bytes.NewReader(reqBody))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(params.Timeout+5)*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/execute", bytes.NewReader(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %w", err)
 	}
@@ -109,7 +112,7 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 		req.Header.Set("X-Proxy-Token", proxyToken)
 	}
 
-	client := &http.Client{Timeout: time.Duration(params.Timeout+5) * time.Second}
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("Python MCP service unavailable: %w", err)

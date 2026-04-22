@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -347,8 +348,24 @@ func adjustCompactionBoundary(history []ConversationItem, boundary int) int {
 	}
 	msg := history[boundary]
 	if msg.Role == openai.ChatMessageRoleTool {
-		for i := boundary - 1; i >= 0 && i >= boundary-5; i-- {
+		for i := boundary - 1; i >= 0 && i >= boundary-10; i-- {
 			if history[i].Role == openai.ChatMessageRoleAssistant && len(history[i].ToolCalls) > 0 {
+				toolCallCount := len(history[i].ToolCalls)
+				resultCount := 0
+				for j := i + 1; j < len(history) && j <= i+toolCallCount; j++ {
+					if history[j].Role == openai.ChatMessageRoleTool {
+						resultCount++
+					} else {
+						break
+					}
+				}
+				if resultCount < toolCallCount {
+					for k := i - 1; k >= 0 && k >= i-5; k-- {
+						if history[k].Role == openai.ChatMessageRoleUser || (history[k].Role == openai.ChatMessageRoleAssistant && len(history[k].ToolCalls) == 0) {
+							return k + 1
+						}
+					}
+				}
 				return i
 			}
 		}
@@ -594,7 +611,8 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 
 				success := toolCallSucceeded(result, execErr)
 				if execErr != nil {
-					result = fmt.Sprintf("tool execution error: %s", execErr.Error())
+					sanitized := sanitizeToolError(execErr.Error())
+					result = fmt.Sprintf("tool execution error: %s", sanitized)
 					log.Printf("Tool %s error: %v", toolCall.Function.Name, execErr)
 				}
 				resultBytes := []byte(result)
@@ -798,6 +816,8 @@ func compactQueryResult(payload map[string]interface{}) string {
 
 	// 为数值列生成统计摘要
 	cloned["_row_count"] = len(rows)
+	cloned["_original_row_count"] = cloned["row_count"]
+	cloned["row_count"] = queryCompactKeepRows
 	if columns, ok := cloned["columns"].([]interface{}); ok && len(rows) > 0 {
 		stats := buildColumnStats(columns, rows)
 		if len(stats) > 0 {
@@ -891,23 +911,40 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	defer e.mu.Unlock()
 
 	var toolCallID string
+	var pendingIDs []string
 	for i := len(e.history) - 1; i >= 0; i-- {
 		msg := e.history[i]
 		if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
 				if tc.Function.Name == "user_request_input" {
-					toolCallID = tc.ID
-					break
+					pendingIDs = append(pendingIDs, tc.ID)
 				}
 			}
 		}
-		if toolCallID != "" {
+		if len(pendingIDs) > 0 {
 			break
 		}
 	}
 
-	if toolCallID == "" {
+	if len(pendingIDs) == 0 {
 		return fmt.Errorf("no pending user_request_input tool call found")
+	}
+
+	for _, id := range pendingIDs {
+		hasResult := false
+		for j := len(e.history) - 1; j >= 0; j-- {
+			if e.history[j].Role == openai.ChatMessageRoleTool && e.history[j].ToolCallID == id {
+				hasResult = true
+				break
+			}
+		}
+		if !hasResult && toolCallID == "" {
+			toolCallID = id
+		}
+	}
+
+	if toolCallID == "" {
+		return fmt.Errorf("all user_request_input calls already have results")
 	}
 
 	e.history = append(e.history, ConversationItem{
@@ -917,4 +954,26 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	})
 
 	return nil
+}
+
+var toolErrorSanitizePatterns = []struct {
+	pattern *regexp.Regexp
+	replace string
+}{
+	{regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?key)\s*[=:]\s*\S+`), "${1}=***"},
+	{regexp.MustCompile(`(?i)(postgresql?|mysql|mongodb)://[^\s]+`), "${1}://***"},
+	{regexp.MustCompile(`/home/[^\s]+`), "/home/***"},
+	{regexp.MustCompile(`/tmp/[^\s]+`), "/tmp/***"},
+	{regexp.MustCompile(`/var/[^\s]+`), "/var/***"},
+	{regexp.MustCompile(`C:\\[^\s]+`), "C:\\***"},
+}
+
+func sanitizeToolError(msg string) string {
+	for _, s := range toolErrorSanitizePatterns {
+		msg = s.pattern.ReplaceAllString(msg, s.replace)
+	}
+	if len(msg) > 500 {
+		msg = msg[:500] + "...(truncated)"
+	}
+	return msg
 }
