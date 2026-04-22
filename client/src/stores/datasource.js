@@ -104,6 +104,19 @@ export const useDataSourceStore = defineStore('dataSource', () => {
     }
   }
 
+  async function removeSessionSource(sessionId, sourceId) {
+    const res = await fetch(`/api/sessions/${sessionId}/sources/${sourceId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    })
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      return { ok: false, error: errBody || `remove failed (HTTP ${res.status})` }
+    }
+    await fetchSessionSources(sessionId)
+    return { ok: true }
+  }
+
   function getAuthHeaders() {
     const token = localStorage.getItem('oda_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
@@ -121,6 +134,7 @@ export const useDataSourceStore = defineStore('dataSource', () => {
     confirmProfile,
     createPostgresSource,
     testConnection,
-    importFromSource
+    importFromSource,
+    removeSessionSource
   }
 })

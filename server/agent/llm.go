@@ -251,15 +251,28 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 	}
 	responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
 
-	var apiResp responsesAPIResponse
-	if err := json.Unmarshal(respBytes, &apiResp); err != nil {
+	apiResp, err := parseResponsesBody(respBytes)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse Responses body: %w", err)
+	}
+	if apiResp.Error != nil {
+		return nil, fmt.Errorf("OpenAI Responses API call failed: code=%s message=%s", apiResp.Error.Code, apiResp.Error.Message)
+	}
+	if hasPromptMismatch(reqBody.Instructions, apiResp.Instructions) && apiResp.isEmptyOutput() {
+		l.debugLog(span, "llm.prompt_mismatch", map[string]interface{}{
+			"request_instruction_preview":  clipText(reqBody.Instructions, 240),
+			"response_instruction_preview": clipText(apiResp.Instructions, 240),
+		})
+		return nil, fmt.Errorf("upstream LLM gateway returned a response with mismatched instructions and no output; check model routing or gateway configuration")
 	}
 	l.debugLog(span, "llm.response", map[string]interface{}{
 		"duration_ms":         time.Since(start).Milliseconds(),
 		"output_preview":      clipText(apiResp.OutputText, 300),
 		"output_chars":        len([]rune(apiResp.OutputText)),
 		"item_count":          len(apiResp.Output),
+		"choice_count":        len(apiResp.Choices),
+		"status":              apiResp.Status,
+		"instructions_match":  !hasPromptMismatch(reqBody.Instructions, apiResp.Instructions),
 		"tool_call_count":     countResponsesToolCalls(apiResp.Output),
 		"tool_calls":          responseToolNames(apiResp.Output),
 		"usage_input_tokens":  apiResp.Usage.InputTokens,
@@ -269,18 +282,28 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 		"response_sha256":     blobSHA256(respBytes),
 		"response_path":       responsePath,
 	})
-	return l.convertResponsesResponse(&apiResp), nil
+	return l.convertResponsesResponse(apiResp), nil
 }
 
 type responsesAPIRequest struct {
-	Model        string           `json:"model"`
-	Instructions string           `json:"instructions,omitempty"`
-	Input        []responsesInput `json:"input,omitempty"`
-	Tools        []responsesTool  `json:"tools,omitempty"`
-	ToolChoice   string           `json:"tool_choice,omitempty"`
+	Model        string              `json:"model"`
+	Instructions string              `json:"instructions,omitempty"`
+	Input        []responsesInput    `json:"input,omitempty"`
+	Tools        []responsesTool     `json:"tools,omitempty"`
+	ToolChoice   string              `json:"tool_choice,omitempty"`
+	Reasoning    *responsesReasoning `json:"reasoning,omitempty"`
+	Text         *responsesText      `json:"text,omitempty"`
 }
 
 type responsesInput map[string]interface{}
+
+type responsesReasoning struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+type responsesText struct {
+	Verbosity string `json:"verbosity,omitempty"`
+}
 
 type responsesTool struct {
 	Type        string      `json:"type"`
@@ -290,15 +313,33 @@ type responsesTool struct {
 }
 
 type responsesAPIResponse struct {
-	OutputText string                `json:"output_text"`
-	Output     []responsesOutputItem `json:"output"`
-	Usage      responsesAPIUsage     `json:"usage"`
+	ID           string                `json:"id"`
+	Status       string                `json:"status"`
+	Model        string                `json:"model"`
+	Instructions string                `json:"instructions"`
+	OutputText   string                `json:"output_text"`
+	Output       []responsesOutputItem `json:"output"`
+	Usage        responsesAPIUsage     `json:"usage"`
+	Error        *responsesAPIError    `json:"error"`
+	Choices      []responsesChoice     `json:"choices"`
+	Message      *responsesMessage     `json:"message"`
+	Content      interface{}           `json:"content"`
+	Text         interface{}           `json:"text"`
 }
 
 type responsesAPIUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+type responsesAPIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Param   string `json:"param"`
 }
 
 type responsesOutputItem struct {
@@ -316,9 +357,182 @@ type responsesOutputContent struct {
 	Text string `json:"text"`
 }
 
+type responsesChoice struct {
+	Message      responsesMessage `json:"message"`
+	FinishReason string           `json:"finish_reason"`
+}
+
+type responsesMessage struct {
+	Role      string                  `json:"role"`
+	Content   interface{}             `json:"content"`
+	ToolCalls []responsesChatToolCall `json:"tool_calls"`
+}
+
+type responsesChatToolCall struct {
+	ID       string                    `json:"id"`
+	Type     string                    `json:"type"`
+	Function responsesChatFunctionCall `json:"function"`
+}
+
+type responsesChatFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type responsesSSEEvent struct {
+	Type     string                `json:"type"`
+	Response *responsesAPIResponse `json:"response"`
+	Error    *responsesAPIError    `json:"error"`
+	Delta    string                `json:"delta"`
+}
+
+func parseResponsesBody(body []byte) (*responsesAPIResponse, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if strings.HasPrefix(trimmed, "data:") {
+		return parseResponsesSSE(trimmed)
+	}
+
+	var apiResp responsesAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	apiResp.normalize()
+	return &apiResp, nil
+}
+
+func parseResponsesSSE(body string) (*responsesAPIResponse, error) {
+	var apiResp responsesAPIResponse
+	var deltas []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var event responsesSSEEvent
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			continue
+		}
+		if event.Response != nil {
+			apiResp = *event.Response
+		}
+		if event.Error != nil {
+			apiResp.Error = event.Error
+		}
+		if event.Type == "response.output_text.delta" && event.Delta != "" {
+			deltas = append(deltas, event.Delta)
+		}
+	}
+	if apiResp.ID == "" && apiResp.Error == nil && len(deltas) == 0 {
+		return nil, fmt.Errorf("no parseable Responses SSE events")
+	}
+	if strings.TrimSpace(apiResp.OutputText) == "" && len(deltas) > 0 {
+		apiResp.OutputText = strings.Join(deltas, "")
+	}
+	apiResp.normalize()
+	return &apiResp, nil
+}
+
+func (r *responsesAPIResponse) normalize() {
+	if r == nil {
+		return
+	}
+	if r.Usage.InputTokens == 0 {
+		r.Usage.InputTokens = r.Usage.PromptTokens
+	}
+	if r.Usage.OutputTokens == 0 {
+		r.Usage.OutputTokens = r.Usage.CompletionTokens
+	}
+	if r.Usage.TotalTokens == 0 {
+		r.Usage.TotalTokens = r.Usage.InputTokens + r.Usage.OutputTokens
+	}
+	if strings.TrimSpace(r.OutputText) == "" {
+		r.OutputText = firstText(contentToText(r.Text), contentToText(r.Content), messageText(r.Message))
+	}
+}
+
+func (r *responsesAPIResponse) isEmptyOutput() bool {
+	if r == nil {
+		return true
+	}
+	if strings.TrimSpace(r.OutputText) != "" || strings.TrimSpace(contentToText(r.Text)) != "" {
+		return false
+	}
+	if strings.TrimSpace(contentToText(r.Content)) != "" || strings.TrimSpace(messageText(r.Message)) != "" {
+		return false
+	}
+	return len(r.Output) == 0 && len(r.Choices) == 0
+}
+
+func hasPromptMismatch(requestInstructions, responseInstructions string) bool {
+	requestInstructions = strings.TrimSpace(requestInstructions)
+	responseInstructions = strings.TrimSpace(responseInstructions)
+	if requestInstructions == "" || responseInstructions == "" {
+		return false
+	}
+	return requestInstructions != responseInstructions
+}
+
+func firstText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func messageText(message *responsesMessage) string {
+	if message == nil {
+		return ""
+	}
+	return contentToText(message.Content)
+}
+
+func contentToText(content interface{}) string {
+	switch typed := content.(type) {
+	case string:
+		return typed
+	case []interface{}:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if text, ok := itemMap["text"].(string); ok && strings.TrimSpace(text) != "" {
+					parts = append(parts, text)
+					continue
+				}
+				if text, ok := itemMap["content"].(string); ok && strings.TrimSpace(text) != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]interface{}:
+		if text, ok := typed["text"].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+		if text, ok := typed["content"].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+		if text, ok := typed["value"].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
 func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.Tool) (*responsesAPIRequest, error) {
 	req := &responsesAPIRequest{
 		Model: l.model,
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l.model)), "gpt-5") {
+		req.Reasoning = &responsesReasoning{Effort: "low"}
+		req.Text = &responsesText{Verbosity: "medium"}
 	}
 
 	if bundle.Policy != "" {
@@ -393,6 +607,7 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 }
 
 func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai.ChatCompletionResponse {
+	resp.normalize()
 	choice := openai.ChatCompletionChoice{
 		Index: 0,
 		Message: openai.ChatCompletionMessage{
@@ -405,6 +620,14 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 	if strings.TrimSpace(resp.OutputText) != "" {
 		// 如果有聚合好的文本，则直接使用，避免和 message 分块重复
 		textParts = append(textParts, resp.OutputText)
+	}
+	if strings.TrimSpace(resp.OutputText) == "" {
+		if text := contentToText(resp.Content); text != "" {
+			textParts = append(textParts, text)
+		}
+		if text := messageText(resp.Message); text != "" {
+			textParts = append(textParts, text)
+		}
 	}
 
 	for _, item := range resp.Output {
@@ -434,6 +657,34 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 				"name": item.Name,
 				"id":   item.ID,
 			})
+		}
+	}
+	for _, compatibleChoice := range resp.Choices {
+		if strings.TrimSpace(resp.OutputText) == "" {
+			if text := contentToText(compatibleChoice.Message.Content); text != "" {
+				textParts = append(textParts, text)
+			}
+		}
+		for _, toolCall := range compatibleChoice.Message.ToolCalls {
+			if strings.TrimSpace(toolCall.Function.Name) == "" {
+				continue
+			}
+			choice.FinishReason = openai.FinishReasonToolCalls
+			callType := toolCall.Type
+			if callType == "" {
+				callType = string(openai.ToolTypeFunction)
+			}
+			choice.Message.ToolCalls = append(choice.Message.ToolCalls, openai.ToolCall{
+				ID:   toolCall.ID,
+				Type: openai.ToolType(callType),
+				Function: openai.FunctionCall{
+					Name:      toolCall.Function.Name,
+					Arguments: toolCall.Function.Arguments,
+				},
+			})
+		}
+		if compatibleChoice.FinishReason == "tool_calls" {
+			choice.FinishReason = openai.FinishReasonToolCalls
 		}
 	}
 

@@ -170,19 +170,7 @@ func materializeAndProfile(ctx context.Context, sess *session.Session, source *d
 	}
 	schemaSig := service.ComputeSchemaSignature(schema)
 
-	var semanticProfile *data.SemanticProfile
 	profileStart := time.Now()
-	if sess.Ingester.SemanticEnricher != nil {
-		activeTables := sess.Ingester.GetActiveTables()
-		semCtx, semCancel := context.WithTimeout(ctx, 30*time.Second)
-		defer semCancel()
-		sp, semErr := data.AnalyzeTableSemantics(semCtx, sess.Ingester.SemanticEnricher, schema, activeTables)
-		if semErr != nil {
-			log.Printf("upload: LLM semantic analysis skipped table=%s err=%v", tableName, semErr)
-		} else {
-			semanticProfile = sp
-		}
-	}
 
 	snapshotSizeBytes := file.SizeBytes
 	if dbPath := sess.Ingester.DBPath(); dbPath != "" {
@@ -191,7 +179,7 @@ func materializeAndProfile(ctx context.Context, sess *session.Session, source *d
 		}
 	}
 
-	facts := sourceService.BuildProfileFacts(schema, semanticProfile, nil, string(profileMode), snapshotSizeBytes)
+	facts := sourceService.BuildProfileFacts(schema, nil, nil, string(profileMode), snapshotSizeBytes)
 	profileDuration := time.Since(profileStart)
 
 	snapshot, err := sourceService.CreateSnapshot(

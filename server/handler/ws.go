@@ -35,6 +35,7 @@ var allowedOrigins = map[string]bool{
 }
 
 var upgrader = websocket.Upgrader{
+	Subprotocols: []string{"mcp-token"},
 	CheckOrigin: func(r *http.Request) bool {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin == "" {
@@ -47,11 +48,11 @@ var upgrader = websocket.Upgrader{
 const persistenceTimeout = 10 * time.Second
 
 var (
-	wsConnsMu    sync.Mutex
-	wsConns      = make(map[string]map[*websocket.Conn]context.CancelFunc)
-	overflowWg   sync.WaitGroup
-	maxOverflow  = int32(8)
-	overflowCnt  int32
+	wsConnsMu   sync.Mutex
+	wsConns     = make(map[string]map[*websocket.Conn]context.CancelFunc)
+	overflowWg  sync.WaitGroup
+	maxOverflow = int32(8)
+	overflowCnt int32
 )
 
 func registerWS(sessionID string, conn *websocket.Conn) context.CancelFunc {

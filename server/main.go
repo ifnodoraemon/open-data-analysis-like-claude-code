@@ -39,38 +39,47 @@ func main() {
 
 	r.Group(func(protected chi.Router) {
 		protected.Use(handler.AuthMiddleware)
-		protected.Use(handler.MaxBodySizeMiddleware(1 << 20))
-		protected.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
-		protected.Get("/api/bootstrap", handler.BootstrapHandler)
-		protected.Post("/api/sessions", handler.CreateSessionHandler)
-		protected.Get("/api/sessions", handler.ListSessionsHandler)
-		protected.Get("/api/sessions/{sessionID}", handler.GetSessionHandler)
-		protected.Put("/api/sessions/{sessionID}", handler.UpdateSessionHandler)
-		protected.Delete("/api/sessions/{sessionID}", handler.DeleteSessionHandler)
-		protected.Get("/api/runs", handler.ListRunsHandler)
-		protected.Get("/api/runs/{runID}", handler.GetRunHandler)
-		protected.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)
-		protected.Post("/api/report-exports/docx", handler.ConvertReportDOCXHandler)
-		protected.Get("/api/python-files/{filename}", handler.ProxyPythonFileHandler)
-		protected.Post("/api/upload", handler.UploadHandler)
+
 		protected.Get("/ws", handler.WSHandler)
 
-		protected.Get("/api/sessions/{sessionID}/sources", handler.SessionSourcesHandler)
-		protected.Get("/api/semantic-profiles/{profileID}", handler.SemanticProfileDetailHandler)
-		protected.Post("/api/semantic-profiles/{profileID}/confirm", handler.ConfirmProfileHandler)
-		protected.Post("/api/data-sources", handler.CreateDataSourceHandler)
-		protected.Get("/api/data-sources", handler.ListDataSourcesHandler)
-		protected.Post("/api/data-sources/{sourceID}/test", handler.TestDataSourceHandler)
-		protected.Get("/api/data-sources/{sourceID}/catalog", handler.CatalogDataSourceHandler)
-		protected.Post("/api/data-sources/{sourceID}/import", handler.ImportDataSourceHandler)
+		protected.Group(func(upload chi.Router) {
+			upload.Use(handler.MaxBodySizeMiddleware(100 << 20))
+			upload.Post("/api/upload", handler.UploadHandler)
+		})
+
+		protected.Group(func(api chi.Router) {
+			api.Use(handler.MaxBodySizeMiddleware(1 << 20))
+			api.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
+			api.Get("/api/bootstrap", handler.BootstrapHandler)
+			api.Post("/api/sessions", handler.CreateSessionHandler)
+			api.Get("/api/sessions", handler.ListSessionsHandler)
+			api.Get("/api/sessions/{sessionID}", handler.GetSessionHandler)
+			api.Put("/api/sessions/{sessionID}", handler.UpdateSessionHandler)
+			api.Delete("/api/sessions/{sessionID}", handler.DeleteSessionHandler)
+			api.Get("/api/runs", handler.ListRunsHandler)
+			api.Get("/api/runs/{runID}", handler.GetRunHandler)
+			api.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)
+			api.Post("/api/report-exports/docx", handler.ConvertReportDOCXHandler)
+			api.Get("/api/python-files/{filename}", handler.ProxyPythonFileHandler)
+
+			api.Get("/api/sessions/{sessionID}/sources", handler.SessionSourcesHandler)
+			api.Delete("/api/sessions/{sessionID}/sources/{sourceID}", handler.DeleteSessionSourceHandler)
+			api.Get("/api/semantic-profiles/{profileID}", handler.SemanticProfileDetailHandler)
+			api.Post("/api/semantic-profiles/{profileID}/confirm", handler.ConfirmProfileHandler)
+			api.Post("/api/data-sources", handler.CreateDataSourceHandler)
+			api.Get("/api/data-sources", handler.ListDataSourcesHandler)
+			api.Post("/api/data-sources/{sourceID}/test", handler.TestDataSourceHandler)
+			api.Get("/api/data-sources/{sourceID}/catalog", handler.CatalogDataSourceHandler)
+			api.Post("/api/data-sources/{sourceID}/import", handler.ImportDataSourceHandler)
+		})
 	})
 
 	port := config.Cfg.ServerPort
 	srv := &http.Server{
 		Addr:         ":" + port,
 		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  120 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 

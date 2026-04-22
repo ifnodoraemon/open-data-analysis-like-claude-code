@@ -10,7 +10,10 @@
         <h4>当前会话 Snapshots</h4>
         <div v-if="sessionSources.length === 0" class="empty-hint">暂无数据源</div>
         <div v-for="source in sessionSources" :key="source.source_id" class="source-card">
-           <div class="source-name">{{ source.display_name }}</div>
+           <div class="source-title-row">
+             <div class="source-name">{{ source.display_name }}</div>
+             <button class="btn-xs danger" @click="handleRemoveSessionSource(source)" :disabled="removingSourceId === source.source_id">删除</button>
+           </div>
            <div class="source-meta">
              <span class="badge" :class="source.source_type">{{ source.source_type }}</span>
              <span v-if="source.analysis_table_name" class="table-name">{{ source.analysis_table_name }}</span>
@@ -173,6 +176,7 @@ const selectedProfileId = ref(null)
 const importPollingTimer = ref(null)
 const isImporting = ref(false)
 const importError = ref('')
+const removingSourceId = ref('')
 const profileDetail = computed(() => store.semanticProfileDetails[selectedProfileId.value])
 
 const newSource = ref({
@@ -218,6 +222,21 @@ async function handleImport(sourceId, schema, object) {
     importError.value = e.message || '导入异常'
   } finally {
     isImporting.value = false
+  }
+}
+
+async function handleRemoveSessionSource(source) {
+  if (!props.sessionId || !source?.source_id || removingSourceId.value) return
+  const ok = window.confirm(`从当前会话删除数据源「${source.display_name || source.analysis_table_name || source.source_id}」？`)
+  if (!ok) return
+  removingSourceId.value = source.source_id
+  try {
+    const result = await store.removeSessionSource(props.sessionId, source.source_id)
+    if (result?.ok === false) {
+      importError.value = result.error || '删除失败'
+    }
+  } finally {
+    removingSourceId.value = ''
   }
 }
 
@@ -284,6 +303,7 @@ function getAuthHeaders() {
 .drawer-section h4 { font-size: 13px; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
 .empty-hint { color: #999; font-size: 13px; }
 .source-card { padding: 10px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 8px; }
+.source-title-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .source-name { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
 .source-meta { display: flex; gap: 8px; font-size: 12px; color: #666; flex-wrap: wrap; align-items: center; }
 .source-status { margin-top: 4px; font-size: 12px; }
@@ -303,6 +323,7 @@ function getAuthHeaders() {
 .btn-sm.primary { background: #1976d2; color: #fff; border-color: #1976d2; }
 .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-xs { padding: 1px 6px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px; background: #f5f5f5; cursor: pointer; }
+.btn-xs.danger { color: #c62828; border-color: #ffcdd2; background: #fff5f5; }
 .create-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding: 8px; background: #f9f9f9; border-radius: 4px; }
 .input-sm { padding: 4px 8px; font-size: 12px; border: 1px solid #ddd; border-radius: 3px; }
 .form-actions { display: flex; gap: 6px; margin-top: 4px; }

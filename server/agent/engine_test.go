@@ -39,8 +39,8 @@ func TestCompactAssistantMessage(t *testing.T) {
 	if compacted.ToolCalls[0].Function.Arguments != message.ToolCalls[0].Function.Arguments {
 		t.Fatal("expected report_create_chart arguments to stay unchanged")
 	}
-	if compacted.ToolCalls[1].Function.Arguments == message.ToolCalls[1].Function.Arguments {
-		t.Fatal("expected report_manage_blocks arguments to be compacted")
+	if compacted.ToolCalls[1].Function.Arguments != message.ToolCalls[1].Function.Arguments {
+		t.Fatal("expected report_manage_blocks arguments to stay unchanged")
 	}
 }
 

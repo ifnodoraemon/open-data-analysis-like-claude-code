@@ -17,6 +17,7 @@
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
+          multiple
           @change="handleFile"
           :disabled="isUploading"
           hidden
@@ -82,41 +83,58 @@ const pendingProfiles = computed(() =>
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 async function handleFile(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
 
-  if (file.size > MAX_FILE_SIZE) {
-    store.addMessage({
-      type: "error",
-      content: `文件过大（${formatSize(file.size)}），最大支持 ${formatSize(MAX_FILE_SIZE)}`,
-    });
+  const oversized = files.filter((file) => file.size > MAX_FILE_SIZE);
+  if (oversized.length > 0) {
+    for (const file of oversized) {
+      store.addMessage({
+        type: "error",
+        content: `文件过大（${file.name}，${formatSize(file.size)}），最大支持 ${formatSize(MAX_FILE_SIZE)}`,
+      });
+    }
+  }
+
+  const uploadableFiles = files.filter((file) => file.size <= MAX_FILE_SIZE);
+  if (uploadableFiles.length === 0) {
     e.target.value = "";
     return;
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
-
   try {
     isUploading.value = true;
     const sessionId = await ensureSession();
-    const res = await fetch(
-      `/api/upload?session_id=${encodeURIComponent(sessionId)}`,
-      {
-        method: "POST",
-        headers: store.token ? { Authorization: `Bearer ${store.token}` } : {},
-        body: formData,
-      },
-    );
-    if (!res.ok) {
-      throw new Error(await res.text());
+
+    for (const file of uploadableFiles) {
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch(
+          `/api/upload?session_id=${encodeURIComponent(sessionId)}`,
+          {
+            method: "POST",
+            headers: store.token ? { Authorization: `Bearer ${store.token}` } : {},
+            body: formData,
+          },
+        );
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        await res.json();
+        store.addMessage({
+          type: "user",
+          content: `📎 已添加数据源: ${file.name} (${formatSize(file.size)})`,
+        });
+      } catch (err) {
+        store.addMessage({
+          type: "error",
+          content: `数据源添加失败（${file.name}）: ${err.message}`,
+        });
+      }
     }
-    const data = await res.json();
+
     await dataSourceStore.fetchSessionSources(sessionId);
-    store.addMessage({
-      type: "user",
-      content: `📎 已添加数据源: ${file.name} (${formatSize(file.size)})`,
-    });
   } catch (err) {
     store.addMessage({
       type: "error",

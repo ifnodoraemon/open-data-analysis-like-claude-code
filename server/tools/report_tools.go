@@ -15,9 +15,9 @@ func init() {
 	})
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &FinalizeReportTool{
-			ReportState:       ctx.ReportState,
-			Subgoals:          ctx.Subgoals,
-			AmbiguityChecker:  ctx.AmbiguityChecker,
+			ReportState:      ctx.ReportState,
+			Subgoals:         ctx.Subgoals,
+			AmbiguityChecker: ctx.AmbiguityChecker,
 		}
 	})
 }
@@ -144,8 +144,13 @@ func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 }
 
 func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
+	normalizedArgs, err := normalizeStringifiedJSONFields(args, "sources")
+	if err != nil {
+		return "", fmt.Errorf("failed to parse parameters: %w", err)
+	}
+
 	var params reportBlockMutationParams
-	if err := json.Unmarshal(args, &params); err != nil {
+	if err := json.Unmarshal(normalizedArgs, &params); err != nil {
 		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 
@@ -224,7 +229,7 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		"author":       result.Author,
 		"block_count":  result.BlockCount,
 		"chart_count":  result.ChartCount,
-			"ui_summary":   fmt.Sprintf("delivery_state=finalized; block_count=%d; chart_count=%d", result.BlockCount, result.ChartCount),
+		"ui_summary":   fmt.Sprintf("delivery_state=finalized; block_count=%d; chart_count=%d", result.BlockCount, result.ChartCount),
 	})
 	t.ReportState.Unlock()
 	return success, nil

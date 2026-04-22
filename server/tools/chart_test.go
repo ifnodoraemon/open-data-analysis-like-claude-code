@@ -119,6 +119,38 @@ func TestCreateChartToolBuildsOptionFromDSL(t *testing.T) {
 	}
 }
 
+func TestCreateChartToolAcceptsStringifiedDSLFields(t *testing.T) {
+	t.Parallel()
+
+	tool := &CreateChartTool{ReportState: &ReportState{}}
+	result, err := tool.Execute(json.RawMessage(`{
+		"chart_id":"chart_channel",
+		"title":"渠道对比",
+		"chart_type":"bar",
+		"categories":"[\"Search\",\"Social\"]",
+		"series":"[{\"name\":\"收入\",\"type\":\"bar\",\"data\":[100,80]}]"
+	}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json feedback, got %v", err)
+	}
+	if payload["ok"] != true {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+
+	var option map[string]interface{}
+	if err := json.Unmarshal(tool.ReportState.Charts[0].Option, &option); err != nil {
+		t.Fatalf("unmarshal option: %v", err)
+	}
+	if option["xAxis"] == nil || option["series"] == nil {
+		t.Fatalf("expected normalized DSL option, got %#v", option)
+	}
+}
+
 func TestCreateChartToolAcceptsRawOption(t *testing.T) {
 	t.Parallel()
 
@@ -157,5 +189,35 @@ func TestCreateChartToolAcceptsRawOption(t *testing.T) {
 	}
 	if option["tooltip"] == nil || option["xAxis"] == nil {
 		t.Fatalf("expected raw option to be preserved: %#v", option)
+	}
+}
+
+func TestCreateChartToolAcceptsStringifiedRawOption(t *testing.T) {
+	t.Parallel()
+
+	tool := &CreateChartTool{ReportState: &ReportState{}}
+	result, err := tool.Execute(json.RawMessage(`{
+		"chart_id":"chart_custom",
+		"title":"自定义图",
+		"option":"{\"xAxis\":{\"type\":\"category\",\"data\":[\"A\"]},\"yAxis\":{\"type\":\"value\"},\"series\":[{\"type\":\"bar\",\"data\":[1]}]}"
+	}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json feedback, got %v", err)
+	}
+	if payload["ok"] != true {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+
+	var option map[string]interface{}
+	if err := json.Unmarshal(tool.ReportState.Charts[0].Option, &option); err != nil {
+		t.Fatalf("unmarshal option: %v", err)
+	}
+	if option["xAxis"] == nil || option["series"] == nil {
+		t.Fatalf("expected stringified raw option to be expanded: %#v", option)
 	}
 }

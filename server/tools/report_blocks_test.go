@@ -1,6 +1,9 @@
 package tools
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestApplyReportBlockMutationPreservesExistingSourcesOnUpsert(t *testing.T) {
 	t.Parallel()
@@ -41,5 +44,36 @@ func TestApplyReportBlockMutationPreservesExistingSourcesOnUpsert(t *testing.T) 
 	}
 	if !state.NeedsFinalize {
 		t.Fatal("expected mutation to mark report as needing finalize")
+	}
+}
+
+func TestManageReportBlocksToolAcceptsStringifiedSources(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{}
+	tool := &ManageReportBlocksTool{ReportState: state}
+	result, err := tool.Execute(json.RawMessage(`{
+		"action":"append",
+		"block_kind":"markdown",
+		"title":"摘要",
+		"content":"结论内容",
+		"sources":"[{\"kind\":\"sql\",\"sql\":\"select 1\",\"summary\":\"测试查询\"}]"
+	}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected json payload: %v", err)
+	}
+	if payload["ok"] != true {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+	if len(state.Blocks) != 1 || len(state.Blocks[0].Sources) != 1 {
+		t.Fatalf("expected normalized sources on block, got %#v", state.Blocks)
+	}
+	if state.Blocks[0].Sources[0].SQL != "select 1" {
+		t.Fatalf("unexpected source: %#v", state.Blocks[0].Sources[0])
 	}
 }

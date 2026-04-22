@@ -43,6 +43,49 @@ func SessionSourcesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func DeleteSessionSourceHandler(w http.ResponseWriter, r *http.Request) {
+	identity, ok := auth.FromContext(r.Context())
+	if !ok || identity.UserID == "" {
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+	sessionID := chi.URLParam(r, "sessionID")
+	sourceID := chi.URLParam(r, "sourceID")
+
+	sess, err := sessionRepo.GetByID(r.Context(), sessionID)
+	if writeRepoLookupError(w, err, "session does not exist") {
+		return
+	}
+	if sess.UserID != identity.UserID || sess.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "not authorized to access this session", http.StatusForbidden)
+		return
+	}
+
+	source, err := dataSourceRepo.GetByID(r.Context(), sourceID)
+	if writeRepoLookupError(w, err, "data source does not exist") {
+		return
+	}
+	if source.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "not authorized to access this data source", http.StatusForbidden)
+		return
+	}
+
+	tableName, err := sourceService.RemoveSessionSource(r.Context(), sessionID, sourceID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to remove source: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if tableName != "" {
+		if runtimeSession, _, runtimeErr := sessionManager.GetOrCreate(r.Context(), sessionID, sess.WorkspaceID, identity.UserID); runtimeErr == nil {
+			if dropErr := runtimeSession.Ingester.DropTable(tableName); dropErr != nil {
+				log.Printf("DeleteSessionSourceHandler: drop runtime table failed table=%s err=%v", tableName, dropErr)
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func SemanticProfileDetailHandler(w http.ResponseWriter, r *http.Request) {
 	identity, ok := auth.FromContext(r.Context())
 	if !ok || identity.UserID == "" {
@@ -67,17 +110,17 @@ func SemanticProfileDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"profile_id":       profile.ID,
-		"session_id":       profile.SessionID,
-		"source_id":        profile.SourceID,
-		"snapshot_id":      profile.SnapshotID,
+		"profile_id":          profile.ID,
+		"session_id":          profile.SessionID,
+		"source_id":           profile.SourceID,
+		"snapshot_id":         profile.SnapshotID,
 		"analysis_table_name": profile.AnalysisTableName,
-		"schema_signature": profile.SchemaSignature,
-		"profile_status":   string(profile.ProfileStatus),
-		"profile_json":     json.RawMessage(profile.ProfileJSON),
-		"confirmations":    json.RawMessage(string(confJSON)),
-		"created_at":       profile.CreatedAt,
-		"updated_at":       profile.UpdatedAt,
+		"schema_signature":    profile.SchemaSignature,
+		"profile_status":      string(profile.ProfileStatus),
+		"profile_json":        json.RawMessage(profile.ProfileJSON),
+		"confirmations":       json.RawMessage(string(confJSON)),
+		"created_at":          profile.CreatedAt,
+		"updated_at":          profile.UpdatedAt,
 	})
 }
 
@@ -396,7 +439,7 @@ func ImportDataSourceHandler(w http.ResponseWriter, r *http.Request) {
 		"rows_imported":       result.RowsImported,
 		"import_duration_ms":  result.ImportDurationMs,
 		"profile_duration_ms": result.ProfileDurationMs,
-		"snapshot_size_bytes":  result.SnapshotSizeBytes,
+		"snapshot_size_bytes": result.SnapshotSizeBytes,
 		"profile_mode":        string(result.ProfileMode),
 		"large_dataset":       result.RowCount >= 1000000,
 	}

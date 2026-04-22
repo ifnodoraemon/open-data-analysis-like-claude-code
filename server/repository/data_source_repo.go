@@ -36,6 +36,7 @@ type SessionSourceBindingRepository interface {
 	Upsert(ctx context.Context, binding *domain.SessionSourceBinding) error
 	GetBySession(ctx context.Context, sessionID string) ([]domain.SessionSourceBinding, error)
 	GetBySessionAndSource(ctx context.Context, sessionID, sourceID string) (*domain.SessionSourceBinding, error)
+	Delete(ctx context.Context, sessionID, sourceID string) error
 }
 
 type SemanticProfileRepository interface {

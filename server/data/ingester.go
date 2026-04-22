@@ -157,6 +157,22 @@ func (ing *Ingester) ImportFile(filePath string) (tableName string, rowCount int
 	return
 }
 
+func (ing *Ingester) DropTable(tableName string) error {
+	if ing.db == nil {
+		return nil
+	}
+	if err := ValidateSQLIdent(tableName); err != nil {
+		return err
+	}
+	if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil {
+		return fmt.Errorf("failed to drop table %s: %w", tableName, err)
+	}
+	if _, err := ing.db.Exec(`DELETE FROM _oda_table_metadata WHERE table_name = ?`, tableName); err != nil {
+		return fmt.Errorf("failed to delete table metadata %s: %w", tableName, err)
+	}
+	return nil
+}
+
 func (ing *Ingester) importCSV(filePath, tableName string) (int, int, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -334,7 +350,9 @@ func (ing *Ingester) importExcel(filePath, tableName string) (int, int, error) {
 	success := false
 	defer func() {
 		if !success {
-			if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil { log.Printf("Warning: failed to drop table %s: %v", tableName, err) }
+			if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil {
+				log.Printf("Warning: failed to drop table %s: %v", tableName, err)
+			}
 		}
 	}()
 
@@ -472,7 +490,9 @@ func (ing *Ingester) createTableTyped(tableName string, columns []string, types 
 			return fmt.Errorf("invalid column name: %w", err)
 		}
 	}
-	if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil { log.Printf("Warning: failed to drop table %s: %v", tableName, err) }
+	if _, err := ing.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", tableName)); err != nil {
+		log.Printf("Warning: failed to drop table %s: %v", tableName, err)
+	}
 
 	var colDefs []string
 	for i, col := range columns {

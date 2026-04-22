@@ -54,6 +54,11 @@ func (r *SessionSourceBindingRepository) GetBySessionAndSource(ctx context.Conte
 	return &b, nil
 }
 
+func (r *SessionSourceBindingRepository) Delete(ctx context.Context, sessionID, sourceID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM session_source_bindings WHERE session_id = ? AND source_id = ?`, sessionID, sourceID)
+	return err
+}
+
 func BackfillSessionSourceBindings(ctx context.Context, db *sql.DB) error {
 	rows, err := db.QueryContext(ctx,
 		`SELECT sf.session_id, ds.id, ss.id

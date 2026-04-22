@@ -8,7 +8,7 @@ const MARKDOWN_ALLOWED_TAGS = new Set([
 ]);
 
 const REPORT_ALLOWED_TAGS = new Set([
-  "HTML", "HEAD", "BODY", "META", "LINK", "TITLE", "STYLE",
+  "HTML", "HEAD", "BODY", "META", "LINK", "TITLE", "STYLE", "SCRIPT",
   "DIV", "SPAN", "P", "BR", "HR", "H1", "H2", "H3", "H4", "H5", "H6",
   "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD", "CAPTION",
   "UL", "OL", "LI", "DL", "DT", "DD",
@@ -21,7 +21,7 @@ const REPORT_ALLOWED_TAGS = new Set([
 
 const REPORT_REMOVE_TAGS = new Set([
   "IFRAME", "OBJECT", "EMBED", "BASE", "FORM", "INPUT",
-  "BUTTON", "SELECT", "TEXTAREA", "SCRIPT", "NOSCRIPT",
+  "BUTTON", "SELECT", "TEXTAREA", "NOSCRIPT",
 ]);
 
 const DANGEROUS_ATTRS = new Set(["id", "content"]);
@@ -79,6 +79,13 @@ function cleanAttributes(
       }
       continue;
     }
+    if (
+      node.tagName === "SCRIPT" &&
+      name === "id" &&
+      ["oda-echarts-loader", "oda-chart-runtime"].includes(value)
+    ) {
+      continue;
+    }
     if (name === "style") {
       if (allowChartStyle || allowReportAttrs) {
         const safe = sanitizeStyleValue(value);
@@ -127,6 +134,7 @@ function cleanAttributes(
 function sanitizeTree(root, options = {}) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   const toRemove = [];
+  const toUnwrap = [];
   while (walker.nextNode()) {
     const node = walker.currentNode;
     if (options.removeTags && options.removeTags.has(node.tagName)) {
@@ -134,18 +142,21 @@ function sanitizeTree(root, options = {}) {
       continue;
     }
     if (options.allowedTags && !options.allowedTags.has(node.tagName)) {
-      toRemove.push(node);
+      toUnwrap.push(node);
       continue;
     }
     cleanAttributes(node, options);
   }
-  for (const node of toRemove.reverse()) {
+  for (const node of toUnwrap.reverse()) {
     const parent = node.parentNode;
     if (!parent) continue;
     while (node.firstChild) {
       parent.insertBefore(node.firstChild, node);
     }
     parent.removeChild(node);
+  }
+  for (const node of toRemove.reverse()) {
+    node.parentNode?.removeChild(node);
   }
 }
 
@@ -180,8 +191,8 @@ const RUNTIME_DANGEROUS_PATTERNS = [
   /\bimport\s*\(/,
   /\brequire\s*\(/,
   /\beval\s*\(/,
-  /\bdocument\.(?!getElementById\b)\w+/,
-  /\bwindow\b/,
+  /\bdocument\.(?!(?:addEventListener|querySelectorAll)\b)\w+/,
+  /\bwindow\.(?!addEventListener\b)\w+/,
   /\bself\b/,
   /\blocalStorage\b/,
   /\bsessionStorage\b/,
@@ -200,8 +211,10 @@ function isSafeRuntimeScript(node) {
   if (id !== "oda-chart-runtime") return false;
   const text = node.textContent || "";
   const lines = text.split("\n").filter((l) => l.trim() && !l.trim().startsWith("//"));
-  if (lines.length > 20) return false;
+  if (lines.length > 1000) return false;
   if (!text.includes("echarts.init(")) return false;
+  if (!text.includes("document.addEventListener('DOMContentLoaded'")) return false;
+  if (!text.includes("document.querySelectorAll('.chart-box[data-chart-id=")) return false;
   if (RUNTIME_DANGEROUS_PATTERNS.some((pat) => pat.test(text))) return false;
   return true;
 }

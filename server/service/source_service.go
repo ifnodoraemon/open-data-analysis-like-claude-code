@@ -224,7 +224,12 @@ func (s *SourceService) GetSessionSources(ctx context.Context, sessionID string)
 			ProfileDurationMs:      snapshot.ProfileDurationMs,
 			SnapshotSizeBytes:      snapshot.SnapshotSizeBytes,
 			ProfileMode:            string(snapshot.ProfileMode),
-			ErrorMessage:           func() string { if snapshot.ErrorMessage != nil { return *snapshot.ErrorMessage }; return "" }(),
+			ErrorMessage: func() string {
+				if snapshot.ErrorMessage != nil {
+					return *snapshot.ErrorMessage
+				}
+				return ""
+			}(),
 		})
 	}
 	if len(partialErrors) > 0 {
@@ -235,6 +240,55 @@ func (s *SourceService) GetSessionSources(ctx context.Context, sessionID string)
 
 func (s *SourceService) RecordSnapshotError(ctx context.Context, snapshotID, errMsg string) error {
 	return s.SnapshotRepo.UpdateStatus(ctx, snapshotID, domain.SnapshotStatusFailed, &errMsg)
+}
+
+func (s *SourceService) RemoveSessionSource(ctx context.Context, sessionID, sourceID string) (string, error) {
+	binding, err := s.SessionSourceBindingRepo.GetBySessionAndSource(ctx, sessionID, sourceID)
+	if err != nil {
+		return "", err
+	}
+	if binding == nil {
+		return "", nil
+	}
+
+	tableName := ""
+	snapshot, snapErr := s.SnapshotRepo.GetByID(ctx, binding.ActiveSnapshotID)
+	if snapErr == nil && snapshot != nil {
+		tableName = snapshot.AnalysisTableName
+	}
+
+	profiles, profErr := s.SemanticProfileRepo.ListBySource(ctx, sourceID)
+	if profErr != nil {
+		log.Printf("RemoveSessionSource: list profiles failed source_id=%s err=%v", sourceID, profErr)
+	}
+	for _, profile := range profiles {
+		if profile.SessionID != sessionID {
+			continue
+		}
+		if err := s.SemanticConfirmationRepo.DeleteByProfile(ctx, profile.ID); err != nil {
+			log.Printf("RemoveSessionSource: delete confirmations failed profile_id=%s err=%v", profile.ID, err)
+		}
+		if err := s.SemanticProfileRepo.Delete(ctx, profile.ID); err != nil {
+			log.Printf("RemoveSessionSource: delete profile failed profile_id=%s err=%v", profile.ID, err)
+		}
+	}
+
+	snapshots, listErr := s.SnapshotRepo.ListBySource(ctx, sourceID)
+	if listErr != nil {
+		log.Printf("RemoveSessionSource: list snapshots failed source_id=%s err=%v", sourceID, listErr)
+	}
+	for _, snap := range snapshots {
+		if snap.SessionID == sessionID {
+			if err := s.SnapshotRepo.Delete(ctx, snap.ID); err != nil {
+				log.Printf("RemoveSessionSource: delete snapshot failed snapshot_id=%s err=%v", snap.ID, err)
+			}
+		}
+	}
+
+	if err := s.SessionSourceBindingRepo.Delete(ctx, sessionID, sourceID); err != nil {
+		return tableName, err
+	}
+	return tableName, nil
 }
 
 func (s *SourceService) GetSessionProfiles(ctx context.Context, sessionID string) ([]SemanticProfileSummary, error) {
@@ -268,16 +322,16 @@ func (s *SourceService) GetProfileDetail(ctx context.Context, profileID string) 
 }
 
 type ProfiledFacts struct {
-	Schema            *data.SchemaInfo     `json:"schema"`
-	ProfileMode       string               `json:"profile_mode"`
-	SnapshotSizeBytes int64                `json:"snapshot_size_bytes,omitempty"`
+	Schema             *data.SchemaInfo    `json:"schema"`
+	ProfileMode        string              `json:"profile_mode"`
+	SnapshotSizeBytes  int64               `json:"snapshot_size_bytes,omitempty"`
 	SemanticCandidates []SemanticCandidate `json:"semantic_candidates"`
-	JoinCandidates    []JoinCandidate      `json:"join_candidates"`
-	MetricCandidates  []MetricCandidate    `json:"metric_candidates"`
-	TimeCandidates    []TimeCandidate      `json:"time_candidates"`
-	UnitCandidates    []UnitCandidate      `json:"unit_candidates"`
-	Ambiguities       []Ambiguity          `json:"ambiguities"`
-	Warnings          []string             `json:"warnings"`
+	JoinCandidates     []JoinCandidate     `json:"join_candidates"`
+	MetricCandidates   []MetricCandidate   `json:"metric_candidates"`
+	TimeCandidates     []TimeCandidate     `json:"time_candidates"`
+	UnitCandidates     []UnitCandidate     `json:"unit_candidates"`
+	Ambiguities        []Ambiguity         `json:"ambiguities"`
+	Warnings           []string            `json:"warnings"`
 }
 
 type SemanticCandidate struct {
@@ -442,16 +496,16 @@ func (s *SourceService) CreateSemanticProfile(ctx context.Context, sessionID, wo
 	}
 
 	profile := &domain.SemanticProfile{
-		ID:               "sp_" + uuid.New().String()[:12],
-		SessionID:        sessionID,
-		SourceID:         sourceID,
-		SnapshotID:       snapshotID,
+		ID:                "sp_" + uuid.New().String()[:12],
+		SessionID:         sessionID,
+		SourceID:          sourceID,
+		SnapshotID:        snapshotID,
 		AnalysisTableName: analysisTableName,
-		SchemaSignature:  schemaSignature,
-		ProfileStatus:    domain.ProfileStatusProfiled,
-		ProfileJSON:      string(profileJSON),
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		SchemaSignature:   schemaSignature,
+		ProfileStatus:     domain.ProfileStatusProfiled,
+		ProfileJSON:       string(profileJSON),
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
 	}
 	if err := s.SemanticProfileRepo.Create(ctx, profile); err != nil {
 		return nil, fmt.Errorf("failed to create semantic profile: %w", err)

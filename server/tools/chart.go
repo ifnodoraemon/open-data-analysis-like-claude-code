@@ -117,8 +117,13 @@ func (t *CreateChartTool) Parameters() json.RawMessage {
 }
 
 func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
+	normalizedArgs, err := normalizeStringifiedJSONFields(args, "option", "categories", "series", "values", "legend")
+	if err != nil {
+		return "", fmt.Errorf("failed to parse parameters: %w", err)
+	}
+
 	var params createChartParams
-	if err := json.Unmarshal(args, &params); err != nil {
+	if err := json.Unmarshal(normalizedArgs, &params); err != nil {
 		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 

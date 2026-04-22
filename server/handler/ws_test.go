@@ -7,9 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
 )
@@ -43,6 +45,38 @@ func (r *captureMessageRepo) snapshot() ([]*domain.RunMessage, error) {
 	out := make([]*domain.RunMessage, len(r.created))
 	copy(out, r.created)
 	return out, r.createCtxErr
+}
+
+func TestWebSocketUpgraderSelectsAuthSubprotocol(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	headers := http.Header{}
+	headers.Set("Origin", "http://localhost")
+	dialer := websocket.Dialer{Subprotocols: []string{"mcp-token", "token-example"}}
+
+	conn, resp, err := dialer.Dial(wsURL, headers)
+	if err != nil {
+		if resp != nil {
+			t.Fatalf("dial failed status=%s err=%v", resp.Status, err)
+		}
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	if got := conn.Subprotocol(); got != "mcp-token" {
+		t.Fatalf("expected selected subprotocol mcp-token, got %q", got)
+	}
 }
 
 func TestSaveEventToDBDetachesCancelledContext(t *testing.T) {

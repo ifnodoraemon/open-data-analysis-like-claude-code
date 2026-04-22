@@ -538,6 +538,13 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 
 		// 如果 finish_reason 是 stop 且没有工具调用，结束
 		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
+			if strings.TrimSpace(choice.Message.Content) == "" {
+				emit(WSEvent{Type: EventError, Data: ErrorData{
+					Message: "模型没有返回可展示的分析内容，请重试或检查当前 LLM 网关配置。",
+					Code:    "empty_llm_output",
+				}})
+				return
+			}
 			e.mu.Lock()
 			e.history = append(e.history, ConversationItem{
 				Role:    openai.ChatMessageRoleAssistant,
@@ -695,27 +702,9 @@ func compactToolArguments(toolName, raw string) string {
 		// 这里保留原始参数，避免把摘要字段误导回模型。
 		return raw
 	case "report_manage_blocks":
-		var payload struct {
-			Action    string `json:"action"`
-			BlockID   string `json:"block_id"`
-			BlockKind string `json:"block_kind"`
-			Title     string `json:"title"`
-			Content   string `json:"content"`
-			ChartID   string `json:"chart_id"`
-		}
-		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
-			summary, _ := json.Marshal(map[string]interface{}{
-				"action":        payload.Action,
-				"block_id":      payload.BlockID,
-				"block_kind":    payload.BlockKind,
-				"title":         payload.Title,
-				"chart_id":      payload.ChartID,
-				"content_note":  "compacted_for_history",
-				"content_chars": len([]rune(payload.Content)),
-				"content_head":  clipText(payload.Content, 120),
-			})
-			return string(summary)
-		}
+		// report_manage_blocks 的参数也是可再次参考的报告状态变更。
+		// 保留原始参数，避免把 content_head/content_chars 这类历史摘要误导成下一轮工具参数。
+		return raw
 	case "report_finalize":
 		var payload struct {
 			ReportTitle string `json:"report_title"`
