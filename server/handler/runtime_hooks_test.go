@@ -78,7 +78,8 @@ func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
 
 	boom := errors.New("storage offline")
 	sess := &session.Session{
-		ActiveRun: &session.RunState{RunID: "run_99", Status: "running"},
+		ActiveRun:   &session.RunState{RunID: "run_99", Status: "running"},
+		ReportState: &tools.ReportState{NeedsFinalize: false},
 	}
 
 	var updatedStatus domain.RunStatus
@@ -97,7 +98,7 @@ func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
 
 	reportLifecycleHook(scope, agent.WSEvent{
 		Type: agent.EventToolResult,
-		Data: agent.ToolResultData{Name: "report_finalize", Success: true},
+		Data: agent.ToolResultData{Name: "report_finalize", Success: true, Result: `{"report_title":"零售分析","author":"AI"}`},
 	})
 
 	if sess.ActiveRun != nil && sess.ActiveRun.Status != "failed" {
@@ -108,6 +109,12 @@ func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
 	}
 	if !strings.Contains(updatedMsg, "storage offline") {
 		t.Fatalf("expected error message to contain 'storage offline', got %q", updatedMsg)
+	}
+	if sess.ReportState == nil || !sess.ReportState.NeedsFinalize {
+		t.Fatalf("expected finalize failure to roll report state back to draft")
+	}
+	if sess.ReportState.FinalTitle != "零售分析" || sess.ReportState.FinalAuthor != "AI" {
+		t.Fatalf("expected finalize metadata to be preserved for retry, got %#v", sess.ReportState)
 	}
 }
 

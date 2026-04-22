@@ -45,6 +45,19 @@ export function useWebSocket() {
   const store = useAgentStore();
   const dataSourceStore = useDataSourceStore();
 
+  function shouldApplyReportEvent(eventRunId) {
+    if (!eventRunId) return true;
+    if (!store.selectedRunId) return true;
+    if (store.selectedRunId === eventRunId) return true;
+
+    const selectedRun = store.getRun(store.selectedRunId);
+    const eventRun = store.getRun(eventRunId);
+    if (eventRun?.parentRunId === store.selectedRunId) return true;
+    if (selectedRun?.parentRunId === eventRunId) return true;
+
+    return false;
+  }
+
   function authHeaders() {
     return store.token ? { Authorization: `Bearer ${store.token}` } : {};
   }
@@ -268,7 +281,8 @@ export function useWebSocket() {
     if (!store.reportHTML) await loadRunReport(runId);
   }
 
-  function connect() {
+  function connect(options = {}) {
+    const { resetReconnectAttempts = true } = options;
     if (!store.token) return Promise.reject(new Error("未登录"));
     if (wsInstance?.readyState === WebSocket.OPEN) {
       reconnectEnabled = true;
@@ -280,7 +294,9 @@ export function useWebSocket() {
     }
 
     reconnectEnabled = true;
-    reconnectAttempts = 0;
+    if (resetReconnectAttempts) {
+      reconnectAttempts = 0;
+    }
     clearReconnectTimer();
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const params = new URLSearchParams();
@@ -346,7 +362,7 @@ export function useWebSocket() {
         console.log(`WebSocket 断开，${Math.round(delay)}ms 后重连 (第 ${reconnectAttempts} 次)...`);
         clearReconnectTimer();
         reconnectTimer = setTimeout(() => {
-          void connect().catch((err) => console.error("WebSocket 重连失败:", err));
+          void connect({ resetReconnectAttempts: false }).catch((err) => console.error("WebSocket 重连失败:", err));
         }, delay);
       };
 
@@ -414,7 +430,9 @@ export function useWebSocket() {
         break;
       }
       case "report_update":
-        store.updateReport(event.data.html);
+        if (shouldApplyReportEvent(event.runId)) {
+          store.updateReport(event.data.html);
+        }
         break;
       case "report_final":
         if (!store.selectedRunId || store.selectedRunId === event.runId) {

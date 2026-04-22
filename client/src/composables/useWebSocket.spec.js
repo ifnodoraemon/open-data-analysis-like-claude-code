@@ -19,7 +19,12 @@ describe("useWebSocket deduplication", () => {
   });
 
   afterEach(() => {
+    try {
+      const { disconnect } = useWebSocket();
+      disconnect();
+    } catch {}
     global.WebSocket = originalWebSocket;
+    global.fetch = undefined;
     vi.restoreAllMocks();
   });
 
@@ -482,5 +487,64 @@ describe("useWebSocket deduplication", () => {
     expect(store.subgoals[0].id).toBe("goal_123");
     expect(store.reportHTML).toBe("<p>shared draft html</p>");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let report_update from another run overwrite the selected historical report", async () => {
+    const store = useAgentStore();
+    store.setToken("test-token");
+    store.setSession("sess-1");
+    store.upsertRun({ id: "run-root", sessionId: "sess-1", status: "running" });
+    store.upsertRun({ id: "run-history", sessionId: "sess-1", status: "completed", reportFileId: "rep-1" });
+    store.setSelectedRun("run-history");
+    store.updateReport("<p>historical report</p>");
+
+    global.location = { protocol: "http:", host: "localhost" };
+
+    let activeSocket = null;
+    class MockWebSocket {
+      constructor(url, protocols) {
+        this.url = url;
+        this.protocols = protocols;
+        this.readyState = 1;
+        activeSocket = this;
+        setTimeout(() => {
+          this.onopen?.();
+        }, 1);
+      }
+      send() {}
+      close() {
+        this.onclose?.();
+      }
+      triggerMessage(dataObj) {
+        this.onmessage?.({ data: JSON.stringify(dataObj) });
+      }
+    }
+    MockWebSocket.CONNECTING = 0;
+    MockWebSocket.OPEN = 1;
+    MockWebSocket.CLOSING = 2;
+    MockWebSocket.CLOSED = 3;
+    vi.stubGlobal("WebSocket", MockWebSocket);
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+      text: async () => "",
+    });
+
+    const { connect, disconnect } = useWebSocket();
+    await connect();
+
+    activeSocket.triggerMessage({
+      type: "report_update",
+      runId: "run-root",
+      data: {
+        html: "<p>root draft update</p>",
+      },
+    });
+
+    expect(store.reportHTML).toBe("<p>historical report</p>");
+
+    disconnect();
+    global.fetch = undefined;
   });
 });

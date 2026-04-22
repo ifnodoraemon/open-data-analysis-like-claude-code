@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"strings"
 	"sync"
@@ -140,6 +141,7 @@ func reportLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 	}
 	if result.Name == "report_finalize" && result.Success && scope.finalizeReport != nil {
 		if err := scope.finalizeReport(); err != nil {
+			rollbackFinalizeDraft(scope, result.Result)
 			if scope.session != nil {
 				scope.session.FinishRun(scope.runID, "failed")
 			}
@@ -148,6 +150,28 @@ func reportLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 				scope.setRunStatus(domain.RunStatusFailed, &msg)
 			}
 		}
+	}
+}
+
+func rollbackFinalizeDraft(scope runtimeEventScope, toolResult string) {
+	if scope.session == nil || scope.session.ReportState == nil {
+		return
+	}
+
+	state := scope.session.ReportState
+	state.Lock()
+	defer state.Unlock()
+	state.NeedsFinalize = true
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(toolResult)), &payload); err != nil {
+		return
+	}
+	if title, ok := payload["report_title"].(string); ok {
+		state.FinalTitle = strings.TrimSpace(title)
+	}
+	if author, ok := payload["author"].(string); ok {
+		state.FinalAuthor = strings.TrimSpace(author)
 	}
 }
 

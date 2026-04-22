@@ -181,3 +181,35 @@ func TestSaveEventToDBSyncPersistsReportUpdatePayload(t *testing.T) {
 		t.Fatalf("expected structured report snapshot to be persisted, got %#v", payload.ReportSnapshot)
 	}
 }
+
+func TestIsExpectedWebSocketReadCloseRecognizesAbnormalBrowserDisconnects(t *testing.T) {
+	t.Parallel()
+
+	tests := []error{
+		&websocket.CloseError{Code: websocket.CloseNoStatusReceived, Text: ""},
+		&websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"},
+		errors.New("websocket: close 1006 (abnormal closure): unexpected EOF"),
+	}
+
+	for _, err := range tests {
+		if !isExpectedWebSocketReadClose(err) {
+			t.Fatalf("expected read close to be classified as expected: %v", err)
+		}
+	}
+}
+
+func TestIsExpectedWebSocketWriteCloseRecognizesClosedConnectionNoise(t *testing.T) {
+	t.Parallel()
+
+	tests := []error{
+		&websocket.CloseError{Code: websocket.CloseGoingAway, Text: ""},
+		errors.New("write tcp 127.0.0.1:8080->127.0.0.1:12345: write: broken pipe"),
+		errors.New("websocket: close 1006 (abnormal closure): unexpected EOF"),
+	}
+
+	for _, err := range tests {
+		if !isExpectedWebSocketWriteClose(err) {
+			t.Fatalf("expected write close to be classified as expected: %v", err)
+		}
+	}
+}

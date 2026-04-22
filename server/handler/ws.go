@@ -3,8 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -88,10 +91,49 @@ func CloseSessionWebSockets(sessionID string) {
 	if m, ok := wsConns[sessionID]; ok {
 		for conn, cancel := range m {
 			cancel()
+			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session closed"), time.Now().Add(time.Second))
 			conn.Close()
 		}
 		delete(wsConns, sessionID)
 	}
+}
+
+func isExpectedWebSocketReadClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	if websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived,
+		websocket.CloseAbnormalClosure,
+	) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unexpected eof") || strings.Contains(msg, "close 1005") || strings.Contains(msg, "close 1006")
+}
+
+func isExpectedWebSocketWriteClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	if websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived,
+		websocket.CloseAbnormalClosure,
+	) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "reset by peer") || strings.Contains(msg, "unexpected eof")
 }
 
 // persistJob 异步事件持久化任务
@@ -455,7 +497,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			if isExpectedWebSocketReadClose(err) {
 				log.Printf("session %s: WebSocket connection closed", sess.ID)
 			} else {
 				log.Printf("session %s: failed to read message: %v", sess.ID, err)
@@ -809,8 +851,11 @@ func sendEvent(conn *websocket.Conn, mu *sync.Mutex, event agent.WSEvent) {
 		log.Printf("serialization failed: %v", err)
 		return
 	}
-
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		if isExpectedWebSocketWriteClose(err) {
+			log.Printf("send skipped on closed websocket: %v", err)
+			return
+		}
 		log.Printf("send failed: %v", err)
 	}
 }
