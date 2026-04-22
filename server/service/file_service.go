@@ -160,6 +160,19 @@ type SaveReportInput struct {
 	Snapshot    domain.ReportSnapshot
 }
 
+func (s *FileService) DeleteReportFile(ctx context.Context, fileID string, runID string) {
+	if s.ReportRepo != nil {
+		report, err := s.ReportRepo.GetByRunID(ctx, runID)
+		if err == nil && report != nil {
+			_ = s.Storage.Delete(ctx, report.HTMLStorageKey)
+			_ = s.ReportRepo.Delete(ctx, report.ID)
+		}
+	}
+	if file, err := s.FileRepo.GetByID(ctx, fileID); err == nil && file != nil {
+		_ = s.FileRepo.Delete(ctx, file.ID)
+	}
+}
+
 func (s *FileService) SaveReportHTML(ctx context.Context, in SaveReportInput) (*domain.File, error) {
 	ok, err := s.WorkspaceRepo.IsMember(ctx, in.WorkspaceID, in.UserID)
 	if err != nil {

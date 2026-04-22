@@ -365,6 +365,7 @@ func finalizeAndPersistReport(ctx context.Context, conn *websocket.Conn, writeMu
 			return err
 		}
 		if err := runRepo.BindReportFile(persistCtx, runID, reportFile.ID); err != nil {
+			fileService.DeleteReportFile(persistCtx, reportFile.ID, runID)
 			return err
 		}
 		finalReportFileID = reportFile.ID

@@ -214,6 +214,11 @@ func (r *ReportRepository) GetByRunID(ctx context.Context, runID string) (*domai
 	return &report, nil
 }
 
+func (r *ReportRepository) Delete(ctx context.Context, reportID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM reports WHERE id = ?`, reportID)
+	return err
+}
+
 func (r *SessionRepository) Create(ctx context.Context, session *domain.Session) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO sessions (id, workspace_id, user_id, title, status, last_run_id, created_at, updated_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.WorkspaceID, session.UserID, session.Title, string(session.Status), session.LastRunID, session.CreatedAt, session.UpdatedAt, session.LastSeenAt)

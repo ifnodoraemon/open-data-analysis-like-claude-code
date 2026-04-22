@@ -9,4 +9,5 @@ import (
 type ReportRepository interface {
 	Create(ctx context.Context, report *domain.Report) error
 	GetByRunID(ctx context.Context, runID string) (*domain.Report, error)
+	Delete(ctx context.Context, reportID string) error
 }

@@ -154,7 +154,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { useDataSourceStore } from '../../stores/datasource'
 
 const props = defineProps({
@@ -243,6 +243,7 @@ async function handleRemoveSessionSource(source) {
 function startImportPolling() {
   stopImportPolling()
   importPollingTimer.value = setInterval(async () => {
+    if (!props.sessionId) return;
     await store.fetchSessionSources(props.sessionId)
     const inProgress = store.sessionSources.some(s => s.snapshot_status === 'creating' || s.snapshot_status === 'importing')
     if (!inProgress) {
@@ -250,6 +251,20 @@ function startImportPolling() {
     }
   }, 3000)
 }
+
+watch(() => store.sessionSources, (sources) => {
+  if (!sources) return;
+  const inProgress = sources.some(s => s.snapshot_status === 'creating' || s.snapshot_status === 'importing')
+  if (inProgress && !importPollingTimer.value) {
+    startImportPolling()
+  } else if (!inProgress && importPollingTimer.value) {
+    stopImportPolling()
+  }
+}, { deep: true, immediate: true })
+
+onUnmounted(() => {
+  stopImportPolling()
+})
 
 function stopImportPolling() {
   if (importPollingTimer.value) {
