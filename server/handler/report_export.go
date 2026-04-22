@@ -2,9 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
 )
 
 var (
@@ -23,29 +26,60 @@ func sanitizeExportHTML(html string) string {
 }
 
 func ConvertReportDOCXHandler(w http.ResponseWriter, r *http.Request) {
+	identity, _ := auth.FromContext(r.Context())
+	workspaceID := identity.WorkspaceID
+	userID := identity.UserID
+
 	type request struct {
 		Title string `json:"title"`
-		HTML  string `json:"html"`
+		RunID string `json:"runId"`
 	}
 
 	var req request
 
-	r.Body = http.MaxBytesReader(w, r.Body, 5*1024*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid export request or body too large", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.HTML) == "" {
-		http.Error(w, "missing report HTML", http.StatusBadRequest)
-		return
-	}
-	req.HTML = sanitizeExportHTML(req.HTML)
-	if strings.TrimSpace(req.HTML) == "" {
-		http.Error(w, "export HTML became empty after sanitization", http.StatusBadRequest)
+	if strings.TrimSpace(req.RunID) == "" {
+		http.Error(w, "missing runId", http.StatusBadRequest)
 		return
 	}
 
-	body, filename, err := fileService.ConvertHTMLToDOCX(r.Context(), req.Title, req.HTML)
+	run, err := runRepo.GetByID(r.Context(), req.RunID)
+	if err != nil {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	if run.WorkspaceID != workspaceID || run.UserID != userID {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	if run.ReportFileID == nil || *run.ReportFileID == "" {
+		http.Error(w, "report not finalized yet", http.StatusBadRequest)
+		return
+	}
+
+	reader, _, err := fileService.OpenForDownload(r.Context(), userID, workspaceID, *run.ReportFileID)
+	if err != nil {
+		http.Error(w, "failed to read report file", http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
+	htmlBytes, err := io.ReadAll(reader)
+	if err != nil {
+		http.Error(w, "failed to read report content", http.StatusInternalServerError)
+		return
+	}
+
+	html := sanitizeExportHTML(string(htmlBytes))
+	if strings.TrimSpace(html) == "" {
+		http.Error(w, "report content is empty or invalid", http.StatusBadRequest)
+		return
+	}
+
+	body, filename, err := fileService.ConvertHTMLToDOCX(r.Context(), req.Title, html)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

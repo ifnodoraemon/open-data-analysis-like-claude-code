@@ -494,6 +494,38 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
+	const (
+		pongWait   = 60 * time.Second
+		pingPeriod = (pongWait * 9) / 10
+	)
+
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	pingTicker := time.NewTicker(pingPeriod)
+	defer pingTicker.Stop()
+	wsCtx, wsCancel := context.WithCancel(r.Context())
+	defer wsCancel()
+
+	go func() {
+		for {
+			select {
+			case <-wsCtx.Done():
+				return
+			case <-pingTicker.C:
+				writeMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second*5))
+				writeMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {

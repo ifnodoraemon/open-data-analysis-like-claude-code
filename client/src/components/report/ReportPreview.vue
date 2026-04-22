@@ -300,7 +300,7 @@ function exportHTML() {
 }
 
 async function exportWord() {
-  const snapshotHTML = await buildRenderedSnapshotHTML({ forWord: true });
+  const targetRunId = currentRun.value?.id || props.runId || "";
   const res = await fetch("/api/report-exports/docx", {
     method: "POST",
     headers: {
@@ -309,7 +309,7 @@ async function exportWord() {
     },
     body: JSON.stringify({
       title: buildFilename(),
-      html: snapshotHTML,
+      runId: targetRunId,
     }),
   });
   if (!res.ok) {
