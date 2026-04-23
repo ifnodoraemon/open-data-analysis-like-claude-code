@@ -786,23 +786,7 @@ func buildAnthropicSystemPrompt(bundle *PromptBundle) string {
 	if bundle.PolicyAppendix != "" {
 		systemPrompt += "\n\n## Delegate Additional Constraints\n" + bundle.PolicyAppendix
 	}
-
-	developerFacts := make([]string, 0, len(bundle.RuntimeContext))
-	for _, block := range bundle.RuntimeContext {
-		if runtimeContextTransportRole(block) != "developer" {
-			continue
-		}
-		developerFacts = append(developerFacts, fmt.Sprintf("[%s]\n%s", block.Name, block.Content))
-	}
-	if len(developerFacts) == 0 {
-		return systemPrompt
-	}
-
-	factsSection := "## Runtime Context Facts\n" + strings.Join(developerFacts, "\n\n")
-	if strings.TrimSpace(systemPrompt) == "" {
-		return factsSection
-	}
-	return systemPrompt + "\n\n" + factsSection
+	return systemPrompt
 }
 
 func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
@@ -819,12 +803,18 @@ func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 		}
 	}
 
-	for _, block := range bundle.RuntimeContext {
-		if runtimeContextTransportRole(block) == "developer" {
-			continue
+	appendRuntimeContextByRole := func(targetRole string) {
+		for _, block := range bundle.RuntimeContext {
+			if runtimeContextTransportRole(block) != targetRole {
+				continue
+			}
+			currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(
+				fmt.Sprintf("[runtime_context role=%s name=%s]\n%s", targetRole, block.Name, block.Content),
+			))
 		}
-		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(fmt.Sprintf("[%s]\n%s", block.Name, block.Content)))
 	}
+	appendRuntimeContextByRole("developer")
+	appendRuntimeContextByRole("user")
 
 	for _, msg := range bundle.History {
 		switch msg.Role {
