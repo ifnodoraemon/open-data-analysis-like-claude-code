@@ -451,8 +451,7 @@ export function useWebSocket() {
       case "run_completed": {
         const patch = { status: "completed", summary: event.data.summary, updatedAt: new Date().toISOString() };
         if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
-        const run = store.getRun(event.runId);
-        if ((!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) && !run?.reportFileId) {
+        if ((!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) && event.data.summary) {
           store.addMessage({ type: "complete", content: event.data.summary });
         }
         store.finishRun(event.runId);

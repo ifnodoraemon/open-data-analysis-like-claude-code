@@ -155,11 +155,15 @@ func TestToolCallSucceeded(t *testing.T) {
 func TestSuccessfulFinalizeResultDetection(t *testing.T) {
 	t.Parallel()
 
-	success := `{"ok":true,"tool":"report_finalize","delivery_state":"finalized","is_finalized":true,"ui_summary":"delivery_state=finalized; block_count=6; chart_count=6"}`
+	success := `{"ok":true,"tool":"report_finalize","delivery_state":"finalized","is_finalized":true,"report_title":"全面对比分析报告","author":"数据分析助手","block_count":6,"chart_count":6,"ui_summary":"delivery_state=finalized; block_count=6; chart_count=6"}`
 	if !isSuccessfulFinalizeResult(success) {
 		t.Fatal("expected finalized report result to stop the run")
 	}
-	if got := buildFinalizeCompleteSummary(success); got != "delivery_state=finalized; block_count=6; chart_count=6" {
+	got := buildFinalizeCompleteSummary(success)
+	if !strings.Contains(got, "报告已完成并保存。") ||
+		!strings.Contains(got, "标题：全面对比分析报告") ||
+		!strings.Contains(got, "内容块：6 个") ||
+		!strings.Contains(got, "图表：6 个") {
 		t.Fatalf("unexpected finalize summary: %q", got)
 	}
 

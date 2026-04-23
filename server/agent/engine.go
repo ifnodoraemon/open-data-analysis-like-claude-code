@@ -693,11 +693,35 @@ func isSuccessfulFinalizeResult(result string) bool {
 func buildFinalizeCompleteSummary(result string) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &payload); err == nil {
-		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
-			return strings.TrimSpace(summary)
+		lines := []string{"报告已完成并保存。"}
+		if title, ok := payload["report_title"].(string); ok && strings.TrimSpace(title) != "" {
+			lines = append(lines, "", "- 标题："+strings.TrimSpace(title))
 		}
+		if author, ok := payload["author"].(string); ok && strings.TrimSpace(author) != "" {
+			lines = append(lines, "- 作者："+strings.TrimSpace(author))
+		}
+		if blockCount, ok := summaryNumber(payload["block_count"]); ok {
+			lines = append(lines, fmt.Sprintf("- 内容块：%d 个", blockCount))
+		}
+		if chartCount, ok := summaryNumber(payload["chart_count"]); ok {
+			lines = append(lines, fmt.Sprintf("- 图表：%d 个", chartCount))
+		}
+		return strings.Join(lines, "\n")
 	}
 	return "Report finalized."
+}
+
+func summaryNumber(value interface{}) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed), true
+	case int:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	default:
+		return 0, false
+	}
 }
 
 func errorString(err error) string {
