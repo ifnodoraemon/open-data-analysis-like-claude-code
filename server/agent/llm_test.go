@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	anthropic "github.com/liushuangls/go-anthropic/v2"
@@ -171,5 +172,57 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	contentStr := req.Input[0]["content"].(string)
 	if contentStr != expected {
 		t.Fatalf("expected explicitly prefixed runtime core, got %q", contentStr)
+	}
+}
+
+func TestBuildAnthropicSystemPromptIncludesOnlyDeveloperRuntimeContext(t *testing.T) {
+	t.Parallel()
+
+	bundle := &PromptBundle{
+		Policy: "policy",
+		RuntimeContext: []RuntimeContextBlock{
+			{Name: "active_edit_scope", Role: "developer", Content: "TargetBlockID: block-1"},
+			{Name: "digest", Role: "user", Content: "- user: asked for update"},
+		},
+	}
+
+	systemPrompt := buildAnthropicSystemPrompt(bundle)
+	if !strings.Contains(systemPrompt, "policy") {
+		t.Fatalf("expected policy in system prompt, got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "[active_edit_scope]\nTargetBlockID: block-1") {
+		t.Fatalf("expected developer runtime context in system prompt, got %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "[digest]") {
+		t.Fatalf("did not expect digest to be promoted into system prompt, got %q", systemPrompt)
+	}
+}
+
+func TestBuildAnthropicMessagesKeepsUserRuntimeContextInUserStream(t *testing.T) {
+	t.Parallel()
+
+	bundle := &PromptBundle{
+		RuntimeContext: []RuntimeContextBlock{
+			{Name: "active_edit_scope", Role: "developer", Content: "TargetBlockID: block-1"},
+			{Name: "digest", Role: "user", Content: "- user: asked for update"},
+		},
+		Task: "finish analysis",
+	}
+
+	msgs := buildAnthropicMessages(bundle)
+	if len(msgs) != 1 {
+		t.Fatalf("expected one user message, got %d", len(msgs))
+	}
+	if msgs[0].Role != anthropic.RoleUser {
+		t.Fatalf("expected user role, got %q", msgs[0].Role)
+	}
+	if len(msgs[0].Content) != 2 {
+		t.Fatalf("expected digest and task content, got %#v", msgs[0].Content)
+	}
+	if msgs[0].Content[0].Text == nil || *msgs[0].Content[0].Text != "[digest]\n- user: asked for update" {
+		t.Fatalf("unexpected first content block: %#v", msgs[0].Content[0])
+	}
+	if msgs[0].Content[1].Text == nil || *msgs[0].Content[1].Text != "finish analysis" {
+		t.Fatalf("unexpected task content block: %#v", msgs[0].Content[1])
 	}
 }

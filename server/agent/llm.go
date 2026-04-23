@@ -781,15 +781,31 @@ func anthropicToolNames(content []anthropic.MessageContent) []string {
 	return names
 }
 
-// chatAnthropic Anthropic 格式调用，转换为统一的 OpenAI 格式返回
-func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
-	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
-
+func buildAnthropicSystemPrompt(bundle *PromptBundle) string {
 	systemPrompt := bundle.Policy
 	if bundle.PolicyAppendix != "" {
 		systemPrompt += "\n\n## Delegate Additional Constraints\n" + bundle.PolicyAppendix
 	}
 
+	developerFacts := make([]string, 0, len(bundle.RuntimeContext))
+	for _, block := range bundle.RuntimeContext {
+		if runtimeContextTransportRole(block) != "developer" {
+			continue
+		}
+		developerFacts = append(developerFacts, fmt.Sprintf("[%s]\n%s", block.Name, block.Content))
+	}
+	if len(developerFacts) == 0 {
+		return systemPrompt
+	}
+
+	factsSection := "## Runtime Context Facts\n" + strings.Join(developerFacts, "\n\n")
+	if strings.TrimSpace(systemPrompt) == "" {
+		return factsSection
+	}
+	return systemPrompt + "\n\n" + factsSection
+}
+
+func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 	var anthropicMsgs []anthropic.Message
 	var currentUserContent []anthropic.MessageContent
 
@@ -804,6 +820,9 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 	}
 
 	for _, block := range bundle.RuntimeContext {
+		if runtimeContextTransportRole(block) == "developer" {
+			continue
+		}
 		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(fmt.Sprintf("[%s]\n%s", block.Name, block.Content)))
 	}
 
@@ -836,6 +855,15 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(bundle.Task))
 	}
 	flushUserContent()
+	return anthropicMsgs
+}
+
+// chatAnthropic Anthropic 格式调用，转换为统一的 OpenAI 格式返回
+func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
+
+	systemPrompt := buildAnthropicSystemPrompt(bundle)
+	anthropicMsgs := buildAnthropicMessages(bundle)
 
 	// 转换 tools: OpenAI → Anthropic 格式
 	var anthropicTools []anthropic.ToolDefinition
