@@ -31,30 +31,22 @@ describe("sanitizeReportHTML", () => {
 <html>
 <head>
   <meta charset="UTF-8">
-  <script id="oda-echarts-loader" src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script id="oda-echarts-loader" src="/assets/echarts.min.js"></script>
 </head>
 <body>
-  <div class="chart-box" data-chart-id="chart_sales" style="height: 400px"></div>
-  <script id="oda-chart-runtime">
-    document.addEventListener('DOMContentLoaded', function() {
-      var nodes = document.querySelectorAll('.chart-box[data-chart-id="chart_sales"]');
-      nodes.forEach(function(el) {
-        var chart = echarts.init(el);
-        chart.setOption({ xAxis: { type: 'category', data: ['A'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [1] }] });
-        window.addEventListener('resize', function() { chart.resize(); });
-      });
-    });
-  </script>
+  <div class="chart-box" data-chart-id="chart_sales" data-chart-option='{"series":[{"type":"bar","data":[1]}]}' style="height: 400px"></div>
+  <script id="oda-chart-runtime" src="/oda-chart-runtime.js"></script>
 </body>
 </html>`;
 
     const sanitized = sanitizeReportHTML(html);
 
     expect(sanitized).toContain('id="oda-echarts-loader"');
-    expect(sanitized).toContain('https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js');
+    expect(sanitized).toContain('/assets/echarts.min.js');
     expect(sanitized).toContain('id="oda-chart-runtime"');
-    expect(sanitized).toContain("echarts.init(");
-    expect(sanitized).toContain("document.querySelectorAll('.chart-box[data-chart-id=\"chart_sales\"]')");
+    expect(sanitized).toContain('src="/oda-chart-runtime.js"');
+    expect(sanitized).toContain('data-chart-id="chart_sales"');
+    expect(sanitized).toContain("data-chart-option");
   });
 
   it("removes untrusted inline scripts", () => {

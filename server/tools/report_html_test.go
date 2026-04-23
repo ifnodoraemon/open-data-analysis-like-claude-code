@@ -78,7 +78,7 @@ func TestRenderReportHTMLAttachesUntitledChartBlocksToNearestSection(t *testing.
 	if analysisIdx < 0 || chartIdx < 0 || chartIdx < analysisIdx {
 		t.Fatalf("expected chart to render inside analysis section after it starts, got: %s", html)
 	}
-	if strings.Count(html, `data-chart-id="chart_sales_trend" class="chart-box"`) != 1 {
+	if strings.Count(html, `data-chart-id="chart_sales_trend"`) != 1 {
 		t.Fatalf("expected chart to render exactly once, got: %s", html)
 	}
 }
@@ -233,8 +233,8 @@ func TestRenderReportHTMLUsesBlocksAsPrimaryModel(t *testing.T) {
 	if strings.Contains(html, `data-block-id="trend" data-block-kind="chart" data-chart-id="chart_sales"`) {
 		t.Fatalf("expected chart block wrapper not to carry data-chart-id, got: %s", html)
 	}
-	if !strings.Contains(html, `document.querySelectorAll('.chart-box[data-chart-id="chart_sales"]')`) {
-		t.Fatalf("expected chart runtime to target chart boxes only, got: %s", html)
+	if !strings.Contains(html, `data-chart-option="`) || !strings.Contains(html, `id="oda-chart-runtime" src="/oda-chart-runtime.js"`) {
+		t.Fatalf("expected chart data attributes and external runtime, got: %s", html)
 	}
 }
 
@@ -297,7 +297,7 @@ func TestRenderReportHTMLAllowsRepeatedChartReferences(t *testing.T) {
 		},
 	})
 
-	if strings.Count(html, `data-chart-id="chart_sales" class="chart-box"`) != 2 {
+	if strings.Count(html, `data-chart-id="chart_sales"`) != 2 {
 		t.Fatalf("expected repeated chart references to render 2 containers, got html: %s", html)
 	}
 	if !strings.Contains(html, `id="chart_sales-ref-1"`) || !strings.Contains(html, `id="chart_sales-ref-2"`) {

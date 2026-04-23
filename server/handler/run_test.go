@@ -70,8 +70,8 @@ func TestRenderReportHTMLFromSnapshotRegeneratesCurrentTemplate(t *testing.T) {
 	if !strings.Contains(html, `<h2>一、概览</h2>`) {
 		t.Fatalf("expected regenerated html to retain original prefixed titles, got: %s", html)
 	}
-	if !strings.Contains(html, `document.querySelectorAll('.chart-box[data-chart-id="chart_sales"]')`) {
-		t.Fatalf("expected regenerated html to use chart-box-only selector, got: %s", html)
+	if !strings.Contains(html, `data-chart-option="`) || !strings.Contains(html, `id="oda-chart-runtime" src="/oda-chart-runtime.js"`) {
+		t.Fatalf("expected regenerated html to use chart data attributes and external runtime, got: %s", html)
 	}
 	if strings.Contains(html, `data-block-id="blk_chart" data-block-kind="chart" data-chart-id="chart_sales"`) {
 		t.Fatalf("expected chart wrapper not to retain duplicate data-chart-id, got: %s", html)

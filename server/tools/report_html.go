@@ -2,7 +2,6 @@ package tools
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	htmlstd "html"
@@ -21,9 +20,6 @@ var (
 	mdHeadingRegexp   = regexp.MustCompile(`(?m)^\s*(?:#{1,6})\s+(.+?)(?:\r?\n|$)`)
 	renderTokenRegexp = regexp.MustCompile(`[a-z0-9]+`)
 )
-
-//go:embed assets/echarts.min.js
-var echartsMinJS string
 
 func ResolveReportTitleFromState(state *ReportState) string {
 	if state == nil {
@@ -94,14 +90,11 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 		customCSSBlock = "\n" + customCSS + "\n"
 	}
 
-	echartsScriptNode := ""
+	echartsURL := "/assets/echarts.min.js"
 	if config.Cfg != nil && config.Cfg.ReportEchartsUrl != "" {
-		echartsScriptNode = fmt.Sprintf(`<script id="oda-echarts-loader" src="%s"></script>`, escapeHTMLAttr(config.Cfg.ReportEchartsUrl))
-	} else if len(echartsMinJS) > 0 {
-		echartsScriptNode = fmt.Sprintf(`<script id="oda-echarts-loader">%s</script>`, echartsMinJS)
-	} else {
-		echartsScriptNode = `<script id="oda-echarts-loader" src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>`
+		echartsURL = config.Cfg.ReportEchartsUrl
 	}
+	echartsScriptNode := fmt.Sprintf(`<script id="oda-echarts-loader" src="%s"></script>`, escapeHTMLAttr(echartsURL))
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="zh-CN">
@@ -269,39 +262,10 @@ strong { color: var(--primary); font-weight: 600; }
 }
 
 func buildChartScripts(charts []ChartData) string {
-	var chartScripts strings.Builder
 	if len(charts) == 0 {
 		return ""
 	}
-	chartScripts.WriteString("<script id=\"oda-chart-runtime\">\ndocument.addEventListener('DOMContentLoaded', function() {\n")
-	for _, ch := range charts {
-		optionStr := safeJSONForInlineScript(ch.Option)
-		chartScripts.WriteString(fmt.Sprintf(`
-  (function() {
-    var nodes = document.querySelectorAll('.chart-box[data-chart-id="%s"]');
-    if (nodes.length > 0) {
-      var option = %s;
-      nodes.forEach(function(el) {
-        try {
-          var chart = echarts.init(el);
-          if (option && typeof option === 'object' && Object.keys(option).length > 0) {
-            if (!option.tooltip) option.tooltip = {trigger: 'axis'};
-            if (!option.grid) option.grid = {left:'3%%',right:'4%%',bottom:'3%%',containLabel:true};
-            chart.setOption(option);
-            window.addEventListener('resize', function() { chart.resize(); });
-          } else {
-            el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#999;font-size:14px;">Chart data is empty</div>';
-          }
-        } catch(e) {
-          el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%%;color:#e53e3e;font-size:14px;">Chart render failed: ' + e.message + '</div>';
-        }
-      });
-    }
-  })();
-`, ch.ID, optionStr))
-	}
-	chartScripts.WriteString("});\n</script>")
-	return chartScripts.String()
+	return `<script id="oda-chart-runtime" src="/oda-chart-runtime.js"></script>`
 }
 
 func collectReferencedCharts(blocks []ReportBlock) map[string]struct{} {
@@ -692,7 +656,8 @@ func processContent(content string, charts []ChartData) string {
 				}
 				chartRefCounts[chartID]++
 				containerID := fmt.Sprintf("%s-ref-%d", chartID, chartRefCounts[chartID])
-				return fmt.Sprintf(`<div id="%s" data-chart-id="%s" class="chart-box" style="height:%s;"></div>`, escapeHTMLAttr(containerID), escapeHTMLAttr(ch.ID), escapeHTMLAttr(height))
+				optionAttr := escapeHTMLAttr(safeJSONForInlineScript(ch.Option))
+				return fmt.Sprintf(`<div id="%s" data-chart-id="%s" data-chart-option="%s" class="chart-box" style="height:%s;"></div>`, escapeHTMLAttr(containerID), escapeHTMLAttr(ch.ID), optionAttr, escapeHTMLAttr(height))
 			}
 		}
 		return ""

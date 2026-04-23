@@ -38,7 +38,7 @@ type Config struct {
 	SessionTTLHours    int    // 空闲 session 自动清理阈值（小时），0 = 不自动清理
 	TraceRetentionDays int    // LLM debug trace 保留天数，0 = 永久保留
 	TempCleanupOnStart bool   // 启动时清理 TempDir
-	ReportEchartsUrl   string // ECharts 资源路径，默认为 jsDelivr CDN
+	ReportEchartsUrl   string // ECharts 资源路径，默认为前端自托管静态资源
 }
 
 var Cfg *Config
@@ -88,7 +88,7 @@ func Load() {
 		SessionTTLHours:    getEnvInt("SESSION_TTL_HOURS", 0),
 		TraceRetentionDays: getEnvInt("TRACE_RETENTION_DAYS", 0),
 		TempCleanupOnStart: getEnvBool("TEMP_CLEANUP_ON_START", false),
-		ReportEchartsUrl:   getEnv("REPORT_ECHARTS_URL", "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"),
+		ReportEchartsUrl:   getEnv("REPORT_ECHARTS_URL", "/assets/echarts.min.js"),
 	}
 
 	if Cfg.LLMAPIKey == "" {
@@ -103,8 +103,11 @@ func Load() {
 		log.Printf("Warning: AUTH_SECRET is too short (%d chars). Recommend at least 32 characters.", len(Cfg.AuthSecret))
 	}
 
-	if Cfg.ReportEchartsUrl != "" && !strings.HasPrefix(Cfg.ReportEchartsUrl, "https://") && !strings.HasPrefix(Cfg.ReportEchartsUrl, "http://") {
-		log.Printf("Warning: REPORT_ECHARTS_URL does not start with http(s)://, ignoring: %s", Cfg.ReportEchartsUrl)
+	if Cfg.ReportEchartsUrl != "" &&
+		!strings.HasPrefix(Cfg.ReportEchartsUrl, "/") &&
+		!strings.HasPrefix(Cfg.ReportEchartsUrl, "https://") &&
+		!strings.HasPrefix(Cfg.ReportEchartsUrl, "http://") {
+		log.Printf("Warning: REPORT_ECHARTS_URL does not start with / or http(s)://, ignoring: %s", Cfg.ReportEchartsUrl)
 		Cfg.ReportEchartsUrl = ""
 	}
 

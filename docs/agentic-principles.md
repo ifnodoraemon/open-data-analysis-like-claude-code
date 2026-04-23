@@ -65,8 +65,17 @@ Runtime 不应代替 Judge。
 - 防止上下文无限膨胀
 - 防止引用不存在对象
 - 防止在根目标未闭环时 finalize
+- 防止模型生成的报告 HTML 绕过前端 sanitizer / CSP 后执行非可信脚本
 
 不允许把 guardrail 扩大成隐式流程编排器。
+
+### 4.1 Finalize 是交付边界，不是下一轮提示
+
+`report_finalize` 的职责是校验并标记报告可交付。它成功返回 `ok=true`、`is_finalized=true`、`delivery_state=finalized` 后，当前 run 应进入完成状态。
+
+这属于交付边界，不属于“模型下一步应该做什么”的建议。runtime 可以据此停止当前执行循环，避免 finalize 成功后继续发起下一轮 LLM 调用，造成界面看起来仍在分析或重复收尾。
+
+如果 finalize 失败，工具应返回 blockers / issues 等事实，run 继续由模型自行判断如何处理。
 
 ### 5. 观察工具优先于系统注入建议
 
@@ -155,6 +164,20 @@ Runtime 在必要时可以为用户消息补充结构化运行时事实，例如
 - `goal_manage` 应是可选的结构化 scratchpad
 - `report_manage_blocks` 是最终产物组织接口，但不应反过来规定模型的推理顺序
 
+### 10.1 报告渲染脚本必须与模型内容分层
+
+报告内容可以由模型组织，但图表运行时代码不应混入模型生成的 HTML 内容。
+
+当前约定：
+
+- 报告 HTML 可以包含 chart 容器和结构化 chart option 数据
+- ECharts loader 与 chart runtime 应使用可信的外部脚本资源
+- 默认优先使用同源静态资源，例如 `/assets/echarts.min.js` 和 `/oda-chart-runtime.js`
+- 前端 sanitizer 负责只放行可信脚本、样式、URL 和报告属性
+- CSP 不应为了修复图表而放开通用 inline script，例如不应新增宽泛的 `unsafe-inline`
+
+这样做的目标不是把报告生成变成固定流程，而是保持安全边界清晰：模型负责内容与数据，runtime / frontend 负责可信渲染机制。
+
 ### 11. 歧义应由 agent 基于事实暴露，而不是静默拍板
 
 当分析依赖的核心口径存在多个合理候选，例如：
@@ -211,6 +234,8 @@ runtime 不应替模型默认选一个，也不应在 handler 里偷偷替用户
 - 详细但契约化的工具描述
 - 面向 UI 的展示摘要，但不夹带下一步指令
 - 展示摘要字段与事实字段显式分离，例如使用 `ui_summary`
+- 前端 sanitizer 与 CSP 作为报告预览的安全边界
+- finalize 成功后由 runtime 结束当前 run，避免多余的 LLM 轮次
 
 ## 当前实现约定
 

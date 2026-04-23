@@ -177,9 +177,24 @@ function isEChartsLoaderScript(node) {
   const id = node.getAttribute("id") || "";
   if (id !== "oda-echarts-loader" || !src) return false;
   try {
-    const url = new URL(src, "https://example.com");
+    const url = new URL(src, window.location.origin);
     const path = url.pathname.toLowerCase();
+    if (url.origin === window.location.origin && path === "/assets/echarts.min.js") {
+      return true;
+    }
     return ECHARTS_CDN_HOSTS.has(url.hostname) && path.endsWith("echarts.min.js");
+  } catch {
+    return false;
+  }
+}
+
+function isChartRuntimeScript(node) {
+  const src = node.getAttribute("src") || "";
+  const id = node.getAttribute("id") || "";
+  if (id !== "oda-chart-runtime" || !src) return false;
+  try {
+    const url = new URL(src, window.location.origin);
+    return url.origin === window.location.origin && url.pathname === "/oda-chart-runtime.js";
   } catch {
     return false;
   }
@@ -232,7 +247,7 @@ export function sanitizeReportHTML(html) {
 
   doc.querySelectorAll("script").forEach((node) => {
     const isLoader = isEChartsLoaderScript(node);
-    const isRuntime = isSafeRuntimeScript(node);
+    const isRuntime = isChartRuntimeScript(node) || isSafeRuntimeScript(node);
     if (!isLoader && !isRuntime) {
       node.remove();
     }

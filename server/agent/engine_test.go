@@ -152,6 +152,23 @@ func TestToolCallSucceeded(t *testing.T) {
 	}
 }
 
+func TestSuccessfulFinalizeResultDetection(t *testing.T) {
+	t.Parallel()
+
+	success := `{"ok":true,"tool":"report_finalize","delivery_state":"finalized","is_finalized":true,"ui_summary":"delivery_state=finalized; block_count=6; chart_count=6"}`
+	if !isSuccessfulFinalizeResult(success) {
+		t.Fatal("expected finalized report result to stop the run")
+	}
+	if got := buildFinalizeCompleteSummary(success); got != "delivery_state=finalized; block_count=6; chart_count=6" {
+		t.Fatalf("unexpected finalize summary: %q", got)
+	}
+
+	blocked := `{"ok":false,"tool":"report_finalize","delivery_state":"draft","is_finalized":false}`
+	if isSuccessfulFinalizeResult(blocked) {
+		t.Fatal("expected blocked finalize result not to stop the run")
+	}
+}
+
 func TestInspectGoalsToolReturnsFactsOnly(t *testing.T) {
 	t.Parallel()
 

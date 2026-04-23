@@ -656,6 +656,11 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 					ToolCallID: toolCall.ID,
 				})
 				e.mu.Unlock()
+
+				if toolCall.Function.Name == "report_finalize" && isSuccessfulFinalizeResult(result) {
+					emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: buildFinalizeCompleteSummary(result)}})
+					return
+				}
 			}
 
 			continue // 继续循环
@@ -667,6 +672,32 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 		return
 	}
 
+}
+
+func isSuccessfulFinalizeResult(result string) bool {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == "" {
+		return false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return false
+	}
+	tool, _ := payload["tool"].(string)
+	ok, _ := payload["ok"].(bool)
+	finalized, _ := payload["is_finalized"].(bool)
+	deliveryState, _ := payload["delivery_state"].(string)
+	return tool == "report_finalize" && ok && finalized && strings.EqualFold(strings.TrimSpace(deliveryState), "finalized")
+}
+
+func buildFinalizeCompleteSummary(result string) string {
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &payload); err == nil {
+		if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
+			return strings.TrimSpace(summary)
+		}
+	}
+	return "Report finalized."
 }
 
 func errorString(err error) string {
