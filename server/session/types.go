@@ -31,25 +31,25 @@ type ReportSnapshotLoader interface {
 }
 
 type Session struct {
-	ID           string
-	WorkspaceID  string
-	UserID       string
-	CacheRoot    string
-	FileService  *service.FileService
+	ID            string
+	WorkspaceID   string
+	UserID        string
+	CacheRoot     string
+	FileService   *service.FileService
 	SourceService *service.SourceService
-	Ingester     *data.Ingester
-	Registry     *tools.Registry
-	Engine       *agent.Engine
-	ReportState  *tools.ReportState
-	EditState    *tools.ReportEditState
-	FinalizeTool *tools.FinalizeReportTool
-	Memory       *agent.WorkingMemory
-	Subgoals     *agent.SubgoalManager
-	ActiveRun    *RunState
-	CreatedAt    time.Time
-	LastSeenAt   time.Time
-	mu           sync.Mutex
-	uploadMu     sync.RWMutex
+	Ingester      *data.Ingester
+	Registry      *tools.Registry
+	Engine        *agent.Engine
+	ReportState   *tools.ReportState
+	EditState     *tools.ReportEditState
+	FinalizeTool  *tools.FinalizeReportTool
+	Memory        *agent.WorkingMemory
+	Subgoals      *agent.SubgoalManager
+	ActiveRun     *RunState
+	CreatedAt     time.Time
+	LastSeenAt    time.Time
+	mu            sync.Mutex
+	uploadMu      sync.RWMutex
 }
 
 func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileService, sourceService *service.SourceService) (*Session, error) {
@@ -68,29 +68,29 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	subgoals := agent.NewSubgoalManager()
 
 	s := &Session{
-		ID:           id,
-		WorkspaceID:  workspaceID,
-		UserID:       userID,
-		CacheRoot:    cacheRoot,
-		FileService:  fileService,
+		ID:            id,
+		WorkspaceID:   workspaceID,
+		UserID:        userID,
+		CacheRoot:     cacheRoot,
+		FileService:   fileService,
 		SourceService: sourceService,
-		Ingester:     ingester,
-		ReportState:  &tools.ReportState{},
-		EditState:    &tools.ReportEditState{},
-		Memory:       memory,
-		Subgoals:     subgoals,
-		CreatedAt:    time.Now(),
-		LastSeenAt:   time.Now(),
+		Ingester:      ingester,
+		ReportState:   &tools.ReportState{},
+		EditState:     &tools.ReportEditState{},
+		Memory:        memory,
+		Subgoals:      subgoals,
+		CreatedAt:     time.Now(),
+		LastSeenAt:    time.Now(),
 	}
 
 	ctx := tools.ToolContext{
-		Ingester:          s.Ingester,
-		ReportState:       s.ReportState,
-		EditState:         s.EditState,
-		Memory:            memory,
-		Subgoals:          subgoals,
-		SessionID:         id,
-		WorkspaceID:       workspaceID,
+		Ingester:    s.Ingester,
+		ReportState: s.ReportState,
+		EditState:   s.EditState,
+		Memory:      memory,
+		Subgoals:    subgoals,
+		SessionID:   id,
+		WorkspaceID: workspaceID,
 		SessionSourcesProvider: func() ([]service.SessionSourceSummary, error) {
 			if sourceService == nil {
 				return nil, nil
@@ -409,6 +409,7 @@ func (s *Session) ConfigureEditState(edit *agent.ReportEditContext) {
 	s.EditState.Mode = strings.TrimSpace(edit.Mode)
 	s.EditState.TargetRunID = strings.TrimSpace(edit.TargetRunID)
 	s.EditState.TargetBlockID = strings.TrimSpace(edit.BlockID)
+	s.EditState.TargetBlockLabel = strings.TrimSpace(edit.BlockLabel)
 	s.EditState.SelectionText = strings.TrimSpace(edit.SelectionText)
 	s.EditState.PreserveOtherBlocks = edit.PreserveOtherBlocks
 	s.EditState.RefreshFromReportState(s.ReportState)
@@ -565,6 +566,9 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 		content := fmt.Sprintf("Mode: %s\n", s.EditState.Mode)
 		if s.EditState.TargetBlockID != "" {
 			content += fmt.Sprintf("TargetBlockID: %s\n", s.EditState.TargetBlockID)
+		}
+		if s.EditState.TargetBlockLabel != "" {
+			content += fmt.Sprintf("TargetBlockLabel: %s\n", s.EditState.TargetBlockLabel)
 		}
 		if s.EditState.SelectionText != "" {
 			content += fmt.Sprintf("SelectionText: %s\n", s.EditState.SelectionText)

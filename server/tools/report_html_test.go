@@ -56,6 +56,26 @@ func TestRenderReportHTMLUsesContentHeadingAsCanonicalSectionTitle(t *testing.T)
 	}
 }
 
+func TestRenderReportHTMLShowsFinalTitleInBody(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("2025年上半年业务分析报告", "AI 数据分析师", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "summary", Kind: "markdown", Content: "## 执行摘要\n\n正文"},
+		},
+	})
+
+	if !strings.Contains(html, `class="report-titlebar"`) {
+		t.Fatalf("expected visible report title header, got: %s", html)
+	}
+	if !strings.Contains(html, "<h1>2025年上半年业务分析报告</h1>") {
+		t.Fatalf("expected title text in report body, got: %s", html)
+	}
+	if !strings.Contains(html, `<div class="meta">AI 数据分析师</div>`) {
+		t.Fatalf("expected author meta in report body, got: %s", html)
+	}
+}
+
 func TestRenderReportHTMLAttachesUntitledChartBlocksToNearestSection(t *testing.T) {
 	t.Parallel()
 

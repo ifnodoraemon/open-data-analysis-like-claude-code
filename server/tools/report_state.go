@@ -7,7 +7,7 @@ import (
 )
 
 type ReportState struct {
-	mu            sync.RWMutex `json:"-"`
+	mu            sync.RWMutex  `json:"-"`
 	Blocks        []ReportBlock `json:"blocks"`
 	Charts        []ChartData   `json:"charts"`
 	FinalTitle    string        `json:"finalTitle,omitempty"`
@@ -49,6 +49,7 @@ type ReportEditState struct {
 	Mode                string              `json:"mode,omitempty"`
 	TargetRunID         string              `json:"targetRunId,omitempty"`
 	TargetBlockID       string              `json:"targetBlockId,omitempty"`
+	TargetBlockLabel    string              `json:"targetBlockLabel,omitempty"`
 	SelectionText       string              `json:"selectionText,omitempty"`
 	PreserveOtherBlocks bool                `json:"preserveOtherBlocks,omitempty"`
 	AllowedChartIDs     map[string]struct{} `json:"-"`
@@ -72,6 +73,7 @@ func (s *ReportEditState) Reset() {
 	s.Mode = ""
 	s.TargetRunID = ""
 	s.TargetBlockID = ""
+	s.TargetBlockLabel = ""
 	s.SelectionText = ""
 	s.PreserveOtherBlocks = false
 	s.AllowedChartIDs = nil
@@ -94,6 +96,7 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"mode":                  s.Mode,
 		"target_run_id":         s.TargetRunID,
 		"target_block_id":       s.TargetBlockID,
+		"target_block_label":    s.TargetBlockLabel,
 		"selection_text":        s.SelectionText,
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,

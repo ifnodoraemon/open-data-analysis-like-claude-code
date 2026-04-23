@@ -41,23 +41,17 @@
     <div v-if="mode === 'preview' && reportHTML" class="edit-strip">
       <template v-if="selectedBlockId">
         <div class="edit-meta">
-          <span class="edit-label">当前选中</span>
+          <span class="edit-label">{{ selectedByText ? "选中文本" : "当前章节" }}</span>
           <span class="edit-value">{{ selectedBlockLabel }}</span>
         </div>
-        <textarea
-          v-model="regenerateInstruction"
-          class="edit-input"
-          rows="2"
-          placeholder="说明这段需要如何重写，例如：强调华东区增长放缓的原因，并保留图表引用。"
-          :disabled="isRunning"
-        ></textarea>
+        <p class="selection-preview">{{ selectedBlockText }}</p>
         <div class="edit-actions">
           <button
             class="toolbar-btn primary"
-            :disabled="isRunning || !canRegenerate"
-            @click="submitRegenerate"
+            :disabled="isRunning || !selectedBlockText"
+            @click="quoteSelection"
           >
-            重生成本段
+            引用到对话
           </button>
           <button
             class="toolbar-btn"
@@ -69,7 +63,7 @@
         </div>
       </template>
       <p v-else class="edit-hint">
-        点击报告中的任一章节块，即可对该段发起局部重生成。
+        划词选中报告内容后引用到左侧对话；也可以点击章节引用整段。
       </p>
     </div>
     <div class="preview-area">
@@ -100,11 +94,9 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useAgentStore } from "../../stores/agent.js";
-import { useWebSocket } from "../../composables/useWebSocket.js";
 import { sanitizeReportHTML } from "../../utils/sanitize.js";
 
 const store = useAgentStore();
-const { sendMessage } = useWebSocket();
 const reportHTML = computed(() => store.reportHTML);
 const sanitizedReportHTML = computed(() =>
   sanitizeReportHTML(reportHTML.value),
@@ -119,7 +111,7 @@ const selectedBlockId = ref("");
 const selectedFragmentIndex = ref("");
 const selectedBlockLabel = ref("");
 const selectedBlockText = ref("");
-const regenerateInstruction = ref("");
+const selectedByText = ref(false);
 const runMetaLabel = computed(() => {
   if (selectedReport.value?.title) {
     const suffix = selectedReport.value.author
@@ -160,22 +152,21 @@ watch(mode, (nextMode) => {
 });
 
 onBeforeUnmount(() => {
+  const doc = reportFrame.value?.contentWindow?.document;
+  doc?.removeEventListener("mouseup", handleFrameMouseUp);
+  doc?.removeEventListener("keyup", handleFrameMouseUp);
 });
 
 function toggleExportMenu() {
   showExportMenu.value = !showExportMenu.value;
 }
 
-const canRegenerate = computed(
-  () => selectedBlockId.value && regenerateInstruction.value.trim(),
-);
-
 function clearSelection() {
   selectedBlockId.value = "";
   selectedFragmentIndex.value = "";
   selectedBlockLabel.value = "";
   selectedBlockText.value = "";
-  regenerateInstruction.value = "";
+  selectedByText.value = false;
   applySelectionHighlight("");
 }
 
@@ -191,6 +182,10 @@ function decorateFrameBlocks() {
   if (!doc) return;
 
   ensureFrameStyles(doc);
+  doc.removeEventListener("mouseup", handleFrameMouseUp);
+  doc.removeEventListener("keyup", handleFrameMouseUp);
+  doc.addEventListener("mouseup", handleFrameMouseUp);
+  doc.addEventListener("keyup", handleFrameMouseUp);
   doc.querySelectorAll("[data-block-id]").forEach((node, idx) => {
     if (node.dataset.codexBound === "1") return;
     node.dataset.codexBound = "1";
@@ -218,14 +213,46 @@ function ensureFrameStyles(doc) {
       outline-offset: 4px;
       box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.12);
     }
+    ::selection {
+      background: rgba(37, 99, 235, 0.24);
+    }
   `;
   doc.head.appendChild(style);
 }
 
+function handleFrameMouseUp() {
+  window.setTimeout(() => {
+    const frameWindow = reportFrame.value?.contentWindow;
+    const selection = frameWindow?.getSelection?.();
+    const selectedText = selection?.toString?.().trim() || "";
+    if (!selection || selection.isCollapsed || !selectedText) return;
+
+    const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    const block = findClosestReportBlock(range?.commonAncestorContainer);
+    if (!block) return;
+
+    selectReportBlock(block, {
+      text: selectedText,
+      byText: true,
+    });
+  }, 0);
+}
+
 function handleBlockClick(event) {
+  const frameSelection = reportFrame.value?.contentWindow?.getSelection?.();
+  if (frameSelection && !frameSelection.isCollapsed && frameSelection.toString().trim()) {
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
   const block = event.currentTarget;
+  selectReportBlock(block, {
+    text: block.textContent?.trim() || "",
+    byText: false,
+  });
+}
+
+function selectReportBlock(block, options = {}) {
   const blockId = block?.dataset?.blockId || "";
   if (!blockId) return;
 
@@ -233,8 +260,15 @@ function handleBlockClick(event) {
   selectedBlockId.value = blockId;
   selectedFragmentIndex.value = fragmentIdx;
   selectedBlockLabel.value = extractBlockLabel(block);
-  selectedBlockText.value = block.textContent?.trim() || "";
+  selectedBlockText.value = trimSelectionText(options.text || "");
+  selectedByText.value = !!options.byText;
   applySelectionHighlight(fragmentIdx);
+}
+
+function findClosestReportBlock(node) {
+  if (!node) return null;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  return element?.closest?.("[data-block-id]") || null;
 }
 
 function extractBlockLabel(block) {
@@ -259,18 +293,21 @@ function applySelectionHighlight(fragmentIdx) {
   });
 }
 
-async function submitRegenerate() {
-  if (!canRegenerate.value) return;
-  await sendMessage(regenerateInstruction.value.trim(), {
-    editContext: {
-      mode: "regenerate_block",
-      targetRunId: selectedRun.value?.id || activeRun.value?.id || "",
-      blockId: selectedBlockId.value,
-      selectionText: selectedBlockText.value,
-      preserveOtherBlocks: true,
-    },
+function quoteSelection() {
+  if (!selectedBlockId.value || !selectedBlockText.value) return;
+  store.setReportQuote({
+    mode: selectedByText.value ? "regenerate_selection" : "regenerate_block",
+    targetRunId: selectedRun.value?.id || activeRun.value?.id || "",
+    blockId: selectedBlockId.value,
+    blockLabel: selectedBlockLabel.value,
+    selectionText: selectedBlockText.value,
+    preserveOtherBlocks: true,
   });
-  regenerateInstruction.value = "";
+}
+
+function trimSelectionText(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  return normalized.length > 3000 ? `${normalized.slice(0, 3000)}...` : normalized;
 }
 
 async function exportReport(format) {
@@ -300,7 +337,7 @@ function exportHTML() {
 }
 
 async function exportWord() {
-  const targetRunId = currentRun.value?.id || props.runId || "";
+  const targetRunId = selectedRun.value?.id || activeRun.value?.id || "";
   const res = await fetch("/api/report-exports/docx", {
     method: "POST",
     headers: {
@@ -692,16 +729,20 @@ function waitForFrameReady(frameDocument) {
   white-space: nowrap;
 }
 
-.edit-input {
+.selection-preview {
   flex: 1;
   min-width: 280px;
+  max-width: 520px;
+  max-height: 54px;
+  overflow: hidden;
+  margin: 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-secondary);
   color: var(--text-primary);
   padding: 10px 12px;
-  resize: vertical;
-  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .edit-actions {

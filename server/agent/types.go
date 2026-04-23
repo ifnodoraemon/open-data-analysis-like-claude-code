@@ -42,6 +42,7 @@ type ReportEditContext struct {
 	Mode                string `json:"mode,omitempty"`
 	TargetRunID         string `json:"targetRunId,omitempty"`
 	BlockID             string `json:"blockId,omitempty"`
+	BlockLabel          string `json:"blockLabel,omitempty"`
 	SelectionText       string `json:"selectionText,omitempty"`
 	PreserveOtherBlocks bool   `json:"preserveOtherBlocks,omitempty"`
 }

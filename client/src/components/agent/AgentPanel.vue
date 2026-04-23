@@ -44,6 +44,12 @@
             <div class="msg-icon">👤</div>
             <div class="msg-body">
               <div class="msg-label">用户指令</div>
+              <div v-if="msg.editContext?.selectionText" class="quote-preview">
+                <div class="quote-preview-title">
+                  引用报告：{{ editContextLabel(msg.editContext) }}
+                </div>
+                <p>{{ truncate(msg.editContext.selectionText, 220) }}</p>
+              </div>
               <div
                 class="msg-content markdown-body"
                 v-html="renderMarkdown(msg.content)"
@@ -288,6 +294,15 @@ function toolResultSummary(msg) {
   return "";
 }
 
+function editContextLabel(editContext) {
+  return (
+    editContext.blockLabel ||
+    editContext.blockId ||
+    editContext.targetBlockId ||
+    "选区"
+  );
+}
+
 function handleOptionClick(msg, optValue) {
   if (msg.allow_multiple) {
     if (!multiSelectDrafts.value[msg.id]) multiSelectDrafts.value[msg.id] = [];
@@ -396,6 +411,28 @@ function submitMultiSelect(msg) {
   font-size: 0.85rem;
   line-height: 1.5;
   color: var(--text-primary);
+}
+
+.quote-preview {
+  margin: 0 0 8px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--accent-blue);
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.07);
+}
+
+.quote-preview-title {
+  color: var(--accent-blue);
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.quote-preview p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .tool-result-summary {

@@ -6,6 +6,22 @@
         <span class="source-meta" v-if="src.row_count">({{ src.row_count }} rows)</span>
       </span>
     </div>
+    <div v-if="reportQuote" class="quote-context">
+      <div class="quote-main">
+        <span class="quote-kicker">引用报告选区</span>
+        <span class="quote-title">{{ reportQuote.blockLabel || reportQuote.blockId || "报告片段" }}</span>
+        <p>{{ quotePreview }}</p>
+      </div>
+      <button
+        class="quote-clear"
+        type="button"
+        aria-label="取消引用"
+        title="取消引用"
+        @click="store.clearReportQuote()"
+      >
+        ×
+      </button>
+    </div>
     <div class="input-row">
       <label
         class="upload-btn"
@@ -34,7 +50,7 @@
       <textarea
         v-model="input"
         class="input-field"
-        placeholder="输入你的目标、问题或约束..."
+        :placeholder="reportQuote ? '说明希望如何修改引用区域...' : '输入你的目标、问题或约束...'"
         aria-label="消息输入框"
         @keydown.enter.exact="handleSend"
         rows="1"
@@ -75,6 +91,11 @@ const input = ref("");
 const isRunning = computed(() => store.isRunning);
 const isUploading = ref(false);
 const showSourcesDrawer = ref(false);
+const reportQuote = computed(() => store.reportQuote);
+const quotePreview = computed(() => {
+  const text = reportQuote.value?.selectionText || "";
+  return text.length > 120 ? `${text.slice(0, 120)}...` : text;
+});
 
 const pendingProfiles = computed(() =>
   dataSourceStore.sessionSources.filter(s => s.semantic_status === 'draft' || s.semantic_status === 'profiled')
@@ -148,8 +169,20 @@ async function handleFile(e) {
 
 async function handleSend() {
   if (!input.value.trim() || isRunning.value) return;
-  await sendMessage(input.value.trim());
+  const quote = reportQuote.value;
+  const editContext = quote
+    ? {
+        mode: quote.mode || "regenerate_selection",
+        targetRunId: quote.targetRunId || "",
+        blockId: quote.blockId || "",
+        blockLabel: quote.blockLabel || "",
+        selectionText: quote.selectionText || "",
+        preserveOtherBlocks: quote.preserveOtherBlocks !== false,
+      }
+    : null;
+  await sendMessage(input.value.trim(), editContext ? { editContext } : {});
   input.value = "";
+  if (quote) store.clearReportQuote();
 }
 
 function handleStop() {
@@ -175,6 +208,64 @@ function formatSize(bytes) {
   gap: 6px;
   flex-wrap: wrap;
   margin-bottom: 6px;
+}
+
+.quote-context {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.quote-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.quote-kicker {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--accent-blue);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.quote-title {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-context p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.quote-clear {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.quote-clear:hover {
+  background: rgba(15, 23, 42, 0.14);
+  color: var(--text-primary);
 }
 
 .source-tag {

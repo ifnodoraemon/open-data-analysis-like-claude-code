@@ -21,6 +21,7 @@ export const useAgentStore = defineStore("agent", () => {
   const runs = ref([]);
   const subgoals = ref([]);
   const memoryFacts = ref({});
+  const reportQuote = ref(null);
 
   function findRunById(items, runId) {
     for (const item of items || []) {
@@ -108,6 +109,25 @@ let _msgSeq = 0;
 
   function updateReport(html) {
     reportHTML.value = html;
+  }
+
+  function setReportQuote(quote) {
+    if (!quote || !String(quote.selectionText || "").trim()) {
+      reportQuote.value = null;
+      return;
+    }
+    reportQuote.value = {
+      mode: quote.mode || "regenerate_selection",
+      targetRunId: quote.targetRunId || "",
+      blockId: quote.blockId || "",
+      blockLabel: quote.blockLabel || "",
+      selectionText: String(quote.selectionText || "").trim(),
+      preserveOtherBlocks: quote.preserveOtherBlocks !== false,
+    };
+  }
+
+  function clearReportQuote() {
+    reportQuote.value = null;
   }
 
   function setRunning(val) {
@@ -251,6 +271,7 @@ let _msgSeq = 0;
     runs.value = [];
     subgoals.value = [];
     memoryFacts.value = {};
+    reportQuote.value = null;
   }
 
   function logout() {
@@ -284,8 +305,11 @@ let _msgSeq = 0;
     runs,
     subgoals,
     memoryFacts,
+    reportQuote,
     addMessage,
     updateReport,
+    setReportQuote,
+    clearReportQuote,
     setRunning,
     setSession,
     setSelectedRun,

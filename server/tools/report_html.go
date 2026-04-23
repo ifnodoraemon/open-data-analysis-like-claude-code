@@ -43,6 +43,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	title = strings.TrimSpace(title)
 	author = strings.TrimSpace(author)
 	safeTitle := escapeHTMLText(title)
+	titleHeaderHTML := renderReportTitleHeader(title, author)
 
 	var bodyHTML strings.Builder
 	chapterNum := 0
@@ -130,6 +131,36 @@ body {
   line-height: 1.85;
   background: var(--bg-alt);
   -webkit-font-smoothing: antialiased;
+}
+
+.report-titlebar {
+  max-width: 780px;
+  margin: 2rem auto 0.75rem;
+  padding: 2rem 2.5rem 1.75rem;
+  background: var(--bg);
+  border-top: 4px solid var(--primary);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.report-titlebar .eyebrow {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+.report-titlebar h1 {
+  color: var(--primary);
+  font-size: 1.9rem;
+  line-height: 1.25;
+  font-weight: 800;
+  margin: 0;
+}
+.report-titlebar .meta {
+  margin-top: 0.75rem;
+  color: var(--text-light);
+  font-size: 0.9rem;
 }
 
 /* === Sections === */
@@ -242,6 +273,7 @@ strong { color: var(--primary); font-weight: 600; }
 /* === Print === */
 @media print {
   body { background: white; }
+  .report-titlebar { box-shadow: none; page-break-after: avoid; }
   .section { box-shadow: none; page-break-inside: avoid; margin: 1rem auto; }
   .chart-box { box-shadow: none; }
   table { box-shadow: none; }
@@ -257,8 +289,25 @@ strong { color: var(--primary); font-weight: 600; }
 <body class="%s">
 %s
 %s
+%s
 </body>
-</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, bodyHTML.String(), chartScripts)
+</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, titleHeaderHTML, bodyHTML.String(), chartScripts)
+}
+
+func renderReportTitleHeader(title, author string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	meta := ""
+	if strings.TrimSpace(author) != "" {
+		meta = fmt.Sprintf(`<div class="meta">%s</div>`, escapeHTMLText(strings.TrimSpace(author)))
+	}
+	return fmt.Sprintf(`<header class="report-titlebar" data-report-title="true">
+  <div class="eyebrow">Data Analysis Report</div>
+  <h1>%s</h1>
+  %s
+</header>`, escapeHTMLText(title), meta)
 }
 
 func buildChartScripts(charts []ChartData) string {
