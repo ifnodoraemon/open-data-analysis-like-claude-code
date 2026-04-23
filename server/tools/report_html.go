@@ -33,7 +33,6 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	if state == nil {
 		state = &ReportState{}
 	}
-	units := buildRenderUnits(state.Blocks)
 	if title == "" && state != nil {
 		title = state.FinalTitle
 	}
@@ -42,6 +41,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	}
 	title = strings.TrimSpace(title)
 	author = strings.TrimSpace(author)
+	units := buildRenderUnits(state.Blocks, title)
 	safeTitle := escapeHTMLText(title)
 	titleHeaderHTML := renderReportTitleHeader(title, author)
 	tocHTML := renderReportTOC(units)
@@ -299,12 +299,37 @@ strong { color: var(--primary); font-weight: 600; }
 
 /* === Print === */
 @media print {
+  @page { margin: 18mm 16mm; }
   body { background: white; }
   .report-titlebar { box-shadow: none; page-break-after: avoid; }
   .report-toc { box-shadow: none; page-break-after: avoid; }
-  .section { box-shadow: none; page-break-inside: avoid; margin: 1rem auto; }
-  .chart-box { box-shadow: none; }
-  table { box-shadow: none; }
+  .section {
+    box-shadow: none;
+    break-inside: auto;
+    page-break-inside: auto;
+    margin: 0.75rem auto;
+  }
+  .section h2,
+  .content h3,
+  .content h4,
+  .content h5 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .chart-box {
+    box-shadow: none;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  table {
+    box-shadow: none;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
 }
 /* === Responsive === */
 @media (max-width: 860px) {
@@ -535,10 +560,11 @@ func renderAttachedChartsInline(attachedCharts []ReportBlock, charts []ChartData
 	return html.String()
 }
 
-func buildRenderUnits(blocks []ReportBlock) []reportRenderUnit {
+func buildRenderUnits(blocks []ReportBlock, reportTitle string) []reportRenderUnit {
 	if len(blocks) == 0 {
 		return nil
 	}
+	blocks = normalizeReportBlocksForRendering(blocks, reportTitle)
 	attachments := make(map[int][]ReportBlock)
 	attachedCharts := make(map[int]struct{})
 	for idx, block := range blocks {
@@ -570,6 +596,93 @@ func buildRenderUnits(blocks []ReportBlock) []reportRenderUnit {
 		units = append(units, splitRenderUnitSections(unit)...)
 	}
 	return units
+}
+
+func normalizeReportBlocksForRendering(blocks []ReportBlock, reportTitle string) []ReportBlock {
+	normalized := make([]ReportBlock, len(blocks))
+	copy(normalized, blocks)
+
+	reportTitle = strings.TrimSpace(reportTitle)
+	if reportTitle == "" {
+		return normalized
+	}
+
+	for idx, block := range normalized {
+		if isTitleBlock(block) || !strings.EqualFold(strings.TrimSpace(block.Kind), "markdown") {
+			continue
+		}
+		heading, content, ok := stripLeadingMarkdownDocumentTitle(block.Content, reportTitle)
+		if !ok {
+			continue
+		}
+		block.Content = content
+		if strings.TrimSpace(block.Title) == "" || comparableTitle(block.Title) == comparableTitle(heading) {
+			block.Title = ""
+		}
+		normalized[idx] = block
+		break
+	}
+
+	return normalized
+}
+
+func stripLeadingMarkdownDocumentTitle(content, reportTitle string) (string, string, bool) {
+	lines := strings.Split(content, "\n")
+	firstContentLine := -1
+	for idx, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		firstContentLine = idx
+		break
+	}
+	if firstContentLine < 0 {
+		return "", content, false
+	}
+
+	trimmed := strings.TrimSpace(lines[firstContentLine])
+	if !strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") {
+		return "", content, false
+	}
+
+	heading := strings.TrimSpace(trimmed[2:])
+	if !titlesReferToSameReport(heading, reportTitle) {
+		return "", content, false
+	}
+
+	remaining := append([]string{}, lines[:firstContentLine]...)
+	remaining = append(remaining, lines[firstContentLine+1:]...)
+	return heading, strings.TrimSpace(strings.Join(remaining, "\n")), true
+}
+
+func titlesReferToSameReport(heading, reportTitle string) bool {
+	headingKey := comparableTitle(heading)
+	titleKey := comparableTitle(reportTitle)
+	if headingKey == "" || titleKey == "" {
+		return false
+	}
+	if headingKey == titleKey {
+		return true
+	}
+	if len(headingKey) < 10 || len(titleKey) < 10 {
+		return false
+	}
+	return strings.Contains(titleKey, headingKey) || strings.Contains(headingKey, titleKey)
+}
+
+func comparableTitle(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= '\u4e00' && r <= '\u9fff':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func splitRenderUnitSections(unit reportRenderUnit) []reportRenderUnit {

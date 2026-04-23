@@ -104,6 +104,78 @@ func TestRenderReportHTMLBuildsDerivedTOC(t *testing.T) {
 	}
 }
 
+func TestRenderReportHTMLStripsDuplicateLeadingReportTitle(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("全面数据深度分析报告 - 2025年上半年业务洞察", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:    "full-report",
+				Kind:  "markdown",
+				Title: "全面数据深度分析报告",
+				Content: "# 全面数据深度分析报告\n\n" +
+					"## 执行摘要\n\n摘要正文\n\n" +
+					"## 一、销售趋势分析\n\n趋势正文",
+			},
+			{ID: "region", Kind: "markdown", Content: "## 二、区域业绩对比分析\n\n区域正文"},
+		},
+	})
+
+	if strings.Contains(html, `<a href="#section-1">全面数据深度分析报告</a>`) {
+		t.Fatalf("expected duplicate report title to be excluded from toc, got: %s", html)
+	}
+	for _, expected := range []string{
+		`<a href="#section-1">执行摘要</a>`,
+		`<a href="#section-2">一、销售趋势分析</a>`,
+		`<a href="#section-3">二、区域业绩对比分析</a>`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("expected toc item %s, got: %s", expected, html)
+		}
+	}
+	if strings.Contains(html, "<h2>全面数据深度分析报告</h2>") {
+		t.Fatalf("expected duplicate body report title to be stripped, got: %s", html)
+	}
+	if strings.Count(html, "<h1>全面数据深度分析报告 - 2025年上半年业务洞察</h1>") != 1 {
+		t.Fatalf("expected one renderer-owned report title, got: %s", html)
+	}
+}
+
+func TestRenderReportHTMLKeepsShortLeadingSectionTitle(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("Sales Report", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "sales", Kind: "markdown", Content: "# Sales\n\n正文"},
+			{ID: "region", Kind: "markdown", Content: "## Region\n\n正文"},
+		},
+	})
+
+	if !strings.Contains(html, `<a href="#section-1">Sales</a>`) {
+		t.Fatalf("expected short section heading not to be treated as duplicate report title, got: %s", html)
+	}
+	if !strings.Contains(html, "<h2>Sales</h2>") {
+		t.Fatalf("expected short leading section title to remain in body, got: %s", html)
+	}
+}
+
+func TestRenderReportHTMLPrintCSSAllowsLongSectionsToFlow(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "long", Kind: "markdown", Content: "## 长章节\n\n正文"},
+		},
+	})
+
+	if !strings.Contains(html, "break-inside: auto;") || !strings.Contains(html, "page-break-inside: auto;") {
+		t.Fatalf("expected print css to allow section pagination, got: %s", html)
+	}
+	if !strings.Contains(html, "break-after: avoid;") || !strings.Contains(html, "page-break-after: avoid;") {
+		t.Fatalf("expected print css to keep headings with following content, got: %s", html)
+	}
+}
+
 func TestRenderReportHTMLAttachesUntitledChartBlocksToNearestSection(t *testing.T) {
 	t.Parallel()
 
