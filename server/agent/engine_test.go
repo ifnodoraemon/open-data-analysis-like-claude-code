@@ -272,6 +272,53 @@ func TestInspectReportStateToolReturnsFactsOnly(t *testing.T) {
 	if len(payload["chart_blocks_missing_caption"].([]interface{})) != 1 {
 		t.Fatalf("expected one chart block missing caption, got %#v", payload["chart_blocks_missing_caption"])
 	}
+	shape := payload["report_shape_facts"].(map[string]interface{})
+	if shape["has_opening_synthesis"].(bool) {
+		t.Fatalf("did not expect opening synthesis signal: %#v", shape)
+	}
+	if shape["section_numbering_style"] != "partial" {
+		t.Fatalf("expected partial numbering signal, got %#v", shape["section_numbering_style"])
+	}
+}
+
+func TestInspectReportStateToolReturnsReportShapeFacts(t *testing.T) {
+	t.Parallel()
+
+	tool := &InspectReportStateTool{
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "exec", Kind: "markdown", Title: "一、执行摘要", Content: "## 一、执行摘要\n\n核心发现：收入增长但库存风险同步上升。"},
+				{ID: "sales", Kind: "markdown", Title: "二、销售分析", Content: "## 二、销售分析\n\n结合营销投入看，收入增长主要来自 Search。"},
+				{ID: "plan", Kind: "markdown", Title: "三、综合建议与行动计划", Content: "## 三、综合建议与行动计划\n\n核心建议：按优先级补货，并持续监控 KPI。"},
+			},
+		},
+	}
+
+	result, err := tool.Execute(nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	shape := payload["report_shape_facts"].(map[string]interface{})
+	if !shape["has_opening_synthesis"].(bool) {
+		t.Fatalf("expected opening synthesis signal: %#v", shape)
+	}
+	if !shape["has_closing_synthesis"].(bool) {
+		t.Fatalf("expected closing synthesis signal: %#v", shape)
+	}
+	if !shape["has_action_plan_language"].(bool) {
+		t.Fatalf("expected action plan signal: %#v", shape)
+	}
+	if shape["section_numbering_style"] != "consistent" {
+		t.Fatalf("expected consistent numbering, got %#v", shape["section_numbering_style"])
+	}
+	if shape["cross_section_language_count"].(float64) == 0 {
+		t.Fatalf("expected cross-section language signal: %#v", shape)
+	}
 }
 
 func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {

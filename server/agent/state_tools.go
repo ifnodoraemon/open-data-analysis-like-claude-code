@@ -81,7 +81,7 @@ func (t *InspectReportStateTool) Name() string {
 }
 
 func (t *InspectReportStateTool) Description() string {
-	return "Read the fact view of the current report state. Returns blocks, charts, reference relationships, delivery_state, and finalize completeness counts; does not modify any state."
+	return "Read the fact view of the current report state. Returns blocks, charts, reference relationships, delivery_state, finalize completeness counts, and report_shape_facts such as observed opening synthesis, closing synthesis, action-plan, numbering, and cross-section language signals; does not modify any state."
 }
 
 func (t *InspectReportStateTool) Parameters() json.RawMessage {
@@ -194,6 +194,7 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 	finalizeIssues := tools.ReportFinalizeIssuesForAgentLocked(t.ReportState)
 	renderableBlockCount := tools.RenderableReportBlockCountLocked(t.ReportState)
 	blockCount := len(t.ReportState.Blocks)
+	reportShapeFacts := buildReportShapeFacts(t.ReportState.Blocks)
 
 	t.ReportState.RUnlock()
 
@@ -222,6 +223,7 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		"can_finalize_structurally":     len(finalizeIssues) == 0,
 		"finalize_issue_count":          len(finalizeIssues),
 		"finalize_issues":               finalizeIssues,
+		"report_shape_facts":            reportShapeFacts,
 		"ui_summary":                    fmt.Sprintf("Current report: %d renderable blocks, %d charts.", renderableBlockCount, len(chartIDs)),
 	}
 	return marshalToolPayload(payload)
@@ -293,6 +295,132 @@ func chartRefsInContent(content string) []string {
 		}
 	}
 	return refs
+}
+
+var reportNumberedSectionPattern = regexp.MustCompile(`^\s*(第[一二三四五六七八九十百千0-9]+(?:章|节|部分|篇)|[一二三四五六七八九十百千0-9]+[.、)）])\s*`)
+
+func buildReportShapeFacts(blocks []tools.ReportBlock) map[string]interface{} {
+	renderableBlocks := make([]tools.ReportBlock, 0, len(blocks))
+	blockTitleSequence := make([]string, 0, len(blocks))
+	openingIDs := make([]string, 0)
+	closingIDs := make([]string, 0)
+	actionPlanIDs := make([]string, 0)
+	numberedIDs := make([]string, 0)
+	crossSectionIDs := make([]string, 0)
+	repeatedLocalHeadingCounts := map[string]int{
+		"核心发现":   0,
+		"关键发现":   0,
+		"分析结论":   0,
+		"趋势分析":   0,
+		"核心建议":   0,
+		"数据质量说明": 0,
+	}
+
+	for _, block := range blocks {
+		kind := strings.ToLower(strings.TrimSpace(block.Kind))
+		if kind != "markdown" && kind != "html" && kind != "chart" {
+			continue
+		}
+		renderableBlocks = append(renderableBlocks, block)
+		title := strings.TrimSpace(block.Title)
+		if title == "" {
+			title = strings.TrimSpace(block.ID)
+		}
+		blockTitleSequence = append(blockTitleSequence, title)
+
+		text := title + "\n" + strings.TrimSpace(block.Content)
+		normalizedText := strings.ToLower(text)
+		if hasAnyTextSignal(normalizedText, []string{
+			"执行摘要", "管理摘要", "核心发现", "关键发现", "全局概览", "业务概览", "总体概览",
+			"executive summary", "management summary", "key findings", "overall view",
+		}) {
+			openingIDs = append(openingIDs, block.ID)
+		}
+		if hasAnyTextSignal(normalizedText, []string{
+			"综合总结", "综合对比总结", "综合建议", "整体结论", "最终结论", "行动计划", "监控建议",
+			"conclusion", "recommendations", "action plan", "next steps",
+		}) {
+			closingIDs = append(closingIDs, block.ID)
+		}
+		if hasAnyTextSignal(normalizedText, []string{
+			"行动计划", "核心建议", "综合建议", "优先级", "kpi", "监控建议", "下一步",
+			"action plan", "recommendations", "next steps", "owner",
+		}) {
+			actionPlanIDs = append(actionPlanIDs, block.ID)
+		}
+		if hasNumberedSectionSignal(block) {
+			numberedIDs = append(numberedIDs, block.ID)
+		}
+		if hasAnyTextSignal(normalizedText, []string{
+			"综合来看", "整体来看", "结合", "同时", "因此", "由此", "相比", "相较",
+			"关联", "共同", "一方面", "另一方面", "这意味着", "overall", "combined",
+			"therefore", "in contrast", "compared with", "driven by",
+		}) {
+			crossSectionIDs = append(crossSectionIDs, block.ID)
+		}
+		for heading := range repeatedLocalHeadingCounts {
+			if strings.Contains(text, heading) {
+				repeatedLocalHeadingCounts[heading]++
+			}
+		}
+	}
+
+	for heading, count := range repeatedLocalHeadingCounts {
+		if count < 2 {
+			delete(repeatedLocalHeadingCounts, heading)
+		}
+	}
+
+	numberingStyle := "none"
+	if len(renderableBlocks) > 0 && len(numberedIDs) == len(renderableBlocks) {
+		numberingStyle = "consistent"
+	} else if len(numberedIDs) > 0 {
+		numberingStyle = "partial"
+	}
+
+	return map[string]interface{}{
+		"block_title_sequence":             blockTitleSequence,
+		"has_opening_synthesis":            len(openingIDs) > 0,
+		"opening_synthesis_block_ids":      openingIDs,
+		"has_closing_synthesis":            len(closingIDs) > 0,
+		"closing_synthesis_block_ids":      closingIDs,
+		"has_action_plan_language":         len(actionPlanIDs) > 0,
+		"action_plan_language_block_ids":   actionPlanIDs,
+		"section_numbering_style":          numberingStyle,
+		"numbered_section_block_ids":       numberedIDs,
+		"cross_section_language_block_ids": crossSectionIDs,
+		"cross_section_language_count":     len(crossSectionIDs),
+		"repeated_local_heading_counts":    repeatedLocalHeadingCounts,
+	}
+}
+
+func hasAnyTextSignal(text string, signals []string) bool {
+	for _, signal := range signals {
+		if strings.Contains(text, strings.ToLower(signal)) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNumberedSectionSignal(block tools.ReportBlock) bool {
+	candidates := []string{block.Title, block.ID}
+	for _, line := range strings.Split(block.Content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			candidates = append(candidates, strings.TrimSpace(strings.TrimLeft(trimmed, "#")))
+		}
+		break
+	}
+	for _, candidate := range candidates {
+		if reportNumberedSectionPattern.MatchString(strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
 }
 
 func marshalToolPayload(payload map[string]interface{}) (string, error) {
