@@ -164,6 +164,9 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	if len(req.Input) != 1 {
 		t.Fatalf("expected 1 input, got %d", len(req.Input))
 	}
+	if req.Input[0]["role"] != "developer" {
+		t.Fatalf("expected runtime context to use developer role, got %#v", req.Input[0]["role"])
+	}
 	expected := "[active_subgoals]\n[g1] test_goal (pending)"
 	contentStr := req.Input[0]["content"].(string)
 	if contentStr != expected {

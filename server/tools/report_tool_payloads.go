@@ -30,9 +30,10 @@ func reportEditScopeFailure(toolName, targetKey, targetID, targetLabel, uiSummar
 }
 
 func reportFinalizeBlockedFailure(state *ReportState, blockers []string) string {
-	return toolFailure("report_finalize", "active_goals_block_finalize", "detected unclosed root goals / active branches; delivery_state stays draft.", mergePayloads(
+	return toolFailure("report_finalize", "active_branches_block_finalize", "detected active goal branches; delivery_state stays draft.", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
+			"blocker_kind":        "active_branches",
 			"active_branch_count": len(blockers),
 			"active_branches":     blockers,
 			"can_finalize":        false,

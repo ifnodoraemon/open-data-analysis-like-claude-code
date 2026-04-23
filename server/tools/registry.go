@@ -50,7 +50,6 @@ type ToolContext struct {
 	SessionSourcesProvider     SessionSourcesProvider
 	ProfileDetailProvider      ProfileDetailProvider
 	ConfirmedOverridesProvider ConfirmedOverridesProvider
-	AmbiguityChecker           AmbiguityChecker
 	KnownRowCount              KnownRowCountProvider
 	QueryLocker                QueryLocker
 	Now                        func() time.Time

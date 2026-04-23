@@ -158,11 +158,6 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			}
 			return 0, false
 		},
-		AmbiguityChecker: &sessionAmbiguityChecker{
-			sessionID:     id,
-			sourceService: sourceService,
-			reportState:   s.ReportState,
-		},
 		QueryLocker: s,
 		Now:         time.Now,
 	}
@@ -577,96 +572,10 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 		}
 		vars = append(vars, agent.RuntimeContextBlock{
 			Name:    "active_edit_scope",
+			Role:    "developer",
 			Content: strings.TrimSpace(content),
 		})
 	}
 
 	return vars
-}
-
-type sessionAmbiguityChecker struct {
-	sessionID     string
-	sourceService *service.SourceService
-	reportState   *tools.ReportState
-}
-
-func (c *sessionAmbiguityChecker) CheckAmbiguities() ([]tools.AmbiguityBlocker, error) {
-	if c.sourceService == nil {
-		return nil, nil
-	}
-	profiles, err := c.sourceService.GetSessionProfiles(context.Background(), c.sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	reportText := c.collectReportText()
-
-	var blockers []tools.AmbiguityBlocker
-	for _, p := range profiles {
-		if p.ProfileStatus != string(domain.ProfileStatusConfirmed) {
-			detail, _, err := c.sourceService.GetProfileDetail(context.Background(), p.ProfileID)
-			if err != nil {
-				continue
-			}
-			var facts service.ProfiledFacts
-			if err := json.Unmarshal([]byte(detail.ProfileJSON), &facts); err != nil {
-				continue
-			}
-			for _, amb := range facts.Ambiguities {
-				if reportText != "" && ambiguityIsReferenced(amb, p.AnalysisTableName, reportText) {
-					blockers = append(blockers, tools.AmbiguityBlocker{
-						Kind:        amb.Kind,
-						Description: fmt.Sprintf("table=%s: %s", p.AnalysisTableName, amb.Description),
-						Candidates:  amb.Candidates,
-					})
-				}
-			}
-		}
-	}
-	return blockers, nil
-}
-
-func (c *sessionAmbiguityChecker) collectReportText() string {
-	if c.reportState == nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, block := range c.reportState.Blocks {
-		if block.Title != "" {
-			b.WriteString(block.Title)
-			b.WriteString(" ")
-		}
-		b.WriteString(block.Content)
-		b.WriteString(" ")
-	}
-	for _, chart := range c.reportState.Charts {
-		if len(chart.Option) > 0 {
-			b.WriteString(string(chart.Option))
-			b.WriteString(" ")
-		}
-	}
-	return b.String()
-}
-
-func ambiguityIsReferenced(amb service.Ambiguity, tableName string, reportText string) bool {
-	lower := strings.ToLower(reportText)
-	if strings.Contains(lower, strings.ToLower(tableName)) {
-		return true
-	}
-	for _, candidate := range amb.Candidates {
-		c := strings.ToLower(candidate)
-		if len(c) <= 4 {
-			for _, word := range strings.Fields(lower) {
-				cleaned := strings.Trim(word, ".,;:!?()[]{}\"'")
-				if cleaned == c {
-					return true
-				}
-			}
-		} else {
-			if strings.Contains(lower, c) {
-				return true
-			}
-		}
-	}
-	return false
 }

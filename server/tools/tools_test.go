@@ -200,8 +200,8 @@ func TestDescribeDataToolExposesTimeCoverageFacts(t *testing.T) {
 	}
 
 	var payload struct {
-		OK                  bool                      `json:"ok"`
-		TimeColumnCount     int                       `json:"time_column_count"`
+		OK                   bool                     `json:"ok"`
+		TimeColumnCount      int                      `json:"time_column_count"`
 		TimeColumnCandidates []map[string]interface{} `json:"time_column_candidates"`
 	}
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
@@ -402,8 +402,11 @@ func TestFinalizeReportRejectsOpenActiveBranch(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
 		t.Fatalf("expected finalize failure json payload: %v", err)
 	}
-	if payload["ok"] != false || payload["error_code"] != "active_goals_block_finalize" {
+	if payload["ok"] != false || payload["error_code"] != "active_branches_block_finalize" {
 		t.Fatalf("unexpected finalize failure payload: %#v", payload)
+	}
+	if payload["blocker_kind"] != "active_branches" {
+		t.Fatalf("expected blocker_kind=active_branches, got %#v", payload["blocker_kind"])
 	}
 	if payload["active_branch_count"].(float64) != 1 {
 		t.Fatalf("expected active branch count in payload: %#v", payload)

@@ -15,9 +15,8 @@ func init() {
 	})
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &FinalizeReportTool{
-			ReportState:      ctx.ReportState,
-			Subgoals:         ctx.Subgoals,
-			AmbiguityChecker: ctx.AmbiguityChecker,
+			ReportState: ctx.ReportState,
+			Subgoals:    ctx.Subgoals,
 		}
 	})
 }
@@ -33,19 +32,8 @@ type ManageReportBlocksTool struct {
 
 // FinalizeReportTool 校验并更新报告交付状态
 type FinalizeReportTool struct {
-	ReportState      *ReportState
-	Subgoals         SubgoalChecker
-	AmbiguityChecker AmbiguityChecker
-}
-
-type AmbiguityBlocker struct {
-	Kind        string   `json:"kind"`
-	Description string   `json:"description"`
-	Candidates  []string `json:"candidates"`
-}
-
-type AmbiguityChecker interface {
-	CheckAmbiguities() ([]AmbiguityBlocker, error)
+	ReportState *ReportState
+	Subgoals    SubgoalChecker
 }
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
@@ -200,7 +188,7 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.ReportState.Lock()
-	result, err := finalizeReportState(t.ReportState, t.Subgoals, params, t.AmbiguityChecker)
+	result, err := finalizeReportState(t.ReportState, t.Subgoals, params)
 	if err != nil {
 		var blockedErr reportFinalizeBlockedError
 		if errors.As(err, &blockedErr) {

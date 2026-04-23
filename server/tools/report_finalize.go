@@ -39,7 +39,7 @@ func (e reportAlreadyFinalizedError) Error() string {
 	return "report already finalized"
 }
 
-func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params reportFinalizeParams, ambiguityChecker AmbiguityChecker) (reportFinalizeResult, error) {
+func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params reportFinalizeParams) (reportFinalizeResult, error) {
 	if state == nil {
 		return reportFinalizeResult{}, fmt.Errorf("report state is not initialized")
 	}
@@ -59,17 +59,6 @@ func finalizeReportState(state *ReportState, subgoals SubgoalChecker, params rep
 
 	if issues := reportFinalizeIssues(state); len(issues) > 0 {
 		return reportFinalizeResult{}, reportFinalizeIssuesError{Issues: issues}
-	}
-
-	if ambiguityChecker != nil {
-		blockers, err := ambiguityChecker.CheckAmbiguities()
-		if err == nil && len(blockers) > 0 {
-			var blockerDescs []string
-			for _, b := range blockers {
-				blockerDescs = append(blockerDescs, b.Description)
-			}
-			return reportFinalizeResult{}, reportFinalizeBlockedError{Blockers: blockerDescs}
-		}
 	}
 
 	state.FinalTitle = params.ReportTitle

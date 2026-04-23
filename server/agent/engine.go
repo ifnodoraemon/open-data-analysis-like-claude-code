@@ -115,12 +115,15 @@ func compactWorkerBundle(bundle *PromptBundle, promptTokens int) {
 	for i := range bundle.RuntimeContext {
 		if bundle.RuntimeContext[i].Name == "digest" {
 			bundle.RuntimeContext[i].Content = digest
+			if strings.TrimSpace(bundle.RuntimeContext[i].Role) == "" {
+				bundle.RuntimeContext[i].Role = "user"
+			}
 			found = true
 			break
 		}
 	}
 	if !found {
-		bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{Name: "digest", Content: digest})
+		bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{Name: "digest", Role: "user", Content: digest})
 	}
 
 	bundle.History = bundle.History[recentStart:]
@@ -483,6 +486,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			if digestBody != "" {
 				bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{
 					Name:    "digest",
+					Role:    "user",
 					Content: historyDigestPrefix + "\n" + digestBody,
 				})
 			}
@@ -708,6 +712,7 @@ func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars 
 		if digestBody != "" {
 			bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{
 				Name:    "digest",
+				Role:    "user",
 				Content: historyDigestPrefix + "\n" + digestBody,
 			})
 		}

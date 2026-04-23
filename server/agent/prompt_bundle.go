@@ -23,6 +23,7 @@ type ConversationItem struct {
 // RuntimeContextBlock 表示在会话过程中因为摘要、事实等被动态注入的上下文
 type RuntimeContextBlock struct {
 	Name    string
+	Role    string
 	Content string
 }
 

@@ -121,8 +121,8 @@ func TestCompactWorkerBundleNoOpShortHistory(t *testing.T) {
 	t.Parallel()
 
 	bundle := &PromptBundle{
-		Policy: "system",
-		Task:   "user task",
+		Policy:  "system",
+		Task:    "user task",
 		History: []ConversationItem{},
 	}
 	compactWorkerBundle(bundle, contextCompactTriggerTokens+1)
@@ -135,8 +135,8 @@ func TestCompactWorkerBundleCompactsLongHistory(t *testing.T) {
 	t.Parallel()
 
 	bundle := &PromptBundle{
-		Policy: "system",
-		Task:   "user task instruction",
+		Policy:  "system",
+		Task:    "user task instruction",
 		History: []ConversationItem{},
 	}
 	for i := 0; i < 20; i++ {
@@ -155,6 +155,9 @@ func TestCompactWorkerBundleCompactsLongHistory(t *testing.T) {
 	if len(bundle.RuntimeContext) == 0 || bundle.RuntimeContext[0].Name != "digest" {
 		t.Fatalf("expected history digest in runtime context")
 	}
+	if bundle.RuntimeContext[0].Role != "user" {
+		t.Fatalf("expected digest role=user, got %q", bundle.RuntimeContext[0].Role)
+	}
 }
 
 func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
@@ -165,7 +168,7 @@ func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
 		Policy: "system",
 		Task:   "user task",
 		RuntimeContext: []RuntimeContextBlock{
-			{Name: "digest", Content: existDigest},
+			{Name: "digest", Role: "user", Content: existDigest},
 		},
 		History: []ConversationItem{},
 	}
@@ -184,6 +187,9 @@ func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
 	}
 	if len(bundle.RuntimeContext) == 0 {
 		t.Fatal("expected digest block")
+	}
+	if bundle.RuntimeContext[0].Role != "user" {
+		t.Fatalf("expected preserved digest role=user, got %q", bundle.RuntimeContext[0].Role)
 	}
 	if !strings.Contains(bundle.RuntimeContext[0].Content, "early task") {
 		t.Fatalf("expected new digest to preserve previous content")

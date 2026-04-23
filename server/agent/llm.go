@@ -174,6 +174,14 @@ func countRuntimeContextChars(ctxs []RuntimeContextBlock) int {
 	return total
 }
 
+func runtimeContextTransportRole(block RuntimeContextBlock) string {
+	role := strings.TrimSpace(block.Role)
+	if role == "" {
+		return "developer"
+	}
+	return role
+}
+
 func countHistoryChars(hist []ConversationItem) int {
 	var total int
 	for _, h := range hist {
@@ -545,7 +553,7 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 
 	for _, block := range bundle.RuntimeContext {
 		req.Input = append(req.Input, responsesInput{
-			"role":    "user",
+			"role":    runtimeContextTransportRole(block),
 			"content": fmt.Sprintf("[%s]\n%s", block.Name, block.Content),
 		})
 	}
