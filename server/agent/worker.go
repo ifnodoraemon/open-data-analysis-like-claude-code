@@ -10,7 +10,6 @@ import (
 
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 func init() {
@@ -402,7 +401,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 
 			if bundle.Task != "" {
 				bundle.History = append(bundle.History, ConversationItem{
-					Role:    openai.ChatMessageRoleUser,
+					Role:    LLMRoleUser,
 					Content: bundle.Task,
 				})
 				bundle.Task = ""
@@ -449,7 +448,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			childEmit(ev)
 		}
 
-		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
+		if choice.FinishReason == LLMFinishReasonStop && len(choice.Message.ToolCalls) == 0 {
 			result := strings.TrimSpace(choice.Message.Content)
 			childEmit(WSEvent{Type: EventRunCompleted, RunID: childRunID, Data: CompleteData{Summary: result}})
 			if persistence != nil && childRunID != "" {
@@ -500,7 +499,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 				}}
 				childEmit(resultEv)
 				bundle.History = append(bundle.History, ConversationItem{
-					Role:       openai.ChatMessageRoleTool,
+					Role:       LLMRoleTool,
 					Content:    delegateChildToolFailure(toolCall.Function.Name, execErr.Error()),
 					ToolCallID: toolCall.ID,
 				})
@@ -520,7 +519,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			}}
 			childEmit(resultEv)
 			bundle.History = append(bundle.History, ConversationItem{
-				Role:       openai.ChatMessageRoleTool,
+				Role:       LLMRoleTool,
 				Content:    result,
 				ToolCallID: toolCall.ID,
 			})

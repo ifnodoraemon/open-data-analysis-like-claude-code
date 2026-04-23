@@ -122,11 +122,11 @@ func isRetryableLLMError(err error) bool {
 }
 
 // ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑（指数退避，区分可重试错误）
-func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*LLMResponse, error) {
 	retryCtx, retryCancel := context.WithTimeout(ctx, 120*time.Second)
 	defer retryCancel()
 
-	var resp *openai.ChatCompletionResponse
+	var resp *LLMResponse
 	var err error
 
 	// 指数退避：1s, 3s, 8s（共 3 次重试，第 0 次无等待）
@@ -191,7 +191,7 @@ func countHistoryChars(hist []ConversationItem) int {
 }
 
 // chatOpenAI OpenAI 格式调用
-func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*LLMResponse, error) {
 	reqBody, err := l.buildResponsesRequest(bundle, tools)
 	if err != nil {
 		return nil, err
@@ -560,12 +560,12 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 
 	for _, msg := range bundle.History {
 		switch msg.Role {
-		case openai.ChatMessageRoleUser:
+		case LLMRoleUser:
 			req.Input = append(req.Input, responsesInput{
 				"role":    "user",
 				"content": msg.Content,
 			})
-		case openai.ChatMessageRoleAssistant:
+		case LLMRoleAssistant:
 			if strings.TrimSpace(msg.Content) != "" {
 				req.Input = append(req.Input, responsesInput{
 					"role":    "assistant",
@@ -580,7 +580,7 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 					"arguments": tc.Function.Arguments,
 				})
 			}
-		case openai.ChatMessageRoleTool:
+		case LLMRoleTool:
 			req.Input = append(req.Input, responsesInput{
 				"type":    "function_call_output",
 				"call_id": msg.ToolCallID,
@@ -614,14 +614,14 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 	return req, nil
 }
 
-func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai.ChatCompletionResponse {
+func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *LLMResponse {
 	resp.normalize()
-	choice := openai.ChatCompletionChoice{
+	choice := LLMChoice{
 		Index: 0,
-		Message: openai.ChatCompletionMessage{
-			Role: openai.ChatMessageRoleAssistant,
+		Message: LLMMessage{
+			Role: LLMRoleAssistant,
 		},
-		FinishReason: openai.FinishReasonStop,
+		FinishReason: LLMFinishReasonStop,
 	}
 
 	var textParts []string
@@ -650,11 +650,11 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 				}
 			}
 		case "function_call":
-			choice.FinishReason = openai.FinishReasonToolCalls
-			choice.Message.ToolCalls = append(choice.Message.ToolCalls, openai.ToolCall{
+			choice.FinishReason = LLMFinishReasonToolCalls
+			choice.Message.ToolCalls = append(choice.Message.ToolCalls, LLMToolCall{
 				ID:   item.CallID,
-				Type: openai.ToolTypeFunction,
-				Function: openai.FunctionCall{
+				Type: LLMToolTypeFunction,
+				Function: LLMFunctionCall{
 					Name:      item.Name,
 					Arguments: item.Arguments,
 				},
@@ -677,29 +677,29 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *openai
 			if strings.TrimSpace(toolCall.Function.Name) == "" {
 				continue
 			}
-			choice.FinishReason = openai.FinishReasonToolCalls
+			choice.FinishReason = LLMFinishReasonToolCalls
 			callType := toolCall.Type
 			if callType == "" {
-				callType = string(openai.ToolTypeFunction)
+				callType = LLMToolTypeFunction
 			}
-			choice.Message.ToolCalls = append(choice.Message.ToolCalls, openai.ToolCall{
+			choice.Message.ToolCalls = append(choice.Message.ToolCalls, LLMToolCall{
 				ID:   toolCall.ID,
-				Type: openai.ToolType(callType),
-				Function: openai.FunctionCall{
+				Type: callType,
+				Function: LLMFunctionCall{
 					Name:      toolCall.Function.Name,
 					Arguments: toolCall.Function.Arguments,
 				},
 			})
 		}
 		if compatibleChoice.FinishReason == "tool_calls" {
-			choice.FinishReason = openai.FinishReasonToolCalls
+			choice.FinishReason = LLMFinishReasonToolCalls
 		}
 	}
 
 	choice.Message.Content = strings.TrimSpace(strings.Join(textParts, "\n"))
-	return &openai.ChatCompletionResponse{
-		Choices: []openai.ChatCompletionChoice{choice},
-		Usage: openai.Usage{
+	return &LLMResponse{
+		Choices: []LLMChoice{choice},
+		Usage: LLMUsage{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
@@ -734,7 +734,7 @@ func firstAnthropicText(content []anthropic.MessageContent) string {
 
 func lastUserMessage(messages []ConversationItem) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == openai.ChatMessageRoleUser {
+		if messages[i].Role == LLMRoleUser {
 			return messages[i].Content
 		}
 	}
@@ -818,9 +818,9 @@ func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 
 	for _, msg := range bundle.History {
 		switch msg.Role {
-		case openai.ChatMessageRoleUser:
+		case LLMRoleUser:
 			currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(msg.Content))
-		case openai.ChatMessageRoleAssistant:
+		case LLMRoleAssistant:
 			flushUserContent()
 			var content []anthropic.MessageContent
 			if msg.Content != "" {
@@ -836,7 +836,7 @@ func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 					Content: content,
 				})
 			}
-		case openai.ChatMessageRoleTool:
+		case LLMRoleTool:
 			currentUserContent = append(currentUserContent, anthropic.NewToolResultMessageContent(msg.ToolCallID, msg.Content, false))
 		}
 	}
@@ -848,8 +848,8 @@ func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 	return anthropicMsgs
 }
 
-// chatAnthropic Anthropic 格式调用，转换为统一的 OpenAI 格式返回
-func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*openai.ChatCompletionResponse, error) {
+// chatAnthropic Anthropic 格式调用，转换为统一的内部响应格式返回
+func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*LLMResponse, error) {
 	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
 
 	systemPrompt := buildAnthropicSystemPrompt(bundle)
@@ -936,16 +936,16 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 		})
 	}
 
-	// 转换响应: Anthropic → OpenAI 格式
+	// 转换响应: Anthropic → 内部统一格式
 	return l.convertAnthropicResponse(&resp), nil
 }
 
-// convertAnthropicResponse 将 Anthropic 响应转换为 OpenAI 格式
-func (l *LLMClient) convertAnthropicResponse(resp *anthropic.MessagesResponse) *openai.ChatCompletionResponse {
-	choice := openai.ChatCompletionChoice{
+// convertAnthropicResponse 将 Anthropic 响应转换为内部统一格式
+func (l *LLMClient) convertAnthropicResponse(resp *anthropic.MessagesResponse) *LLMResponse {
+	choice := LLMChoice{
 		Index: 0,
-		Message: openai.ChatCompletionMessage{
-			Role: openai.ChatMessageRoleAssistant,
+		Message: LLMMessage{
+			Role: LLMRoleAssistant,
 		},
 	}
 
@@ -960,10 +960,10 @@ func (l *LLMClient) convertAnthropicResponse(resp *anthropic.MessagesResponse) *
 		case "tool_use":
 			if block.ID != "" {
 				argsBytes, _ := json.Marshal(block.Input)
-				choice.Message.ToolCalls = append(choice.Message.ToolCalls, openai.ToolCall{
+				choice.Message.ToolCalls = append(choice.Message.ToolCalls, LLMToolCall{
 					ID:   block.ID,
-					Type: openai.ToolTypeFunction,
-					Function: openai.FunctionCall{
+					Type: LLMToolTypeFunction,
+					Function: LLMFunctionCall{
 						Name:      block.Name,
 						Arguments: string(argsBytes),
 					},
@@ -976,16 +976,16 @@ func (l *LLMClient) convertAnthropicResponse(resp *anthropic.MessagesResponse) *
 
 	switch resp.StopReason {
 	case "end_turn":
-		choice.FinishReason = openai.FinishReasonStop
+		choice.FinishReason = LLMFinishReasonStop
 	case "tool_use":
-		choice.FinishReason = openai.FinishReasonToolCalls
+		choice.FinishReason = LLMFinishReasonToolCalls
 	default:
-		choice.FinishReason = openai.FinishReasonStop
+		choice.FinishReason = LLMFinishReasonStop
 	}
 
-	return &openai.ChatCompletionResponse{
-		Choices: []openai.ChatCompletionChoice{choice},
-		Usage: openai.Usage{
+	return &LLMResponse{
+		Choices: []LLMChoice{choice},
+		Usage: LLMUsage{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,

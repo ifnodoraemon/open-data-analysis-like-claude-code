@@ -7,27 +7,26 @@ import (
 	"testing"
 
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 func TestCompactAssistantMessage(t *testing.T) {
 	t.Parallel()
 
-	message := openai.ChatCompletionMessage{
-		Role: openai.ChatMessageRoleAssistant,
-		ToolCalls: []openai.ToolCall{
+	message := LLMMessage{
+		Role: LLMRoleAssistant,
+		ToolCalls: []LLMToolCall{
 			{
 				ID:   "call_1",
-				Type: openai.ToolTypeFunction,
-				Function: openai.FunctionCall{
+				Type: LLMToolTypeFunction,
+				Function: LLMFunctionCall{
 					Name:      "report_create_chart",
 					Arguments: `{"chart_id":"chart_a","title":"Chart A","option":{"series":[{"data":[1,2,3]}]}}`,
 				},
 			},
 			{
 				ID:   "call_2",
-				Type: openai.ToolTypeFunction,
-				Function: openai.FunctionCall{
+				Type: LLMToolTypeFunction,
+				Function: LLMFunctionCall{
 					Name:      "report_manage_blocks",
 					Arguments: `{"block_kind":"markdown","title":"Trend Analysis","content":"` + strings.Repeat("x", 400) + `"}`,
 				},
@@ -287,8 +286,8 @@ func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {
 
 	for i := 0; i < 16; i++ {
 		engine.history = append(engine.history,
-			ConversationItem{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("a", 40000)},
-			ConversationItem{Role: openai.ChatMessageRoleAssistant, Content: "ok"},
+			ConversationItem{Role: LLMRoleUser, Content: strings.Repeat("a", 40000)},
+			ConversationItem{Role: LLMRoleAssistant, Content: "ok"},
 		)
 	}
 
@@ -308,9 +307,9 @@ func TestCompactMessagesLockedSkipsWithoutMeasuredTokens(t *testing.T) {
 	engine := &Engine{
 		policy: "system",
 		history: []ConversationItem{
-			{Role: openai.ChatMessageRoleUser, Content: "user"},
-			{Role: openai.ChatMessageRoleAssistant, Content: "assistant"},
-			{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("x", 1000)},
+			{Role: LLMRoleUser, Content: "user"},
+			{Role: LLMRoleAssistant, Content: "assistant"},
+			{Role: LLMRoleUser, Content: strings.Repeat("x", 1000)},
 		},
 	}
 

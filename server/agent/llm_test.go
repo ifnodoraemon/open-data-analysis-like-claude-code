@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	anthropic "github.com/liushuangls/go-anthropic/v2"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 func TestConvertResponsesResponseMapsUsage(t *testing.T) {
@@ -133,7 +132,7 @@ func TestConvertAnthropicResponseMapsUsage(t *testing.T) {
 		},
 	})
 
-	if resp.Choices[0].FinishReason != openai.FinishReasonStop {
+	if resp.Choices[0].FinishReason != LLMFinishReasonStop {
 		t.Fatalf("expected stop finish reason, got %s", resp.Choices[0].FinishReason)
 	}
 	if resp.Usage.PromptTokens != 111 {

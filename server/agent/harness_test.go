@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 // ——————————————————————————————————————————————
@@ -108,7 +107,7 @@ func TestCompactWorkerBundleNoOpBelowThreshold(t *testing.T) {
 		Policy: "system",
 		Task:   "user task",
 		History: []ConversationItem{
-			{Role: openai.ChatMessageRoleAssistant, Content: "ok"},
+			{Role: LLMRoleAssistant, Content: "ok"},
 		},
 	}
 	compactWorkerBundle(bundle, contextCompactTriggerTokens-1)
@@ -141,8 +140,8 @@ func TestCompactWorkerBundleCompactsLongHistory(t *testing.T) {
 	}
 	for i := 0; i < 20; i++ {
 		bundle.History = append(bundle.History,
-			ConversationItem{Role: openai.ChatMessageRoleAssistant, Content: strings.Repeat("a", 200)},
-			ConversationItem{Role: openai.ChatMessageRoleTool, Content: "tool result"},
+			ConversationItem{Role: LLMRoleAssistant, Content: strings.Repeat("a", 200)},
+			ConversationItem{Role: LLMRoleTool, Content: "tool result"},
 		)
 	}
 	originalLen := len(bundle.History)
@@ -174,8 +173,8 @@ func TestCompactWorkerBundlePreservesExistingDigest(t *testing.T) {
 	}
 	for i := 0; i < 15; i++ {
 		bundle.History = append(bundle.History,
-			ConversationItem{Role: openai.ChatMessageRoleAssistant, Content: "assistant turn"},
-			ConversationItem{Role: openai.ChatMessageRoleTool, Content: "tool result"},
+			ConversationItem{Role: LLMRoleAssistant, Content: "assistant turn"},
+			ConversationItem{Role: LLMRoleTool, Content: "tool result"},
 		)
 	}
 	originalLen := len(bundle.History)

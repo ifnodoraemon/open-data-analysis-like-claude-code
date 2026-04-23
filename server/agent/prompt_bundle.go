@@ -1,7 +1,5 @@
 package agent
 
-import "github.com/sashabaranov/go-openai"
-
 // PromptLayer 定义了 Prompt 的层级语义
 type PromptLayer string
 
@@ -16,7 +14,7 @@ const (
 type ConversationItem struct {
 	Role       string // "user", "assistant", "system" (for tool)
 	Content    string
-	ToolCalls  []openai.ToolCall
+	ToolCalls  []LLMToolCall
 	ToolCallID string
 }
 

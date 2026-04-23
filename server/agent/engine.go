@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 // Engine Agent 主循环引擎
@@ -41,7 +40,7 @@ type executionContextAware interface {
 	SetExecutionContext(context.Context)
 }
 
-type specialToolHandler func(context.Context, openai.ToolCall, func(WSEvent)) (string, error, bool)
+type specialToolHandler func(context.Context, LLMToolCall, func(WSEvent)) (string, error, bool)
 
 // isRetryableToolError 判断工具执行错误是否属于可重试的网络临时故障。
 func isRetryableToolError(err error) bool {
@@ -163,11 +162,11 @@ func (e *Engine) RestoreHistory(history []ConversationItem) {
 // - user / tool_call：取末段，400 字上限
 func summarizeMessageForDigest(msg ConversationItem) string {
 	switch msg.Role {
-	case openai.ChatMessageRoleUser:
+	case LLMRoleUser:
 		if text := digestSummary(msg.Content, 400); text != "" {
 			return "user: " + text
 		}
-	case openai.ChatMessageRoleAssistant:
+	case LLMRoleAssistant:
 		parts := make([]string, 0, len(msg.ToolCalls)+1)
 		// 取 thinking 末段结论，400 字
 		if text := digestSummary(msg.Content, 400); text != "" {
@@ -181,7 +180,7 @@ func summarizeMessageForDigest(msg ConversationItem) string {
 			parts = append(parts, "tool calls: "+strings.Join(names, ", "))
 		}
 		return strings.Join(parts, " | ")
-	case openai.ChatMessageRoleTool:
+	case LLMRoleTool:
 		// digestSummary 会优先提取 ui_summary 等语义字段，不截断语义完整的摘要
 		rawSummary := extractToolSummary(msg.Content)
 		if summary := digestSummary(rawSummary, 400); summary != "" {
@@ -350,13 +349,13 @@ func adjustCompactionBoundary(history []ConversationItem, boundary int) int {
 		return boundary
 	}
 	msg := history[boundary]
-	if msg.Role == openai.ChatMessageRoleTool {
+	if msg.Role == LLMRoleTool {
 		for i := boundary - 1; i >= 0 && i >= boundary-10; i-- {
-			if history[i].Role == openai.ChatMessageRoleAssistant && len(history[i].ToolCalls) > 0 {
+			if history[i].Role == LLMRoleAssistant && len(history[i].ToolCalls) > 0 {
 				toolCallCount := len(history[i].ToolCalls)
 				resultCount := 0
 				for j := i + 1; j < len(history) && j <= i+toolCallCount; j++ {
-					if history[j].Role == openai.ChatMessageRoleTool {
+					if history[j].Role == LLMRoleTool {
 						resultCount++
 					} else {
 						break
@@ -364,7 +363,7 @@ func adjustCompactionBoundary(history []ConversationItem, boundary int) int {
 				}
 				if resultCount < toolCallCount {
 					for k := i - 1; k >= 0 && k >= i-5; k-- {
-						if history[k].Role == openai.ChatMessageRoleUser || (history[k].Role == openai.ChatMessageRoleAssistant && len(history[k].ToolCalls) == 0) {
+						if history[k].Role == LLMRoleUser || (history[k].Role == LLMRoleAssistant && len(history[k].ToolCalls) == 0) {
 							return k + 1
 						}
 					}
@@ -373,7 +372,7 @@ func adjustCompactionBoundary(history []ConversationItem, boundary int) int {
 			}
 		}
 	}
-	if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
+	if msg.Role == LLMRoleAssistant && len(msg.ToolCalls) > 0 {
 		return boundary
 	}
 	return boundary
@@ -395,7 +394,7 @@ func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
 
 func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 	return map[string]specialToolHandler{
-		"user_request_input": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
+		"user_request_input": func(ctx context.Context, toolCall LLMToolCall, emit func(WSEvent)) (string, error, bool) {
 			var payload AskUserData
 			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &payload); err != nil {
 				// LLM 可能发送了字符串数组作为 options，尝试降级兼容
@@ -433,7 +432,7 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 			emit(WSEvent{Type: EventUserRequestInput, Data: payload})
 			return "", nil, true
 		},
-		"report_finalize": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
+		"report_finalize": func(ctx context.Context, toolCall LLMToolCall, emit func(WSEvent)) (string, error, bool) {
 			result, err := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 			if err == nil && result != "" {
 				result = applyReportHTMLGuardrail(result)
@@ -503,7 +502,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 		e.mu.Lock()
 		if userTask != "" {
 			e.history = append(e.history, ConversationItem{
-				Role:    openai.ChatMessageRoleUser,
+				Role:    LLMRoleUser,
 				Content: userTask,
 			})
 			userTask = ""
@@ -527,7 +526,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 				// 有文本 + 无工具调用 → 最终回复
 				e.mu.Lock()
 				e.history = append(e.history, ConversationItem{
-					Role:    openai.ChatMessageRoleAssistant,
+					Role:    LLMRoleAssistant,
 					Content: choice.Message.Content,
 				})
 				e.mu.Unlock()
@@ -537,7 +536,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 		}
 
 		// 如果 finish_reason 是 stop 且没有工具调用，结束
-		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
+		if choice.FinishReason == LLMFinishReasonStop && len(choice.Message.ToolCalls) == 0 {
 			if strings.TrimSpace(choice.Message.Content) == "" {
 				emit(WSEvent{Type: EventError, Data: ErrorData{
 					Message: "模型没有返回可展示的分析内容，请重试或检查当前 LLM 网关配置。",
@@ -547,7 +546,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			}
 			e.mu.Lock()
 			e.history = append(e.history, ConversationItem{
-				Role:    openai.ChatMessageRoleAssistant,
+				Role:    LLMRoleAssistant,
 				Content: choice.Message.Content,
 			})
 			e.mu.Unlock()
@@ -651,7 +650,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 				// 将工具结果加入消息历史
 				e.mu.Lock()
 				e.history = append(e.history, ConversationItem{
-					Role:       openai.ChatMessageRoleTool,
+					Role:       LLMRoleTool,
 					Content:    compactToolResult(toolCall.Function.Name, result),
 					ToolCallID: toolCall.ID,
 				})
@@ -733,7 +732,7 @@ func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars 
 	}
 	e.mu.Lock()
 	e.history = append(e.history, ConversationItem{
-		Role:    openai.ChatMessageRoleAssistant,
+		Role:    LLMRoleAssistant,
 		Content: summary,
 	})
 	e.compactMessagesLocked(resp.Usage.PromptTokens)
@@ -748,7 +747,7 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-func compactAssistantMessage(message openai.ChatCompletionMessage) ConversationItem {
+func compactAssistantMessage(message LLMMessage) ConversationItem {
 	item := ConversationItem{
 		Role:    message.Role,
 		Content: message.Content,
@@ -975,7 +974,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	var pendingIDs []string
 	for i := len(e.history) - 1; i >= 0; i-- {
 		msg := e.history[i]
-		if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
+		if msg.Role == LLMRoleAssistant && len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
 				if tc.Function.Name == "user_request_input" {
 					pendingIDs = append(pendingIDs, tc.ID)
@@ -994,7 +993,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	for _, id := range pendingIDs {
 		hasResult := false
 		for j := len(e.history) - 1; j >= 0; j-- {
-			if e.history[j].Role == openai.ChatMessageRoleTool && e.history[j].ToolCallID == id {
+			if e.history[j].Role == LLMRoleTool && e.history[j].ToolCallID == id {
 				hasResult = true
 				break
 			}
@@ -1009,7 +1008,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	}
 
 	e.history = append(e.history, ConversationItem{
-		Role:       openai.ChatMessageRoleTool,
+		Role:       LLMRoleTool,
 		Content:    "[User Response]: " + userResponse,
 		ToolCallID: toolCallID,
 	})
