@@ -44,6 +44,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	author = strings.TrimSpace(author)
 	safeTitle := escapeHTMLText(title)
 	titleHeaderHTML := renderReportTitleHeader(title, author)
+	tocHTML := renderReportTOC(units)
 
 	var bodyHTML strings.Builder
 	chapterNum := 0
@@ -142,14 +143,6 @@ body {
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
 }
-.report-titlebar .eyebrow {
-  color: var(--accent);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 0.6rem;
-}
 .report-titlebar h1 {
   color: var(--primary);
   font-size: 1.9rem;
@@ -161,6 +154,40 @@ body {
   margin-top: 0.75rem;
   color: var(--text-light);
   font-size: 0.9rem;
+}
+.report-toc {
+  max-width: 780px;
+  margin: 1rem auto 1.5rem;
+  padding: 1.4rem 2rem;
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.report-toc h2 {
+  color: var(--primary);
+  font-size: 1rem;
+  font-weight: 800;
+  margin-bottom: 0.75rem;
+}
+.report-toc ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+  margin: 0;
+}
+.report-toc li {
+  color: var(--text-light);
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.report-toc li:last-child {
+  border-bottom: none;
+}
+.report-toc a {
+  color: var(--text);
+  text-decoration: none;
+}
+.report-toc a:hover {
+  color: var(--primary-light);
 }
 
 /* === Sections === */
@@ -274,6 +301,7 @@ strong { color: var(--primary); font-weight: 600; }
 @media print {
   body { background: white; }
   .report-titlebar { box-shadow: none; page-break-after: avoid; }
+  .report-toc { box-shadow: none; page-break-after: avoid; }
   .section { box-shadow: none; page-break-inside: avoid; margin: 1rem auto; }
   .chart-box { box-shadow: none; }
   table { box-shadow: none; }
@@ -290,8 +318,9 @@ strong { color: var(--primary); font-weight: 600; }
 %s
 %s
 %s
+%s
 </body>
-</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, titleHeaderHTML, bodyHTML.String(), chartScripts)
+</html>`, safeTitle, customCSSBlock, echartsScriptNode, bodyClass, titleHeaderHTML, tocHTML, bodyHTML.String(), chartScripts)
 }
 
 func renderReportTitleHeader(title, author string) string {
@@ -304,10 +333,46 @@ func renderReportTitleHeader(title, author string) string {
 		meta = fmt.Sprintf(`<div class="meta">%s</div>`, escapeHTMLText(strings.TrimSpace(author)))
 	}
 	return fmt.Sprintf(`<header class="report-titlebar" data-report-title="true">
-  <div class="eyebrow">Data Analysis Report</div>
   <h1>%s</h1>
   %s
 </header>`, escapeHTMLText(title), meta)
+}
+
+type reportTOCItem struct {
+	Anchor string
+	Title  string
+}
+
+func renderReportTOC(units []reportRenderUnit) string {
+	items := make([]reportTOCItem, 0, len(units))
+	sectionNum := 0
+	for _, unit := range units {
+		block := unit.Block
+		if isTitleBlock(block) {
+			continue
+		}
+		sectionNum++
+		title := strings.TrimSpace(blockDisplayTitle(block))
+		if title == "" {
+			continue
+		}
+		items = append(items, reportTOCItem{
+			Anchor: fmt.Sprintf("section-%d", sectionNum),
+			Title:  title,
+		})
+	}
+	if len(items) < 2 {
+		return ""
+	}
+
+	var html strings.Builder
+	html.WriteString(`<nav class="report-toc" aria-label="报告目录">` + "\n")
+	html.WriteString("<h2>目录</h2>\n<ol>\n")
+	for _, item := range items {
+		html.WriteString(fmt.Sprintf(`<li><a href="#%s">%s</a></li>`+"\n", escapeHTMLAttr(item.Anchor), escapeHTMLText(item.Title)))
+	}
+	html.WriteString("</ol>\n</nav>")
+	return html.String()
 }
 
 func buildChartScripts(charts []ChartData) string {

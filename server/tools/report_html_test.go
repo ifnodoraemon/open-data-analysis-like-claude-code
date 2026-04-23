@@ -74,6 +74,34 @@ func TestRenderReportHTMLShowsFinalTitleInBody(t *testing.T) {
 	if !strings.Contains(html, `<div class="meta">AI 数据分析师</div>`) {
 		t.Fatalf("expected author meta in report body, got: %s", html)
 	}
+	if strings.Contains(html, "Data Analysis Report") {
+		t.Fatalf("did not expect renderer-generated title label, got: %s", html)
+	}
+}
+
+func TestRenderReportHTMLBuildsDerivedTOC(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("测试报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "summary", Kind: "markdown", Content: "## 执行摘要\n\n正文"},
+			{ID: "sales", Kind: "markdown", Content: "## 一、销售分析\n\n正文"},
+			{ID: "actions", Kind: "markdown", Content: "## 二、行动建议\n\n正文"},
+		},
+	})
+
+	if !strings.Contains(html, `class="report-toc"`) {
+		t.Fatalf("expected derived report toc, got: %s", html)
+	}
+	for _, expected := range []string{
+		`<a href="#section-1">执行摘要</a>`,
+		`<a href="#section-2">一、销售分析</a>`,
+		`<a href="#section-3">二、行动建议</a>`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("expected toc item %s, got: %s", expected, html)
+		}
+	}
 }
 
 func TestRenderReportHTMLAttachesUntitledChartBlocksToNearestSection(t *testing.T) {
