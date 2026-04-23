@@ -583,8 +583,6 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					return runRepo.UpdateStatus(persistCtx, activeRunID, domain.RunStatusRunning, nil)
 				})
 
-				sendSessionEvent(conn, &writeMu, sess.ID, activeRunID, agent.WSEvent{Type: agent.EventThinking, Data: agent.ThinkingData{Content: "User feedback received."}})
-
 				// 恢复执行 (传入空 userInput，因为问题已作为 tool result)
 				resumeCtx := agent.WithTraceMetadata(requestCtx, agent.TraceMetadata{
 					WorkspaceID: sess.WorkspaceID,

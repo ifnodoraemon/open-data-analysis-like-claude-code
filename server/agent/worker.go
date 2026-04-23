@@ -361,8 +361,6 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		}
 	}
 
-	childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s started] Sub-agent spawned, tool boundary: %s", payload.RoleName, strings.Join(payload.AllowedTools, ", "))}})
-
 	childPrompt := BuildPolicyPrompt()
 	llmClient := NewLLMClient()
 	bundle := &PromptBundle{
@@ -447,13 +445,12 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		if choice.Message.Content != "" {
 			content := strings.TrimSpace(choice.Message.Content)
 			trace = append(trace, delegateTraceItem{Kind: "thinking", Summary: clipText(content, 160)})
-			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: fmt.Sprintf("[%s thinking] %s", payload.RoleName, content)}}
+			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: content}}
 			childEmit(ev)
 		}
 
 		if choice.FinishReason == openai.FinishReasonStop && len(choice.Message.ToolCalls) == 0 {
 			result := strings.TrimSpace(choice.Message.Content)
-			childEmit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("[%s completed] %s", payload.RoleName, result)}})
 			childEmit(WSEvent{Type: EventRunCompleted, RunID: childRunID, Data: CompleteData{Summary: result}})
 			if persistence != nil && childRunID != "" {
 				logPersistErr("UpdateChildRunSummary", persistence.UpdateChildRunSummary(childCtx, childRunID, result))

@@ -469,9 +469,6 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			return
 		}
 
-		// 通知前端: 正在思考
-		emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: fmt.Sprintf("analyzing... (round %d)", i)}})
-
 		e.mu.Lock()
 		bundle := &PromptBundle{
 			Policy: e.policy,
