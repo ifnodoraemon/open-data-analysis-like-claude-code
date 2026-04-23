@@ -51,6 +51,11 @@ type FileMaterializeResult struct {
 	ColCount   int
 }
 
+type SourceRuntimeTable struct {
+	SessionID string
+	TableName string
+}
+
 func (s *SourceService) cleanupOldSnapshots(ctx context.Context, sessionID, sourceID string) {
 	oldSnapshots, err := s.SnapshotRepo.ListBySource(ctx, sourceID)
 	if err != nil {
@@ -289,6 +294,38 @@ func (s *SourceService) RemoveSessionSource(ctx context.Context, sessionID, sour
 		return tableName, err
 	}
 	return tableName, nil
+}
+
+func (s *SourceService) DeleteWorkspaceSource(ctx context.Context, sourceID string) ([]SourceRuntimeTable, error) {
+	snapshots, listErr := s.SnapshotRepo.ListBySource(ctx, sourceID)
+	if listErr != nil {
+		return nil, listErr
+	}
+	tables := make([]SourceRuntimeTable, 0, len(snapshots))
+	for _, snap := range snapshots {
+		if strings.TrimSpace(snap.AnalysisTableName) == "" {
+			continue
+		}
+		tables = append(tables, SourceRuntimeTable{
+			SessionID: snap.SessionID,
+			TableName: snap.AnalysisTableName,
+		})
+	}
+
+	profiles, profErr := s.SemanticProfileRepo.ListBySource(ctx, sourceID)
+	if profErr != nil {
+		log.Printf("DeleteWorkspaceSource: list profiles failed source_id=%s err=%v", sourceID, profErr)
+	}
+	for _, profile := range profiles {
+		if err := s.SemanticConfirmationRepo.DeleteByProfile(ctx, profile.ID); err != nil {
+			log.Printf("DeleteWorkspaceSource: delete confirmations failed profile_id=%s err=%v", profile.ID, err)
+		}
+	}
+
+	if err := s.DataSourceRepo.Delete(ctx, sourceID); err != nil {
+		return tables, err
+	}
+	return tables, nil
 }
 
 func (s *SourceService) GetSessionProfiles(ctx context.Context, sessionID string) ([]SemanticProfileSummary, error) {

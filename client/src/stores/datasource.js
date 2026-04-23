@@ -78,6 +78,33 @@ export const useDataSourceStore = defineStore('dataSource', () => {
     return false
   }
 
+  async function updatePostgresSource(sourceId, name, config) {
+    const res = await fetch(`/api/data-sources/${sourceId}`, {
+      method: 'PUT',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, postgres: config })
+    })
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      return { ok: false, error: errBody || `update failed (HTTP ${res.status})` }
+    }
+    await fetchWorkspaceDataSources()
+    return { ok: true, data: await res.json() }
+  }
+
+  async function deleteWorkspaceSource(sourceId) {
+    const res = await fetch(`/api/data-sources/${sourceId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    })
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      return { ok: false, error: errBody || `delete failed (HTTP ${res.status})` }
+    }
+    await fetchWorkspaceDataSources()
+    return { ok: true }
+  }
+
   async function testConnection(sourceId) {
     const res = await fetch(`/api/data-sources/${sourceId}/test`, {
       method: 'POST',
@@ -133,6 +160,8 @@ export const useDataSourceStore = defineStore('dataSource', () => {
     fetchProfileDetail,
     confirmProfile,
     createPostgresSource,
+    updatePostgresSource,
+    deleteWorkspaceSource,
     testConnection,
     importFromSource,
     removeSessionSource

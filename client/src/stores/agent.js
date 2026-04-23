@@ -187,6 +187,21 @@ let _msgSeq = 0;
     return true;
   }
 
+  function appendRunPreview(runId, preview, limit = 3) {
+    if (!runId || !preview?.summary) return false;
+    const run = findRunById(runs.value, runId);
+    if (!run) return false;
+    const nextPreview = [
+      ...(run.previewMessages || []),
+      preview,
+    ].slice(-limit);
+    runs.value = patchRunInTree(runs.value, runId, {
+      previewMessages: nextPreview,
+      updatedAt: new Date().toISOString(),
+    });
+    return true;
+  }
+
   function getRun(runId) {
     if (!runId) return null;
     return findRunById(runs.value, runId);
@@ -284,6 +299,7 @@ let _msgSeq = 0;
     setRunChildren,
     upsertRun,
     patchRun,
+    appendRunPreview,
     getRun,
     setMessages,
     setSubgoals,

@@ -11,6 +11,7 @@ type DataSourceRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.DataSource, error)
 	GetByFileID(ctx context.Context, fileID string) (*domain.DataSource, error)
 	ListByWorkspace(ctx context.Context, workspaceID string) ([]domain.DataSource, error)
+	Update(ctx context.Context, ds *domain.DataSource) error
 	UpdateStatus(ctx context.Context, id string, status domain.SourceStatus) error
 	Delete(ctx context.Context, id string) error
 }

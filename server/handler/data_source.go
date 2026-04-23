@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -204,19 +206,47 @@ func ListDataSourcesHandler(w http.ResponseWriter, r *http.Request) {
 
 	var result []map[string]interface{}
 	for _, ds := range sources {
-		result = append(result, map[string]interface{}{
-			"id":          ds.ID,
-			"name":        ds.Name,
-			"source_type": string(ds.SourceType),
-			"status":      string(ds.Status),
-			"created_at":  ds.CreatedAt,
-		})
+		item := serializeWorkspaceDataSource(r.Context(), ds)
+		result = append(result, item)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"data_sources": result,
 	})
+}
+
+func serializeWorkspaceDataSource(ctx context.Context, ds domain.DataSource) map[string]interface{} {
+	item := map[string]interface{}{
+		"id":          ds.ID,
+		"name":        ds.Name,
+		"source_type": string(ds.SourceType),
+		"status":      string(ds.Status),
+		"created_at":  ds.CreatedAt,
+		"updated_at":  ds.UpdatedAt,
+	}
+	if ds.SourceType != domain.SourceTypePostgresConnection {
+		return item
+	}
+
+	conn, err := dbConnectionRepo.GetBySourceID(ctx, ds.ID)
+	if err != nil || conn == nil {
+		return item
+	}
+	allowlist, _ := service.ParseAllowlist(conn.AllowlistJSON)
+	item["postgres"] = map[string]interface{}{
+		"host":               conn.Host,
+		"port":               conn.Port,
+		"database_name":      conn.DatabaseName,
+		"default_schema":     conn.DefaultSchema,
+		"ssl_mode":           conn.SSLMode,
+		"username":           conn.Username,
+		"allowlist":          allowlist,
+		"last_tested_at":     conn.LastTestedAt,
+		"last_test_status":   conn.LastTestStatus,
+		"last_error_message": conn.LastErrorMessage,
+	}
+	return item
 }
 
 type CreateDataSourceRequest struct {
@@ -303,6 +333,143 @@ func CreateDataSourceHandler(w http.ResponseWriter, r *http.Request) {
 		"source_type": string(ds.SourceType),
 		"status":      string(ds.Status),
 	})
+}
+
+type UpdateDataSourceRequest struct {
+	Name     *string             `json:"name"`
+	Postgres *PostgresConnection `json:"postgres,omitempty"`
+}
+
+func UpdateDataSourceHandler(w http.ResponseWriter, r *http.Request) {
+	sourceID := chi.URLParam(r, "sourceID")
+	identity, ok := auth.FromContext(r.Context())
+	if !ok || identity.UserID == "" {
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	ds, err := dataSourceRepo.GetByID(r.Context(), sourceID)
+	if err != nil || ds.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "data source does not exist", http.StatusNotFound)
+		return
+	}
+	if ds.SourceType != domain.SourceTypePostgresConnection {
+		http.Error(w, "only postgres_connection sources can be updated here", http.StatusBadRequest)
+		return
+	}
+
+	var req UpdateDataSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			http.Error(w, "name cannot be empty", http.StatusBadRequest)
+			return
+		}
+		ds.Name = name
+	}
+
+	if req.Postgres != nil {
+		conn, err := dbConnectionRepo.GetBySourceID(r.Context(), sourceID)
+		if err != nil || conn == nil {
+			http.Error(w, "connection config does not exist", http.StatusNotFound)
+			return
+		}
+		if strings.TrimSpace(req.Postgres.Host) == "" || strings.TrimSpace(req.Postgres.DatabaseName) == "" || strings.TrimSpace(req.Postgres.Username) == "" {
+			http.Error(w, "host, database_name and username are required", http.StatusBadRequest)
+			return
+		}
+		if req.Postgres.Port <= 0 {
+			http.Error(w, "port must be greater than 0", http.StatusBadRequest)
+			return
+		}
+
+		conn.Driver = "postgres"
+		conn.Host = strings.TrimSpace(req.Postgres.Host)
+		conn.Port = req.Postgres.Port
+		conn.DatabaseName = strings.TrimSpace(req.Postgres.DatabaseName)
+		conn.DefaultSchema = strings.TrimSpace(req.Postgres.DefaultSchema)
+		conn.SSLMode = strings.TrimSpace(req.Postgres.SSLMode)
+		if conn.SSLMode == "" {
+			conn.SSLMode = "disable"
+		}
+		conn.Username = strings.TrimSpace(req.Postgres.Username)
+		allowlistJSON, _ := json.Marshal(req.Postgres.Allowlist)
+		conn.AllowlistJSON = string(allowlistJSON)
+		if strings.TrimSpace(req.Postgres.Password) != "" {
+			if len(config.Cfg.AuthSecret) < 32 {
+				http.Error(w, "AUTH_SECRET too short, cannot update SQL data source secret", http.StatusForbidden)
+				return
+			}
+			ciphertext, encErr := service.EncryptPassword(req.Postgres.Password, config.Cfg.AuthSecret)
+			if encErr != nil {
+				http.Error(w, fmt.Sprintf("credential encryption failed: %v", encErr), http.StatusInternalServerError)
+				return
+			}
+			conn.SecretCiphertext = ciphertext
+		}
+		conn.LastTestedAt = nil
+		conn.LastTestStatus = ""
+		conn.LastErrorMessage = nil
+		if err := dbConnectionRepo.Update(r.Context(), conn); err != nil {
+			http.Error(w, fmt.Sprintf("failed to update connection config: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := dataSourceRepo.Update(r.Context(), ds); err != nil {
+		http.Error(w, fmt.Sprintf("failed to update data source: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	updated, err := dataSourceRepo.GetByID(r.Context(), sourceID)
+	if err != nil {
+		http.Error(w, "failed to reload data source", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(serializeWorkspaceDataSource(r.Context(), *updated))
+}
+
+func DeleteDataSourceHandler(w http.ResponseWriter, r *http.Request) {
+	sourceID := chi.URLParam(r, "sourceID")
+	identity, ok := auth.FromContext(r.Context())
+	if !ok || identity.UserID == "" {
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	ds, err := dataSourceRepo.GetByID(r.Context(), sourceID)
+	if err != nil || ds.WorkspaceID != identity.WorkspaceID {
+		http.Error(w, "data source does not exist", http.StatusNotFound)
+		return
+	}
+	if ds.SourceType != domain.SourceTypePostgresConnection {
+		http.Error(w, "only workspace SQL sources can be deleted here", http.StatusBadRequest)
+		return
+	}
+
+	tables, err := sourceService.DeleteWorkspaceSource(r.Context(), sourceID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to delete data source: %v", err), http.StatusInternalServerError)
+		return
+	}
+	for _, table := range tables {
+		if table.SessionID == "" || table.TableName == "" {
+			continue
+		}
+		if runtimeSession, _, runtimeErr := sessionManager.GetOrCreate(r.Context(), table.SessionID, identity.WorkspaceID, identity.UserID); runtimeErr == nil {
+			if dropErr := runtimeSession.Ingester.DropTable(table.TableName); dropErr != nil {
+				log.Printf("DeleteDataSourceHandler: drop runtime table failed table=%s err=%v", table.TableName, dropErr)
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func TestDataSourceHandler(w http.ResponseWriter, r *http.Request) {

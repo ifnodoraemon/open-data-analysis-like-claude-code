@@ -58,6 +58,55 @@ export function useWebSocket() {
     return false;
   }
 
+  function shouldShowRunEvent(eventRunId) {
+    return !store.selectedRunId || !eventRunId || eventRunId === store.selectedRunId;
+  }
+
+  function appendRunPreview(event) {
+    if (!event.runId) return;
+    const summary = summarizeEventForPreview(event);
+    if (!summary) return;
+    store.appendRunPreview(event.runId, {
+      type: event.type,
+      name: event.data?.name,
+      summary,
+    });
+  }
+
+  function summarizeEventForPreview(event) {
+    switch (event.type) {
+      case "thinking":
+        return clipPreviewText(event.data?.content);
+      case "tool_call":
+        return event.data?.name || "tool_call";
+      case "tool_result": {
+        const raw = event.data?.result || "";
+        try {
+          const parsed = JSON.parse(raw);
+          return clipPreviewText(parsed.ui_summary || parsed.delegate_summary || parsed.message || `${event.data?.name || "tool_result"}: ${raw}`);
+        } catch {
+          return clipPreviewText(`${event.data?.name || "tool_result"}: ${raw}`);
+        }
+      }
+      case "run_completed":
+        return clipPreviewText(event.data?.summary);
+      case "run_cancelled":
+        return clipPreviewText(event.data?.message || "任务已取消");
+      case "error":
+        return clipPreviewText(event.data?.message);
+      case "user_request_input":
+        return clipPreviewText(event.data?.question || "等待用户输入");
+      default:
+        return "";
+    }
+  }
+
+  function clipPreviewText(input, max = 120) {
+    const text = String(input || "").trim().replace(/\s+/g, " ");
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max)}...` : text;
+  }
+
   function authHeaders() {
     return store.token ? { Authorization: `Bearer ${store.token}` } : {};
   }
@@ -412,15 +461,18 @@ export function useWebSocket() {
         });
         break;
       case "thinking":
-        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
+        appendRunPreview(event);
+        if (!shouldShowRunEvent(event.runId)) break;
         store.addMessage({ type: "thinking", content: event.data.content });
         break;
       case "tool_call":
-        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
+        appendRunPreview(event);
+        if (!shouldShowRunEvent(event.runId)) break;
         store.addMessage({ type: "tool_call", name: event.data.name, arguments: event.data.arguments, id: event.data.id });
         break;
       case "tool_result": {
-        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
+        appendRunPreview(event);
+        if (!shouldShowRunEvent(event.runId)) break;
         let parsedResult = null;
         try { parsedResult = JSON.parse(event.data.result); } catch { parsedResult = null; }
         store.addMessage({
@@ -451,7 +503,8 @@ export function useWebSocket() {
       case "run_completed": {
         const patch = { status: "completed", summary: event.data.summary, updatedAt: new Date().toISOString() };
         if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
-        if ((!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) && event.data.summary) {
+        appendRunPreview(event);
+        if (shouldShowRunEvent(event.runId) && event.data.summary) {
           store.addMessage({ type: "complete", content: event.data.summary });
         }
         store.finishRun(event.runId);
@@ -460,7 +513,8 @@ export function useWebSocket() {
       case "run_cancelled": {
         const patch = { status: "cancelled", updatedAt: new Date().toISOString() };
         if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
-        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
+        appendRunPreview(event);
+        if (shouldShowRunEvent(event.runId)) {
           store.addMessage({ type: "cancelled", content: event.data.message || "任务已取消" });
         }
         store.finishRun(event.runId);
@@ -471,16 +525,18 @@ export function useWebSocket() {
           const patch = { status: "failed", errorMessage: event.data.message, updatedAt: new Date().toISOString() };
           if (!store.patchRun(event.runId, patch)) store.upsertRun({ id: event.runId, ...patch });
         }
-        if (!store.selectedRunId || !event.runId || event.runId === store.selectedRunId) {
+        appendRunPreview(event);
+        if (shouldShowRunEvent(event.runId)) {
           store.addMessage({ type: "error", content: event.data.message });
         }
         store.finishRun(event.runId);
         break;
       }
       case "user_request_input":
-        if (store.selectedRunId && event.runId && event.runId !== store.selectedRunId) break;
         store.setRunning(false);
         if (event.runId) store.patchRun(event.runId, { status: "waiting_user_input", updatedAt: new Date().toISOString() });
+        appendRunPreview(event);
+        if (!shouldShowRunEvent(event.runId)) break;
         store.addMessage({
           type: "user_request_input", question: event.data.question,
           options: event.data.options, allow_multiple: event.data.allow_multiple || false,

@@ -68,13 +68,57 @@
             <button class="btn-sm" @click="showCreateForm = false">取消</button>
           </div>
         </div>
-        <div v-if="workspaceDataSources.length === 0 && !showCreateForm" class="empty-hint">暂无 SQL 数据源</div>
-        <div v-for="ds in workspaceDataSources" :key="ds.id" class="source-card">
-          <div class="source-name">{{ ds.name }}</div>
+        <div v-if="sqlWorkspaceDataSources.length === 0 && !showCreateForm" class="empty-hint">暂无 SQL 数据源</div>
+        <div v-if="sourceMessage" class="source-message">{{ sourceMessage }}</div>
+        <div v-for="ds in sqlWorkspaceDataSources" :key="ds.id" class="source-card">
+          <div class="source-title-row">
+            <div class="source-name">{{ ds.name }}</div>
+            <button class="btn-xs danger" @click="handleDeleteWorkspaceSource(ds)" :disabled="deletingSourceId === ds.id">删除</button>
+          </div>
           <div class="source-meta">
             <span class="badge postgres">{{ ds.source_type }}</span>
             <span :class="['status', ds.status]">{{ ds.status }}</span>
+            <span v-if="ds.postgres?.host" class="table-name">{{ ds.postgres.host }}:{{ ds.postgres.port }}/{{ ds.postgres.database_name }}</span>
+            <span v-if="ds.postgres?.last_test_status" :class="['status', ds.postgres.last_test_status === 'success' ? 'active' : 'invalid']">
+              test: {{ ds.postgres.last_test_status }}
+            </span>
+            <button class="btn-xs" @click="handleTestSource(ds)" :disabled="testingSourceId === ds.id">测试</button>
+            <button class="btn-xs" @click="startEditSource(ds)">编辑</button>
             <button class="btn-xs" @click="openImportFor(ds)">导入</button>
+          </div>
+          <div v-if="testResults[ds.id]" :class="['source-status', testResults[ds.id].success ? 'status active' : 'status invalid']">
+            {{ testResults[ds.id].message || (testResults[ds.id].success ? '连接成功' : '连接失败') }}
+          </div>
+          <div v-if="editingSourceId === ds.id" class="create-form edit-form">
+            <input v-model="editSource.name" placeholder="名称" class="input-sm" />
+            <input v-model="editSource.host" placeholder="Host" class="input-sm" />
+            <input v-model.number="editSource.port" type="number" placeholder="Port" class="input-sm" />
+            <input v-model="editSource.database_name" placeholder="Database" class="input-sm" />
+            <input v-model="editSource.default_schema" placeholder="Schema" class="input-sm" />
+            <select v-model="editSource.ssl_mode" class="input-sm">
+              <option value="disable">disable</option>
+              <option value="require">require</option>
+              <option value="verify-full">verify-full</option>
+            </select>
+            <input v-model="editSource.username" placeholder="Username" class="input-sm" />
+            <input v-model="editSource.password" type="password" placeholder="Password (留空保持不变)" class="input-sm" />
+            <div class="allowlist-section">
+              <label class="allowlist-label">Allowlist (schema.name.kind)</label>
+              <div v-for="(entry, idx) in editSource.allowlist" :key="idx" class="allowlist-row">
+                <input v-model="entry.schema" placeholder="schema" class="input-xs" />
+                <input v-model="entry.name" placeholder="name" class="input-xs" />
+                <select v-model="entry.kind" class="input-xs">
+                  <option value="table">table</option>
+                  <option value="view">view</option>
+                </select>
+                <button class="btn-xs" @click="editSource.allowlist.splice(idx, 1)">×</button>
+              </div>
+              <button class="btn-xs" @click="editSource.allowlist.push({ schema: editSource.default_schema || 'public', name: '', kind: 'table' })">+ 添加</button>
+            </div>
+            <div class="form-actions">
+              <button class="btn-sm primary" @click="handleUpdateSource(ds)" :disabled="savingSource">保存</button>
+              <button class="btn-sm" @click="cancelEditSource">取消</button>
+            </div>
           </div>
         </div>
       </div>
@@ -177,9 +221,20 @@ const importPollingTimer = ref(null)
 const isImporting = ref(false)
 const importError = ref('')
 const removingSourceId = ref('')
+const editingSourceId = ref('')
+const savingSource = ref(false)
+const deletingSourceId = ref('')
+const testingSourceId = ref('')
+const sourceMessage = ref('')
+const testResults = ref({})
 const profileDetail = computed(() => store.semanticProfileDetails[selectedProfileId.value])
+const sqlWorkspaceDataSources = computed(() => props.workspaceDataSources.filter(ds => ds.source_type === 'postgres_connection'))
 
 const newSource = ref({
+  name: '', host: '', port: 5432, database_name: '', default_schema: 'public',
+  ssl_mode: 'require', username: '', password: '', allowlist: [{ schema: 'public', name: '', kind: 'table' }]
+})
+const editSource = ref({
   name: '', host: '', port: 5432, database_name: '', default_schema: 'public',
   ssl_mode: 'require', username: '', password: '', allowlist: [{ schema: 'public', name: '', kind: 'table' }]
 })
@@ -201,6 +256,77 @@ async function openImportFor(ds) {
     const data = await res.json()
     importCatalog.value = data.objects || []
     importingSource.value = ds
+  }
+}
+
+function startEditSource(ds) {
+  const pg = ds.postgres || {}
+  editingSourceId.value = ds.id
+  sourceMessage.value = ''
+  editSource.value = {
+    name: ds.name || '',
+    host: pg.host || '',
+    port: pg.port || 5432,
+    database_name: pg.database_name || '',
+    default_schema: pg.default_schema || 'public',
+    ssl_mode: pg.ssl_mode || 'require',
+    username: pg.username || '',
+    password: '',
+    allowlist: Array.isArray(pg.allowlist) && pg.allowlist.length
+      ? pg.allowlist.map(entry => ({ schema: entry.schema || 'public', name: entry.name || '', kind: entry.kind || 'table' }))
+      : [{ schema: pg.default_schema || 'public', name: '', kind: 'table' }]
+  }
+}
+
+function cancelEditSource() {
+  editingSourceId.value = ''
+  sourceMessage.value = ''
+}
+
+async function handleUpdateSource(ds) {
+  if (!ds?.id || savingSource.value) return
+  savingSource.value = true
+  sourceMessage.value = ''
+  try {
+    const result = await store.updatePostgresSource(ds.id, editSource.value.name, { ...editSource.value })
+    if (result?.ok === false) {
+      sourceMessage.value = result.error || '保存失败'
+      return
+    }
+    editingSourceId.value = ''
+  } finally {
+    savingSource.value = false
+  }
+}
+
+async function handleDeleteWorkspaceSource(ds) {
+  if (!ds?.id || deletingSourceId.value) return
+  const ok = window.confirm(`删除工作区 SQL 数据源「${ds.name || ds.id}」？已导入到会话的快照和语义项也会被移除。`)
+  if (!ok) return
+  deletingSourceId.value = ds.id
+  sourceMessage.value = ''
+  try {
+    const result = await store.deleteWorkspaceSource(ds.id)
+    if (result?.ok === false) {
+      sourceMessage.value = result.error || '删除失败'
+    }
+  } finally {
+    deletingSourceId.value = ''
+  }
+}
+
+async function handleTestSource(ds) {
+  if (!ds?.id || testingSourceId.value) return
+  testingSourceId.value = ds.id
+  sourceMessage.value = ''
+  try {
+    testResults.value = {
+      ...testResults.value,
+      [ds.id]: await store.testConnection(ds.id)
+    }
+    await store.fetchWorkspaceDataSources()
+  } finally {
+    testingSourceId.value = ''
   }
 }
 
@@ -322,6 +448,7 @@ function getAuthHeaders() {
 .source-name { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
 .source-meta { display: flex; gap: 8px; font-size: 12px; color: #666; flex-wrap: wrap; align-items: center; }
 .source-status { margin-top: 4px; font-size: 12px; }
+.source-message { margin: 6px 0; color: #c62828; font-size: 12px; }
 .badge { padding: 1px 6px; border-radius: 3px; font-size: 11px; }
 .badge.file_upload { background: #e3f2fd; color: #1565c0; }
 .badge.postgres_connection, .badge.postgres { background: #f3e5f5; color: #7b1fa2; }
@@ -340,6 +467,7 @@ function getAuthHeaders() {
 .btn-xs { padding: 1px 6px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px; background: #f5f5f5; cursor: pointer; }
 .btn-xs.danger { color: #c62828; border-color: #ffcdd2; background: #fff5f5; }
 .create-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding: 8px; background: #f9f9f9; border-radius: 4px; }
+.edit-form { margin-top: 8px; margin-bottom: 0; }
 .input-sm { padding: 4px 8px; font-size: 12px; border: 1px solid #ddd; border-radius: 3px; }
 .form-actions { display: flex; gap: 6px; margin-top: 4px; }
 .profile-detail { margin-top: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; }

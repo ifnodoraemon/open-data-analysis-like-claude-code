@@ -105,14 +105,14 @@ describe("useWebSocket deduplication", () => {
       type: "run_completed",
       runId: "run-1",
       data: {
-        summary: "AI generated final response after report finalization.",
+        summary: "model response",
       },
     });
 
     // run_completed carries the user-facing closing summary even when report_final already bound a file.
     expect(store.messages.length).toBe(msgCountAfterFinal + 1);
     expect(store.messages.at(-1)?.type).toBe("complete");
-    expect(store.messages.at(-1)?.content).toContain("AI generated final response");
+    expect(store.messages.at(-1)?.content).toContain("model response");
     expect(store.getRun("run-1").status).toBe("completed");
 
     disconnect();
@@ -181,6 +181,7 @@ describe("useWebSocket deduplication", () => {
     expect(store.isRunning).toBe(false);
     expect(store.activeRunId).toBe("");
     expect(store.getRun("run-root")?.status).toBe("completed");
+    expect(store.getRun("run-root")?.previewMessages.at(-1)?.summary).toBe("root finished");
     expect(store.messages.length).toBe(0);
 
     disconnect();

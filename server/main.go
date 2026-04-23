@@ -68,6 +68,8 @@ func main() {
 			api.Post("/api/semantic-profiles/{profileID}/confirm", handler.ConfirmProfileHandler)
 			api.Post("/api/data-sources", handler.CreateDataSourceHandler)
 			api.Get("/api/data-sources", handler.ListDataSourcesHandler)
+			api.Put("/api/data-sources/{sourceID}", handler.UpdateDataSourceHandler)
+			api.Delete("/api/data-sources/{sourceID}", handler.DeleteDataSourceHandler)
 			api.Post("/api/data-sources/{sourceID}/test", handler.TestDataSourceHandler)
 			api.Get("/api/data-sources/{sourceID}/catalog", handler.CatalogDataSourceHandler)
 			api.Post("/api/data-sources/{sourceID}/import", handler.ImportDataSourceHandler)

@@ -82,6 +82,14 @@ func (r *DataSourceRepository) ListByWorkspace(ctx context.Context, workspaceID 
 	return results, rows.Err()
 }
 
+func (r *DataSourceRepository) Update(ctx context.Context, ds *domain.DataSource) error {
+	ds.UpdatedAt = time.Now()
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE data_sources SET name = ?, status = ?, updated_at = ? WHERE id = ?`,
+		ds.Name, string(ds.Status), ds.UpdatedAt, ds.ID)
+	return err
+}
+
 func (r *DataSourceRepository) UpdateStatus(ctx context.Context, id string, status domain.SourceStatus) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE data_sources SET status = ?, updated_at = ? WHERE id = ?`, string(status), time.Now(), id)
 	return err
