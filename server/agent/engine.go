@@ -658,7 +658,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 				e.mu.Unlock()
 
 				if toolCall.Function.Name == "report_finalize" && isSuccessfulFinalizeResult(result) {
-					summary, summaryErr := e.finalResponseAfterFinalize(ctx, getRuntimeVars, result)
+					summary, summaryErr := e.finalResponseAfterFinalize(ctx, getRuntimeVars)
 					if summaryErr != nil {
 						emit(WSEvent{Type: EventError, Data: ErrorData{Message: summaryErr.Error()}})
 						return
@@ -695,11 +695,10 @@ func isSuccessfulFinalizeResult(result string) bool {
 	return tool == "report_finalize" && ok && finalized && strings.EqualFold(strings.TrimSpace(deliveryState), "finalized")
 }
 
-func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars func() []RuntimeContextBlock, finalizeResult string) (string, error) {
+func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars func() []RuntimeContextBlock) (string, error) {
 	e.mu.Lock()
 	bundle := &PromptBundle{
 		Policy: e.policy,
-		Task:   buildFinalizeResponseTask(finalizeResult),
 	}
 	if getRuntimeVars != nil {
 		bundle.RuntimeContext = append(bundle.RuntimeContext, getRuntimeVars()...)
@@ -736,10 +735,6 @@ func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars 
 	e.compactMessagesLocked(resp.Usage.PromptTokens)
 	e.mu.Unlock()
 	return summary, nil
-}
-
-func buildFinalizeResponseTask(finalizeResult string) string {
-	return "The report has just been finalized. Produce the final user-facing response in the user's language. Base it on the conversation history and this report_finalize result. Do not call tools. Do not invent details not supported by the report state.\n\nreport_finalize result:\n" + strings.TrimSpace(finalizeResult)
 }
 
 func errorString(err error) string {
