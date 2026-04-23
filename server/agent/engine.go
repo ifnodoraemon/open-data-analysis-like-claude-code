@@ -431,7 +431,6 @@ func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 			return "", nil, true
 		},
 		"report_finalize": func(ctx context.Context, toolCall openai.ToolCall, emit func(WSEvent)) (string, error, bool) {
-			emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: "Executing report_finalize..."}})
 			result, err := e.registry.Execute(toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
 			if err == nil && result != "" {
 				result = applyReportHTMLGuardrail(result)
@@ -671,9 +670,12 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			continue // 继续循环
 		}
 
-		// 保护性兜底：正常流程不会到达此处（有文本或 stop 的分支均已提前 return），
-		// 仅作为防御性路径保留，防止极端情况下 LLM 返回既无文本、无工具调用、也非 stop 的响应。
-		emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: "Analysis completed"}})
+		// 保护性兜底：正常流程不会到达此处。不要硬编码最终回复；
+		// 若模型没有给出文本或工具调用，让 run 以可诊断错误结束。
+		emit(WSEvent{Type: EventError, Data: ErrorData{
+			Message: "模型没有返回可展示的分析内容，也没有请求工具调用。",
+			Code:    "empty_llm_output",
+		}})
 		return
 	}
 
