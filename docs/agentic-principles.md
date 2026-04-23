@@ -71,9 +71,11 @@ Runtime 不应代替 Judge。
 
 ### 4.1 Finalize 是交付边界，不是下一轮提示
 
-`report_finalize` 的职责是校验并标记报告可交付。它成功返回 `ok=true`、`is_finalized=true`、`delivery_state=finalized` 后，当前 run 应进入完成状态。
+`report_finalize` 的职责是校验并标记报告可交付。它成功返回 `ok=true`、`is_finalized=true`、`delivery_state=finalized` 后，当前 run 应进入收尾状态。
 
-这属于交付边界，不属于“模型下一步应该做什么”的建议。runtime 可以据此停止当前执行循环，避免 finalize 成功后继续发起下一轮 LLM 调用，造成界面看起来仍在分析或重复收尾。
+这属于交付边界，不属于“模型下一步应该做什么”的建议。runtime 可以据此停止开放工具的执行循环，避免 finalize 成功后继续发起下一轮可调用工具的 LLM 循环，造成界面看起来仍在分析或重复收尾。
+
+但最终给用户看的收尾回复仍应由模型生成，而不是由 runtime 拼硬编码模板。合理模式是：把 `report_finalize` 结果作为事实放入历史，再发起一次 tools disabled 的最终回复生成；模型根据历史和报告状态写出自然语言总结，然后 runtime 完成当前 run。
 
 如果 finalize 失败，工具应返回 blockers / issues 等事实，run 继续由模型自行判断如何处理。
 
@@ -235,7 +237,7 @@ runtime 不应替模型默认选一个，也不应在 handler 里偷偷替用户
 - 面向 UI 的展示摘要，但不夹带下一步指令
 - 展示摘要字段与事实字段显式分离，例如使用 `ui_summary`
 - 前端 sanitizer 与 CSP 作为报告预览的安全边界
-- finalize 成功后由 runtime 结束当前 run，避免多余的 LLM 轮次
+- finalize 成功后由 runtime 禁止继续工具循环，并让模型生成最终用户回复后结束当前 run
 
 ## 当前实现约定
 

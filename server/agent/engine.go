@@ -658,7 +658,12 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 				e.mu.Unlock()
 
 				if toolCall.Function.Name == "report_finalize" && isSuccessfulFinalizeResult(result) {
-					emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: buildFinalizeCompleteSummary(result)}})
+					summary, summaryErr := e.finalResponseAfterFinalize(ctx, getRuntimeVars, result)
+					if summaryErr != nil {
+						emit(WSEvent{Type: EventError, Data: ErrorData{Message: summaryErr.Error()}})
+						return
+					}
+					emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: summary}})
 					return
 				}
 			}
@@ -690,38 +695,51 @@ func isSuccessfulFinalizeResult(result string) bool {
 	return tool == "report_finalize" && ok && finalized && strings.EqualFold(strings.TrimSpace(deliveryState), "finalized")
 }
 
-func buildFinalizeCompleteSummary(result string) string {
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &payload); err == nil {
-		lines := []string{"报告已完成并保存。"}
-		if title, ok := payload["report_title"].(string); ok && strings.TrimSpace(title) != "" {
-			lines = append(lines, "", "- 标题："+strings.TrimSpace(title))
-		}
-		if author, ok := payload["author"].(string); ok && strings.TrimSpace(author) != "" {
-			lines = append(lines, "- 作者："+strings.TrimSpace(author))
-		}
-		if blockCount, ok := summaryNumber(payload["block_count"]); ok {
-			lines = append(lines, fmt.Sprintf("- 内容块：%d 个", blockCount))
-		}
-		if chartCount, ok := summaryNumber(payload["chart_count"]); ok {
-			lines = append(lines, fmt.Sprintf("- 图表：%d 个", chartCount))
-		}
-		return strings.Join(lines, "\n")
+func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars func() []RuntimeContextBlock, finalizeResult string) (string, error) {
+	e.mu.Lock()
+	bundle := &PromptBundle{
+		Policy: e.policy,
+		Task:   buildFinalizeResponseTask(finalizeResult),
 	}
-	return "Report finalized."
+	if getRuntimeVars != nil {
+		bundle.RuntimeContext = append(bundle.RuntimeContext, getRuntimeVars()...)
+	}
+	if e.contextDigest != "" {
+		digestBody := strings.TrimPrefix(strings.TrimSpace(e.contextDigest), historyDigestPrefix)
+		digestBody = strings.TrimSpace(digestBody)
+		if digestBody != "" {
+			bundle.RuntimeContext = append(bundle.RuntimeContext, RuntimeContextBlock{
+				Name:    "digest",
+				Content: historyDigestPrefix + "\n" + digestBody,
+			})
+		}
+	}
+	bundle.History = append([]ConversationItem(nil), e.history...)
+	e.mu.Unlock()
+
+	resp, err := e.llm.ChatWithTools(ctx, bundle, nil)
+	if err != nil {
+		return "", err
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("LLM returned empty response")
+	}
+	summary := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if summary == "" {
+		return "", fmt.Errorf("LLM returned empty final response")
+	}
+	e.mu.Lock()
+	e.history = append(e.history, ConversationItem{
+		Role:    openai.ChatMessageRoleAssistant,
+		Content: summary,
+	})
+	e.compactMessagesLocked(resp.Usage.PromptTokens)
+	e.mu.Unlock()
+	return summary, nil
 }
 
-func summaryNumber(value interface{}) (int64, bool) {
-	switch typed := value.(type) {
-	case float64:
-		return int64(typed), true
-	case int:
-		return int64(typed), true
-	case int64:
-		return typed, true
-	default:
-		return 0, false
-	}
+func buildFinalizeResponseTask(finalizeResult string) string {
+	return "The report has just been finalized. Produce the final user-facing response in the user's language. Base it on the conversation history and this report_finalize result. Do not call tools. Do not invent details not supported by the report state.\n\nreport_finalize result:\n" + strings.TrimSpace(finalizeResult)
 }
 
 func errorString(err error) string {

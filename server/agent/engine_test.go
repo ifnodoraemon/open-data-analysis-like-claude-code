@@ -159,12 +159,11 @@ func TestSuccessfulFinalizeResultDetection(t *testing.T) {
 	if !isSuccessfulFinalizeResult(success) {
 		t.Fatal("expected finalized report result to stop the run")
 	}
-	got := buildFinalizeCompleteSummary(success)
-	if !strings.Contains(got, "报告已完成并保存。") ||
-		!strings.Contains(got, "标题：全面对比分析报告") ||
-		!strings.Contains(got, "内容块：6 个") ||
-		!strings.Contains(got, "图表：6 个") {
-		t.Fatalf("unexpected finalize summary: %q", got)
+	task := buildFinalizeResponseTask(success)
+	if !strings.Contains(task, "Produce the final user-facing response") ||
+		!strings.Contains(task, "report_finalize result:") ||
+		!strings.Contains(task, "全面对比分析报告") {
+		t.Fatalf("unexpected finalize response task: %q", task)
 	}
 
 	blocked := `{"ok":false,"tool":"report_finalize","delivery_state":"draft","is_finalized":false}`

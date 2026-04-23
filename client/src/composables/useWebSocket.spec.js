@@ -105,15 +105,14 @@ describe("useWebSocket deduplication", () => {
       type: "run_completed",
       runId: "run-1",
       data: {
-        summary:
-          "报告已完成并保存。\n\n- 标题：Report Title\n- 内容块：6 个\n- 图表：4 个",
+        summary: "AI generated final response after report finalization.",
       },
     });
 
     // run_completed carries the user-facing closing summary even when report_final already bound a file.
     expect(store.messages.length).toBe(msgCountAfterFinal + 1);
     expect(store.messages.at(-1)?.type).toBe("complete");
-    expect(store.messages.at(-1)?.content).toContain("报告已完成并保存");
+    expect(store.messages.at(-1)?.content).toContain("AI generated final response");
     expect(store.getRun("run-1").status).toBe("completed");
 
     disconnect();
