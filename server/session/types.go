@@ -164,6 +164,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			reportState:   s.ReportState,
 		},
 		QueryLocker: s,
+		Now:         time.Now,
 	}
 
 	masterReg := tools.NewRegistry()
@@ -171,6 +172,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 
 	// 主控和子 Agent 使用同一套工具语义；子 Agent 只是按本次任务裁剪过工具边界的递归实例。
 	plannerAllowed := []string{
+		"state_time_context_inspect",
 		"state_session_sources_inspect",
 		"state_semantic_profile_inspect",
 		"data_list_tables",
