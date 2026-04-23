@@ -2,33 +2,20 @@ package agent
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
 func TestWorkingMemory(t *testing.T) {
 	mem := NewWorkingMemory()
 
-	// Test GetSummary empty
-	summary := mem.GetSummary()
-	if !strings.Contains(summary, "<empty>") {
-		t.Errorf("expected <empty> summary, got %s", summary)
-	}
-
 	// Test SaveFact
 	mem.SaveFact("key1", "fact1")
 	mem.SaveFact("key2", "fact2")
 
-	summary = mem.GetSummary()
-	if !strings.Contains(summary, "key1") || !strings.Contains(summary, "fact2") {
-		t.Errorf("expected summary to contain facts, got %s", summary)
-	}
-
 	// Test RemoveFact
 	mem.RemoveFact("key1")
-	summary = mem.GetSummary()
-	if strings.Contains(summary, "key1") {
-		t.Errorf("expected summary to not contain key1, got %s", summary)
+	if _, exists := mem.Snapshot()["key1"]; exists {
+		t.Errorf("expected snapshot to not contain key1")
 	}
 
 	mem.Reset()
@@ -75,10 +62,6 @@ func TestSubgoalManager(t *testing.T) {
 		t.Errorf("expected finalize to be allowed as root/branch are terminal, blockers=%v", blockers)
 	}
 
-	summary := sm.GetSummary()
-	if !strings.Contains(summary, "goal 1") || !strings.Contains(summary, "goal 2") || !strings.Contains(summary, "rejected") {
-		t.Errorf("expected summary to contain goals and results, got %s", summary)
-	}
 	if sm.Goals[1].ParentGoalID != id1 {
 		t.Errorf("expected nested goal parent id to be preserved")
 	}
@@ -98,12 +81,16 @@ func TestSubgoalManagerAllowsFinalizeWhenClosedRootHasStaleChildren(t *testing.T
 		t.Fatalf("expected completed root to allow finalize even with stale child, blockers=%v", blockers)
 	}
 
-	summary := sm.GetSummary()
-	if !strings.Contains(summary, "stale child") {
-		t.Fatalf("expected summary to still show stale child")
+	goals := sm.ListAll()
+	foundStaleChild := false
+	for _, goal := range goals {
+		if goal.ID == childID && goal.Description == "stale child" && goal.Status == StatusPending {
+			foundStaleChild = true
+			break
+		}
 	}
-	if strings.Contains(summary, "stale child[pending]") {
-		t.Fatalf("expected stale child not to appear as active branch blocker")
+	if !foundStaleChild {
+		t.Fatalf("expected stale child to remain in goal facts: %#v", goals)
 	}
 
 	if err := sm.UpdateGoalStatus(childID, StatusRejected, "obsolete"); err != nil {
@@ -211,8 +198,8 @@ func TestManageSubgoalsTool(t *testing.T) {
 	if addPayload["tool"] != "goal_manage" || addPayload["action"] != "add" {
 		t.Fatalf("unexpected add payload: %#v", addPayload)
 	}
-	if addPayload["can_finalize"] != false {
-		t.Fatalf("expected add payload to expose can_finalize=false, got %#v", addPayload["can_finalize"])
+	if _, exists := addPayload["can_finalize"]; exists {
+		t.Fatalf("did not expect add payload to expose can_finalize: %#v", addPayload["can_finalize"])
 	}
 
 	id := sm.Goals[0].ID
@@ -247,8 +234,8 @@ func TestManageSubgoalsTool(t *testing.T) {
 	if completePayload["result"] != "done" {
 		t.Fatalf("expected complete payload to keep result, got %#v", completePayload["result"])
 	}
-	if completePayload["can_finalize"] != true {
-		t.Fatalf("expected complete payload to expose can_finalize=true, got %#v", completePayload["can_finalize"])
+	if _, exists := completePayload["can_finalize"]; exists {
+		t.Fatalf("did not expect complete payload to expose can_finalize: %#v", completePayload["can_finalize"])
 	}
 
 	// Unknown Action

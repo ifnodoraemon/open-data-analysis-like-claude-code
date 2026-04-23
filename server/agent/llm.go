@@ -13,15 +13,14 @@ import (
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 	anthropic "github.com/liushuangls/go-anthropic/v2"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 // LLMClient 统一的 LLM 客户端，支持 OpenAI 和 Anthropic
 type LLMClient struct {
 	provider        string
 	model           string
-	openaiClient    *openai.Client
 	anthropicClient *anthropic.Client
 	httpClient      *http.Client
 }
@@ -36,25 +35,11 @@ func NewLLMClient() *LLMClient {
 		},
 	}
 
-	switch client.provider {
-	case "anthropic":
+	if client.provider == "anthropic" {
 		client.initAnthropic()
-	default:
-		client.initOpenAI()
 	}
 
 	return client
-}
-
-func (l *LLMClient) initOpenAI() {
-	cfg := openai.DefaultConfig(config.Cfg.LLMAPIKey)
-
-	baseURL := config.Cfg.LLMBaseURL
-	if baseURL != "" {
-		cfg.BaseURL = baseURL
-	}
-
-	l.openaiClient = openai.NewClientWithConfig(cfg)
 }
 
 func (l *LLMClient) initAnthropic() {
@@ -122,7 +107,7 @@ func isRetryableLLMError(err error) bool {
 }
 
 // ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑（指数退避，区分可重试错误）
-func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*LLMResponse, error) {
+func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*LLMResponse, error) {
 	retryCtx, retryCancel := context.WithTimeout(ctx, 120*time.Second)
 	defer retryCancel()
 
@@ -139,9 +124,9 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, too
 
 		switch l.provider {
 		case "anthropic":
-			resp, err = l.chatAnthropic(ctx, bundle, tools)
+			resp, err = l.chatAnthropic(ctx, bundle, toolSpecs)
 		default:
-			resp, err = l.chatOpenAI(ctx, bundle, tools)
+			resp, err = l.chatOpenAI(ctx, bundle, toolSpecs)
 		}
 
 		if err == nil {
@@ -190,9 +175,9 @@ func countHistoryChars(hist []ConversationItem) int {
 	return total
 }
 
-// chatOpenAI OpenAI 格式调用
-func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*LLMResponse, error) {
-	reqBody, err := l.buildResponsesRequest(bundle, tools)
+// chatOpenAI OpenAI Responses provider 调用
+func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*LLMResponse, error) {
+	reqBody, err := l.buildResponsesRequest(bundle, toolSpecs)
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +198,8 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, tools 
 		"model":                 l.model,
 		"endpoint":              endpoint,
 		"message_count":         len(bundle.History),
-		"tool_count":            len(tools),
-		"tools":                 summarizeTools(tools),
+		"tool_count":            len(toolSpecs),
+		"tools":                 summarizeTools(toolSpecs),
 		"user_preview":          clipText(lastUserMessage(bundle.History), 240),
 		"instruction_chars":     len([]rune(reqBody.Instructions)),
 		"policy_chars":          len([]rune(bundle.Policy)),
@@ -318,6 +303,7 @@ type responsesTool struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
 	Parameters  interface{} `json:"parameters,omitempty"`
+	Strict      bool        `json:"strict,omitempty"`
 }
 
 type responsesAPIResponse struct {
@@ -534,7 +520,7 @@ func contentToText(content interface{}) string {
 	}
 }
 
-func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.Tool) (*responsesAPIRequest, error) {
+func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*responsesAPIRequest, error) {
 	req := &responsesAPIRequest{
 		Model: l.model,
 	}
@@ -596,15 +582,13 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, tools []openai.T
 		})
 	}
 
-	for _, tool := range tools {
-		if tool.Function == nil {
-			continue
-		}
+	for _, tool := range toolSpecs {
 		req.Tools = append(req.Tools, responsesTool{
-			Type:        "function",
+			Type:        tool.Type,
 			Name:        tool.Function.Name,
 			Description: tool.Function.Description,
 			Parameters:  tool.Function.Parameters,
+			Strict:      tool.Function.Strict,
 		})
 	}
 	if len(req.Tools) > 0 {
@@ -711,12 +695,10 @@ func (l *LLMClient) debugLog(span SpanInfo, event string, payload map[string]int
 	llmDebugWriter.WriteEvent(span, event, payload)
 }
 
-func summarizeTools(tools []openai.Tool) []string {
-	names := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		if tool.Function != nil {
-			names = append(names, tool.Function.Name)
-		}
+func summarizeTools(toolSpecs []tools.ToolSpec) []string {
+	names := make([]string, 0, len(toolSpecs))
+	for _, tool := range toolSpecs {
+		names = append(names, tool.Function.Name)
 	}
 	return names
 }
@@ -849,30 +831,20 @@ func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 }
 
 // chatAnthropic Anthropic 格式调用，转换为统一的内部响应格式返回
-func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, tools []openai.Tool) (*LLMResponse, error) {
+func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*LLMResponse, error) {
 	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
 
 	systemPrompt := buildAnthropicSystemPrompt(bundle)
 	anthropicMsgs := buildAnthropicMessages(bundle)
 
-	// 转换 tools: OpenAI → Anthropic 格式
+	// 转换内部工具定义: ToolSpec → Anthropic 格式
 	var anthropicTools []anthropic.ToolDefinition
-	for _, t := range tools {
-		if t.Function != nil {
-			// InputSchema 类型是 any，直接传 json.RawMessage
-			var inputSchema json.RawMessage
-			if params, ok := t.Function.Parameters.(json.RawMessage); ok {
-				inputSchema = params
-			} else {
-				inputSchema, _ = json.Marshal(t.Function.Parameters)
-			}
-
-			anthropicTools = append(anthropicTools, anthropic.ToolDefinition{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				InputSchema: inputSchema,
-			})
-		}
+	for _, tool := range toolSpecs {
+		anthropicTools = append(anthropicTools, anthropic.ToolDefinition{
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+			InputSchema: tool.Function.Parameters,
+		})
 	}
 
 	// 调用 Anthropic API
@@ -895,8 +867,8 @@ func (l *LLMClient) chatAnthropic(ctx context.Context, bundle *PromptBundle, too
 			"model":                 l.model,
 			"endpoint":              config.Cfg.LLMAPIEndpoint,
 			"message_count":         len(bundle.History),
-			"tool_count":            len(tools),
-			"tools":                 summarizeTools(tools),
+			"tool_count":            len(toolSpecs),
+			"tools":                 summarizeTools(toolSpecs),
 			"user_preview":          clipText(lastUserMessage(bundle.History), 240),
 			"instruction_chars":     len([]rune(systemPrompt)),
 			"policy_chars":          len([]rune(bundle.Policy)),

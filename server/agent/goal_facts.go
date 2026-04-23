@@ -17,7 +17,6 @@ func buildGoalStateFacts(subgoals *SubgoalManager, includeGoals bool) map[string
 		if includeGoals {
 			payload["goals"] = []Subgoal{}
 		}
-		payload["can_finalize"] = true
 		payload["active_branches"] = []string{}
 		payload["active_branch_count"] = 0
 		return payload
@@ -66,11 +65,10 @@ func buildGoalStateFacts(subgoals *SubgoalManager, includeGoals bool) map[string
 	payload["active_root_goal_ids"] = activeRootIDs
 	payload["active_root_goals"] = activeRootGoals
 
-	canFinalize, blockers := subgoals.CanFinalize()
+	_, blockers := subgoals.CanFinalize()
 	if blockers == nil {
 		blockers = []string{}
 	}
-	payload["can_finalize"] = canFinalize
 	payload["active_branches"] = blockers
 	payload["active_branch_count"] = len(blockers)
 	return payload

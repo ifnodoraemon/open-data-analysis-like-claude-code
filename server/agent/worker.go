@@ -367,7 +367,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		PolicyAppendix: strings.TrimSpace(payload.PolicyAppendix),
 		Task:           payload.TaskInstruction,
 	}
-	oaiTools := subReg.GetOpenAITools()
+	toolSpecs := subReg.GetToolSpecs()
 	trace := make([]delegateTraceItem, 0, 12)
 
 	const maxWorkerIterations = 25
@@ -393,7 +393,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			return "", childCtx.Err()
 		}
 
-		resp, err := llmClient.ChatWithTools(childCtx, bundle, oaiTools)
+		resp, err := llmClient.ChatWithTools(childCtx, bundle, toolSpecs)
 		if err == nil {
 			// 累计 token 消耗，并触发上下文压缩
 			totalPromptTokens += resp.Usage.PromptTokens

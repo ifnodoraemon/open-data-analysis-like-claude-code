@@ -36,7 +36,6 @@ func reportFinalizeBlockedFailure(state *ReportState, blockers []string) string 
 			"blocker_kind":        "active_branches",
 			"active_branch_count": len(blockers),
 			"active_branches":     blockers,
-			"can_finalize":        false,
 			"ui_summary":          formatFinalizeBlockedSummary(len(blockers)),
 		},
 	))
@@ -46,7 +45,6 @@ func reportFinalizeIssuesFailure(state *ReportState, issues []string) string {
 	return toolFailure("report_finalize", "report_state_invalid", "report structure validation failed; delivery_state stays draft.", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
-			"can_finalize":         false,
 			"finalize_issue_count": len(issues),
 			"finalize_issues":      issues,
 			"ui_summary":           formatFinalizeIssuesSummary(len(issues)),
@@ -58,8 +56,7 @@ func reportAlreadyFinalizedFailure(state *ReportState) string {
 	return toolFailure("report_finalize", "report_already_finalized", "delivery_state is already finalized; no new draft changes detected.", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
-			"can_finalize": false,
-			"ui_summary":   "delivery_state=finalized; no new draft changes detected.",
+			"ui_summary": "delivery_state=finalized; no new draft changes detected.",
 		},
 	))
 }

@@ -47,7 +47,7 @@ func (t *InspectGoalsTool) Name() string {
 }
 
 func (t *InspectGoalsTool) Description() string {
-	return "Read the fact state of the goal tree. Returns goal count, status distribution, active root goals, active branches, and finalize readiness; does not modify any state."
+	return "Read the fact state of the goal tree. Returns goal count, status distribution, active root goals, and active branches blocking closure; does not modify any state."
 }
 
 func (t *InspectGoalsTool) Parameters() json.RawMessage {
@@ -219,7 +219,6 @@ func (t *InspectReportStateTool) Execute(args json.RawMessage) (string, error) {
 		"needs_finalize":                delivery.NeedsFinalize,
 		"final_title":                   delivery.FinalTitle,
 		"final_author":                  delivery.FinalAuthor,
-		"can_finalize_structurally":     len(finalizeIssues) == 0,
 		"finalize_issue_count":          len(finalizeIssues),
 		"finalize_issues":               finalizeIssues,
 		"ui_summary":                    fmt.Sprintf("Current report: %d renderable blocks, %d charts.", renderableBlockCount, len(chartIDs)),

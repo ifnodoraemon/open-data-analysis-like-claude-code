@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/data"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 // Tool 工具接口
@@ -19,6 +18,18 @@ type Tool interface {
 
 type StrictTool interface {
 	Strict() bool
+}
+
+type FunctionSpec struct {
+	Name        string
+	Description string
+	Parameters  json.RawMessage
+	Strict      bool
+}
+
+type ToolSpec struct {
+	Type     string
+	Function FunctionSpec
 }
 
 // Registry 工具注册表
@@ -121,18 +132,18 @@ func (r *Registry) ListTools() []Tool {
 	return items
 }
 
-// GetOpenAITools 转换为 OpenAI Tools 格式
-func (r *Registry) GetOpenAITools() []openai.Tool {
-	var oaiTools []openai.Tool
+// GetToolSpecs 返回 provider-neutral 的工具定义快照。
+func (r *Registry) GetToolSpecs() []ToolSpec {
+	var specs []ToolSpec
 	for _, tool := range r.tools {
 		params := tool.Parameters()
 		strict := false
 		if strictTool, ok := tool.(StrictTool); ok {
 			strict = strictTool.Strict()
 		}
-		oaiTools = append(oaiTools, openai.Tool{
-			Type: openai.ToolTypeFunction,
-			Function: &openai.FunctionDefinition{
+		specs = append(specs, ToolSpec{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        tool.Name(),
 				Description: tool.Description(),
 				Strict:      strict,
@@ -140,7 +151,7 @@ func (r *Registry) GetOpenAITools() []openai.Tool {
 			},
 		})
 	}
-	return oaiTools
+	return specs
 }
 
 // Execute 执行工具

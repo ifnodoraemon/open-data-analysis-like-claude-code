@@ -80,25 +80,6 @@ func (m *WorkingMemory) ReplaceSnapshot(facts map[string]string) {
 	}
 }
 
-// GetSummary 输出格式化的大模型提示词上下文
-func (m *WorkingMemory) GetSummary() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if len(m.Facts) == 0 {
-		return "Working Memory: <empty>"
-	}
-
-	var builder strings.Builder
-	builder.WriteString("=== Confirmed Working Memory ===\n")
-	builder.WriteString("Confirmed key definitions, field meanings, and intermediate conclusions:\n")
-	for k, v := range m.Facts {
-		builder.WriteString(fmt.Sprintf("- [%s]: %s\n", k, v))
-	}
-	builder.WriteString("=====================================\n")
-	return builder.String()
-}
-
 type SubgoalStatus string
 
 const (
@@ -258,52 +239,6 @@ func (s *SubgoalManager) CanFinalize() (bool, []string) {
 	snapshot := s.snapshotLocked()
 	blockers := s.collectActiveBranchLines(snapshot)
 	return len(blockers) == 0, blockers
-}
-
-// GetSummary 格式化输出供 LLM 使用的当前子任务树状态
-func (s *SubgoalManager) GetSummary() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if len(s.Goals) == 0 {
-		return "No active subtasks."
-	}
-
-	var builder strings.Builder
-	builder.WriteString("[Current Goal List]\n")
-	snapshot := s.snapshotLocked()
-	for _, root := range snapshot.roots {
-		s.renderSummary(&builder, snapshot.children, root, 0)
-	}
-	if blockers := s.collectActiveBranchLines(snapshot); len(blockers) > 0 {
-		builder.WriteString("\n[Active Branches Blocking Finalization]\n")
-		for _, branch := range blockers {
-			builder.WriteString("- ")
-			builder.WriteString(branch)
-			builder.WriteString("\n")
-		}
-	}
-	return builder.String()
-}
-
-func (s *SubgoalManager) renderSummary(builder *strings.Builder, children map[string][]Subgoal, goal Subgoal, depth int) {
-	mark := "[ ]"
-	switch goal.Status {
-	case StatusRunning:
-		mark = "[~]"
-	case StatusComplete:
-		mark = "[x]"
-	case StatusRejected:
-		mark = "[-]"
-	}
-	indent := strings.Repeat("  ", depth)
-	builder.WriteString(fmt.Sprintf("%s%s ID:%s | %s\n", indent, mark, goal.ID, goal.Description))
-	if goal.Result != "" {
-		builder.WriteString(fmt.Sprintf("%s    -> conclusion/reason: %s\n", indent, goal.Result))
-	}
-	for _, child := range children[goal.ID] {
-		s.renderSummary(builder, children, child, depth+1)
-	}
 }
 
 // ListAll 导出当前所有的目标（返回副本，避免外部由于并发修改切片导致 panic）

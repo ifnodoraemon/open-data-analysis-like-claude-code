@@ -271,6 +271,9 @@ func TestInspectReportStateToolReturnsFactsOnly(t *testing.T) {
 	if len(payload["chart_blocks_missing_caption"].([]interface{})) != 1 {
 		t.Fatalf("expected one chart block missing caption, got %#v", payload["chart_blocks_missing_caption"])
 	}
+	if _, exists := payload["can_finalize_structurally"]; exists {
+		t.Fatalf("did not expect can_finalize_structurally in payload: %#v", payload["can_finalize_structurally"])
+	}
 	if _, exists := payload["report_shape_facts"]; exists {
 		t.Fatalf("did not expect report_shape_facts in payload: %#v", payload["report_shape_facts"])
 	}

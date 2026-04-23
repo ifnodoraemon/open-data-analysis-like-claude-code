@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 	anthropic "github.com/liushuangls/go-anthropic/v2"
 )
 
@@ -171,6 +173,35 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	contentStr := req.Input[0]["content"].(string)
 	if contentStr != expected {
 		t.Fatalf("expected explicitly prefixed runtime core, got %q", contentStr)
+	}
+}
+
+func TestBuildResponsesRequestIncludesStrictToolSpecs(t *testing.T) {
+	t.Parallel()
+
+	client := &LLMClient{model: "gpt-4o"}
+	req, err := client.buildResponsesRequest(&PromptBundle{}, []tools.ToolSpec{
+		{
+			Type: "function",
+			Function: tools.FunctionSpec{
+				Name:        "report_create_chart",
+				Description: "Create a chart",
+				Parameters:  json.RawMessage(`{"type":"object"}`),
+				Strict:      true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildResponsesRequest: %v", err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	if !req.Tools[0].Strict {
+		t.Fatalf("expected strict tool flag to be preserved: %#v", req.Tools[0])
+	}
+	if req.Tools[0].Name != "report_create_chart" {
+		t.Fatalf("unexpected tool name: %#v", req.Tools[0])
 	}
 }
 

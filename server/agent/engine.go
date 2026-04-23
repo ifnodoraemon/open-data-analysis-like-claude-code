@@ -243,7 +243,6 @@ func buildStructuredToolSummary(payload map[string]interface{}) string {
 		"goal_id",
 		"active_branch_count",
 		"active_roots",
-		"can_finalize",
 		"affects_report_delivery",
 		"run_status",
 		"child_run_status",
@@ -453,7 +452,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 	specialHandlers := e.specialToolHandlers()
 
 	e.mu.Lock()
-	oaiTools := e.registry.GetOpenAITools()
+	toolSpecs := e.registry.GetToolSpecs()
 	e.mu.Unlock()
 
 	userTask := userInput
@@ -493,7 +492,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 		bundle.History = append([]ConversationItem(nil), e.history...)
 		e.mu.Unlock()
 
-		resp, err := e.llm.ChatWithTools(ctx, bundle, oaiTools)
+		resp, err := e.llm.ChatWithTools(ctx, bundle, toolSpecs)
 		if err != nil {
 			emit(WSEvent{Type: EventError, Data: ErrorData{Message: err.Error()}})
 			return
