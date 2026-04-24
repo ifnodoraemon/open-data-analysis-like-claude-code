@@ -442,9 +442,9 @@ func turnContextRuntimeBlock(turnCtx *agent.TurnContext) *agent.RuntimeContextBl
 	}
 }
 
-func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, error) {
+func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, agent.TurnResolution, error) {
 	if sess == nil || sess.Engine == nil || userMsg.EditContext != nil {
-		return userMsg, nil, nil
+		return userMsg, nil, agent.TurnResolution{}, nil
 	}
 
 	baseRuntime := sess.RuntimeVars()
@@ -452,12 +452,12 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 		baseRuntime = append(baseRuntime, *targetBlock)
 	}
 	if !hasRuntimeBlock(baseRuntime, "current_report_artifact") && !hasRuntimeBlock(baseRuntime, "current_turn_target") {
-		return userMsg, nil, nil
+		return userMsg, nil, agent.TurnResolution{}, nil
 	}
 
 	resolution, err := sess.Engine.ResolveTurn(ctx, userMsg.Content, baseRuntime)
 	if err != nil {
-		return userMsg, nil, err
+		return userMsg, nil, agent.TurnResolution{}, err
 	}
 
 	var extra []agent.RuntimeContextBlock
@@ -473,7 +473,7 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 		}
 		userMsg.EditContext = edit
 	}
-	return userMsg, extra, nil
+	return userMsg, extra, resolution, nil
 }
 
 func hasRuntimeBlock(blocks []agent.RuntimeContextBlock, name string) bool {
@@ -670,11 +670,12 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			preparedUserMsg, extraRuntime, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
+			preparedUserMsg, extraRuntime, resolution, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
 			if prepErr != nil {
 				log.Printf("turn resolution failed session_id=%s err=%v", sess.ID, prepErr)
 				preparedUserMsg = userMsg
 				extraRuntime = nil
+				resolution = agent.TurnResolution{}
 			}
 
 			if err := runBeforeUserRunHooks(r.Context(), sess, preparedUserMsg, prepareUserRunHook(handlerReportSnapshotLoader{})); err != nil {
@@ -683,6 +684,16 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					Data: agent.ErrorData{Message: err.Error()},
 				})
 				continue
+			}
+			if preparedUserMsg.EditContext == nil {
+				grounded := agent.GroundTurnResolution(resolution, sess.ReportState)
+				if block := grounded.RuntimeContextBlock(); block != nil {
+					extraRuntime = append(extraRuntime, *block)
+				}
+				if edit := grounded.MaterializeEditContext(preparedUserMsg.TurnContext); edit != nil {
+					preparedUserMsg.EditContext = edit
+					sess.ConfigureEditState(edit)
+				}
 			}
 
 			runID, ctx, err := sess.StartRun(requestCtx)

@@ -244,7 +244,7 @@ func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing
 		}, nil
 	})
 
-	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
+	prepared, extra, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T
 		}, nil
 	})
 
-	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
+	prepared, extra, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
 		Content: "把这份历史报告整体整理一下",
 		TurnContext: &agent.TurnContext{
 			ReportTargetRunID: "run_history_1",
@@ -323,7 +323,7 @@ func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) 
 		}, nil
 	})
 
-	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把结论部分改一下"})
+	prepared, extra, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把结论部分改一下"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
