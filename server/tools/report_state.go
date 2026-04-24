@@ -89,11 +89,18 @@ func (s *ReportEditState) ScopeKind() string {
 	if !s.Active() {
 		return "inactive"
 	}
-	if strings.TrimSpace(s.TargetBlockID) != "" {
-		return "partial_block"
+	mode := strings.ToLower(strings.TrimSpace(s.Mode))
+	if mode == "configure_layout" || mode == "revise_layout" {
+		return "layout"
 	}
 	if strings.TrimSpace(s.TargetChartID) != "" {
 		return "partial_chart"
+	}
+	if strings.TrimSpace(s.SelectionText) != "" && (mode == "regenerate_selection" || mode == "revise_selection") {
+		return "partial_selection"
+	}
+	if strings.TrimSpace(s.TargetBlockID) != "" {
+		return "partial_block"
 	}
 	if s.PreserveOtherBlocks {
 		return "partial_block"

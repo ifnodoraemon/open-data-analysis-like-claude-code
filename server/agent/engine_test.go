@@ -360,6 +360,75 @@ func TestInspectReportEditStateToolChartScope(t *testing.T) {
 	}
 }
 
+func TestInspectReportEditStateToolSelectionScope(t *testing.T) {
+	t.Parallel()
+
+	tool := &InspectReportEditStateTool{
+		EditState: &tools.ReportEditState{
+			Mode:                "regenerate_selection",
+			TargetBlockID:       "analysis",
+			TargetBlockLabel:    "销售结论",
+			SelectionText:       "其中这句需要重写",
+			PreserveOtherBlocks: true,
+		},
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "analysis", Kind: "markdown", Title: "销售结论", Content: "body"},
+			},
+		},
+	}
+
+	result, err := tool.Execute(nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["scope_kind"] != "partial_selection" {
+		t.Fatalf("expected partial_selection scope, got %#v", payload["scope_kind"])
+	}
+	if payload["ui_summary"] != "Active partial selection edit scope inside block: analysis." {
+		t.Fatalf("unexpected ui_summary: %#v", payload["ui_summary"])
+	}
+	if payload["selection_text"] != "其中这句需要重写" {
+		t.Fatalf("expected selection_text payload, got %#v", payload["selection_text"])
+	}
+}
+
+func TestInspectReportEditStateToolLayoutScope(t *testing.T) {
+	t.Parallel()
+
+	tool := &InspectReportEditStateTool{
+		EditState: &tools.ReportEditState{
+			Mode: "configure_layout",
+		},
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "analysis", Kind: "markdown", Title: "Sales Analysis", Content: "body"},
+			},
+		},
+	}
+
+	result, err := tool.Execute(nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["scope_kind"] != "layout" {
+		t.Fatalf("expected layout scope, got %#v", payload["scope_kind"])
+	}
+	if payload["ui_summary"] != "Active report layout edit scope." {
+		t.Fatalf("unexpected ui_summary: %#v", payload["ui_summary"])
+	}
+}
+
 func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {
 	t.Parallel()
 

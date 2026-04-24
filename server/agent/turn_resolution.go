@@ -204,6 +204,12 @@ func (r TurnResolution) MaterializeEditContext() *ReportEditContext {
 	if res.NeedsClarification {
 		return nil
 	}
+	if res.Scope == TurnScopeLayout && res.Operation == TurnOperationConfigureLayout && res.Confidence >= autoWholeReportEditConfidence {
+		return &ReportEditContext{
+			Mode:                "configure_layout",
+			PreserveOtherBlocks: false,
+		}
+	}
 	if res.Scope == TurnScopeWholeReport && res.Confidence >= autoWholeReportEditConfidence {
 		return &ReportEditContext{
 			Mode:                "revise_report",

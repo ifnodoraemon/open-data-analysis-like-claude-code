@@ -217,6 +217,63 @@ func TestSessionRuntimeVarsChartScope(t *testing.T) {
 	}
 }
 
+func TestSessionRuntimeVarsSelectionScope(t *testing.T) {
+	t.Parallel()
+
+	sess := &Session{
+		ID: "test-sess",
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "结论", Content: "body"},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{
+			Mode:                "regenerate_selection",
+			TargetBlockID:       "b1",
+			TargetBlockLabel:    "结论",
+			SelectionText:       "其中这句需要改",
+			PreserveOtherBlocks: true,
+		},
+	}
+
+	vars := sess.RuntimeVars()
+	if len(vars) != 2 {
+		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	}
+	if !strings.Contains(vars[1].Content, "ScopeKind: partial_selection") {
+		t.Fatalf("missing partial_selection scope fact: %s", vars[1].Content)
+	}
+	if !strings.Contains(vars[1].Content, "SelectionText: 其中这句需要改") {
+		t.Fatalf("missing selection text fact: %s", vars[1].Content)
+	}
+}
+
+func TestSessionRuntimeVarsLayoutScope(t *testing.T) {
+	t.Parallel()
+
+	sess := &Session{
+		ID: "test-sess",
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "Overview", Content: "body"},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{
+			Mode: "configure_layout",
+		},
+	}
+
+	vars := sess.RuntimeVars()
+	if len(vars) != 2 {
+		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	}
+	if !strings.Contains(vars[1].Content, "ScopeKind: layout") {
+		t.Fatalf("missing layout scope fact: %s", vars[1].Content)
+	}
+}
+
 func TestSessionRuntimeVarsIncludeGoalState(t *testing.T) {
 	t.Parallel()
 

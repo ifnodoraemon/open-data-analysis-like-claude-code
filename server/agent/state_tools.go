@@ -231,7 +231,7 @@ func (t *InspectReportEditStateTool) Name() string {
 }
 
 func (t *InspectReportEditStateTool) Description() string {
-	return "Read the fact state of the current report edit scope. Returns whether the active scope is whole-report, partial-block, or partial-chart, plus grounded target block/chart facts when applicable. Does not modify any state."
+	return "Read the fact state of the current report edit scope. Returns whether the active scope is whole-report, partial-block, partial-selection, partial-chart, or layout, plus grounded target facts when applicable. Does not modify any state."
 }
 
 func (t *InspectReportEditStateTool) Parameters() json.RawMessage {
@@ -281,8 +281,12 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 		switch t.EditState.ScopeKind() {
 		case "whole_report":
 			payload["ui_summary"] = "Active whole-report edit scope."
+		case "layout":
+			payload["ui_summary"] = "Active report layout edit scope."
 		case "partial_chart":
 			payload["ui_summary"] = fmt.Sprintf("Active partial chart edit scope, target chart: %s.", t.EditState.TargetChartID)
+		case "partial_selection":
+			payload["ui_summary"] = fmt.Sprintf("Active partial selection edit scope inside block: %s.", t.EditState.TargetBlockID)
 		default:
 			payload["ui_summary"] = fmt.Sprintf("Active partial edit scope, target block: %s.", t.EditState.TargetBlockID)
 		}

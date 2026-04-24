@@ -50,6 +50,18 @@ func TestTurnResolutionMaterializeEditContext(t *testing.T) {
 	if blockEdit := blockRes.MaterializeEditContext(); blockEdit != nil {
 		t.Fatalf("did not expect block-scope resolution to auto-materialize edit context: %#v", blockEdit)
 	}
+
+	layoutRes := TurnResolution{
+		Artifact:          TurnArtifactReport,
+		Operation:         TurnOperationConfigureLayout,
+		Scope:             TurnScopeLayout,
+		MutationRequested: true,
+		Confidence:        0.9,
+	}
+	layoutEdit := layoutRes.MaterializeEditContext()
+	if layoutEdit == nil || layoutEdit.Mode != "configure_layout" {
+		t.Fatalf("expected layout configure to materialize edit context, got %#v", layoutEdit)
+	}
 }
 
 func TestTurnResolutionRuntimeContextBlock(t *testing.T) {
