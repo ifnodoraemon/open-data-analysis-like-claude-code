@@ -12,10 +12,10 @@ import (
 )
 
 func serializeRuntimeState(memory map[string]string, subgoals []agent.Subgoal, reportHTML string) map[string]interface{} {
-	return serializeRuntimeStateWithSnapshot(memory, subgoals, nil, reportHTML)
+	return serializeRuntimeStateWithSnapshot(memory, subgoals, nil, reportHTML, nil)
 }
 
-func serializeRuntimeStateWithSnapshot(memory map[string]string, subgoals []agent.Subgoal, reportSnapshot *domain.ReportSnapshot, reportHTML string) map[string]interface{} {
+func serializeRuntimeStateWithSnapshot(memory map[string]string, subgoals []agent.Subgoal, reportSnapshot *domain.ReportSnapshot, reportHTML string, editState *agent.EditStateUpdatedData) map[string]interface{} {
 	resp := map[string]interface{}{
 		"memory":      memory,
 		"subgoals":    subgoals,
@@ -24,37 +24,36 @@ func serializeRuntimeStateWithSnapshot(memory map[string]string, subgoals []agen
 	if reportSnapshot != nil {
 		resp["report_snapshot"] = reportSnapshot
 	}
+	if editState != nil {
+		resp["edit_state"] = editState
+	}
 	return resp
 }
 
-func getSessionRuntimeState(ctx context.Context, workspaceID, userID, sessionID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
+func getSessionRuntimeState(ctx context.Context, workspaceID, userID, sessionID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string, *agent.EditStateUpdatedData) {
 	if sessionManager != nil {
 		if sess, ok, err := sessionManager.Peek(sessionID, workspaceID, userID); err == nil && ok && sess != nil {
 			memory, subgoals := sess.RuntimeState()
 			reportSnapshot, reportHTML := renderLiveSessionRuntimeReport(sess)
-			if reportSnapshot != nil || reportHTML != "" {
-				return memory, subgoals, reportSnapshot, reportHTML
-			}
-			_, _, persistedSnapshot, persistedReportHTML := loadSessionRuntimeStateFromPersistence(ctx, sessionID)
-			return memory, subgoals, persistedSnapshot, persistedReportHTML
+			return memory, subgoals, reportSnapshot, reportHTML, sess.CurrentEditStateData()
 		}
 	}
 
 	return loadSessionRuntimeStateFromPersistence(ctx, sessionID)
 }
 
-func loadSessionRuntimeStateFromPersistence(ctx context.Context, sessionID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
+func loadSessionRuntimeStateFromPersistence(ctx context.Context, sessionID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string, *agent.EditStateUpdatedData) {
 	messages := collectSessionMessages(ctx, sessionID)
 	if len(messages) == 0 {
-		return map[string]string{}, []agent.Subgoal{}, nil, ""
+		return map[string]string{}, []agent.Subgoal{}, nil, "", nil
 	}
 	return deriveRuntimeStateFromMessages(messages)
 }
 
-func deriveRuntimeStateFromRun(ctx context.Context, runID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
+func deriveRuntimeStateFromRun(ctx context.Context, runID string) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string, *agent.EditStateUpdatedData) {
 	messages := collectRunTreeMessages(ctx, runID)
 	if len(messages) == 0 {
-		return map[string]string{}, []agent.Subgoal{}, nil, ""
+		return map[string]string{}, []agent.Subgoal{}, nil, "", nil
 	}
 	return deriveRuntimeStateFromMessages(messages)
 }
@@ -119,11 +118,12 @@ func sortRunMessages(messages []domain.RunMessage) {
 	})
 }
 
-func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string) {
+func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]string, []agent.Subgoal, *domain.ReportSnapshot, string, *agent.EditStateUpdatedData) {
 	memory := map[string]string{}
 	subgoals := []agent.Subgoal{}
 	var reportSnapshot *domain.ReportSnapshot
 	reportHTML := ""
+	var editState *agent.EditStateUpdatedData
 	pendingCalls := map[string]json.RawMessage{} // toolCallID -> arguments
 
 	for _, msg := range messages {
@@ -148,6 +148,15 @@ func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]st
 				}
 				if strings.TrimSpace(payload.HTML) != "" {
 					reportHTML = payload.HTML
+				}
+			}
+		case string(agent.EventStateReportEditUpdated):
+			var payload agent.EditStateUpdatedData
+			if err := json.Unmarshal([]byte(msg.Content), &payload); err == nil {
+				if payload.Active && payload.EditContext != nil {
+					editState = &payload
+				} else {
+					editState = nil
 				}
 			}
 		case string(agent.EventToolCall):
@@ -225,7 +234,7 @@ func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]st
 		}
 	}
 
-	return memory, subgoals, reportSnapshot, reportHTML
+	return memory, subgoals, reportSnapshot, reportHTML, editState
 }
 
 // extractGoalIDFromResult 从 goal_manage tool result 的 JSON 中提取真实的 goal_id。
@@ -240,13 +249,13 @@ func extractGoalIDFromResult(resultContent string) string {
 }
 
 func attachRuntimeState(ctx context.Context, resp map[string]interface{}, workspaceID, userID, sessionID string) {
-	memory, subgoals, reportSnapshot, reportHTML := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
-	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML)
+	memory, subgoals, reportSnapshot, reportHTML, editState := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
+	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML, editState)
 }
 
 func attachRunRuntimeState(ctx context.Context, resp map[string]interface{}, run domain.AnalysisRun) {
-	memory, subgoals, reportSnapshot, reportHTML := getSessionRuntimeState(ctx, run.WorkspaceID, run.UserID, run.SessionID)
-	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML)
+	memory, subgoals, reportSnapshot, reportHTML, editState := getSessionRuntimeState(ctx, run.WorkspaceID, run.UserID, run.SessionID)
+	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML, editState)
 }
 
 func renderLiveSessionRuntimeReport(sess *session.Session) (*domain.ReportSnapshot, string) {

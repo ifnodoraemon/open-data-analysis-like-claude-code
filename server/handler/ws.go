@@ -414,7 +414,7 @@ func (handlerReportSnapshotLoader) LoadReportSnapshot(ctx context.Context, sessi
 		return &snapshot, nil
 	}
 
-	_, _, sessionReportSnapshot, _ := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
+	_, _, sessionReportSnapshot, _, _ := getSessionRuntimeState(ctx, workspaceID, userID, sessionID)
 	if sessionReportSnapshot != nil {
 		return sessionReportSnapshot, nil
 	}
@@ -691,7 +691,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	requestCtx := detachedContext(r.Context())
-	memory, subgoals, reportSnapshot, reportHTML := getSessionRuntimeState(requestCtx, sess.WorkspaceID, identity.UserID, sess.ID)
+	memory, subgoals, reportSnapshot, reportHTML, editState := getSessionRuntimeState(requestCtx, sess.WorkspaceID, identity.UserID, sess.ID)
 
 	sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 		Type: agent.EventSessionReady,
@@ -702,6 +702,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			Memory:         memory,
 			ReportHTML:     reportHTML,
 			ReportSnapshot: reportSnapshot,
+			EditState:      editState,
 		},
 	})
 
@@ -906,6 +907,15 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
 				Type: agent.EventRunStarted,
 				Data: agent.RunStartedData{RunID: runID},
+			})
+			editPayload := sess.CurrentEditStateData()
+			sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+				Type: agent.EventStateReportEditUpdated,
+				Data: editPayload,
+			})
+			saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
+				Type: agent.EventStateReportEditUpdated,
+				Data: editPayload,
 			})
 			if agent.ApplyGoalResolution(sess.Subgoals, goalResolution) {
 				goals := sess.Subgoals.ListAll()

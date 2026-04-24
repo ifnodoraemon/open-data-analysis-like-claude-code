@@ -139,6 +139,7 @@ export function useWebSocket() {
     store.setSubgoals(runtimeState?.subgoals || []);
     store.setMemoryFacts(runtimeState?.memory || {});
     store.updateReport(runtimeState?.report_html || "");
+    store.setReportEditState(runtimeState?.edit_state || null);
   }
 
   function applySessionState(sessionId, runs, runtimeState = null) {
@@ -547,6 +548,9 @@ export function useWebSocket() {
         break;
       case "state_memory_updated":
         if (event.data?.facts) store.setMemoryFacts(event.data.facts);
+        break;
+      case "state_report_edit_updated":
+        store.setReportEditState(event.data || null);
         break;
       case "state_child_runs_updated":
         if (event.data?.childRuns) store.setRunChildren(event.data.parentRunId, event.data.childRuns);

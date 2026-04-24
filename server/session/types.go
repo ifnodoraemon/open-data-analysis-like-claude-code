@@ -438,6 +438,29 @@ func (s *Session) CurrentEditContext() *agent.ReportEditContext {
 	}
 }
 
+func (s *Session) CurrentEditStateData() *agent.EditStateUpdatedData {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.EditState == nil || !s.EditState.Active() {
+		return &agent.EditStateUpdatedData{Active: false}
+	}
+	return &agent.EditStateUpdatedData{
+		Active:    true,
+		ScopeKind: s.EditState.ScopeKind(),
+		EditContext: &agent.ReportEditContext{
+			Mode:                s.EditState.Mode,
+			TargetRunID:         s.EditState.TargetRunID,
+			BlockID:             s.EditState.TargetBlockID,
+			BlockLabel:          s.EditState.TargetBlockLabel,
+			ChartID:             s.EditState.TargetChartID,
+			SelectionText:       s.EditState.SelectionText,
+			SelectionStart:      s.EditState.SelectionStart,
+			SelectionEnd:        s.EditState.SelectionEnd,
+			PreserveOtherBlocks: s.EditState.PreserveOtherBlocks,
+		},
+	}
+}
+
 func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

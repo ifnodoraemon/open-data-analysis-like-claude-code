@@ -39,10 +39,15 @@ func hydrateSessionFromPersistence(ctx context.Context, sess *session.Session) e
 	if sess == nil {
 		return nil
 	}
-	memory, subgoals, reportSnapshot, _ := loadSessionRuntimeStateFromPersistence(ctx, sess.ID)
+	memory, subgoals, reportSnapshot, _, editState := loadSessionRuntimeStateFromPersistence(ctx, sess.ID)
 	sess.LoadRuntimeState(memory, subgoals)
 	if reportSnapshot != nil {
 		sess.LoadReportSnapshot(reportSnapshot)
+	}
+	if editState != nil && editState.Active && editState.EditContext != nil {
+		sess.ConfigureEditState(editState.EditContext)
+	} else {
+		sess.ClearEditState()
 	}
 	return nil
 }

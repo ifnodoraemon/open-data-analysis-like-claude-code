@@ -22,6 +22,7 @@ export const useAgentStore = defineStore("agent", () => {
   const subgoals = ref([]);
   const memoryFacts = ref({});
   const reportQuote = ref(null);
+  const reportEditState = ref(null);
 
   function findRunById(items, runId) {
     for (const item of items || []) {
@@ -129,6 +130,24 @@ let _msgSeq = 0;
   }
 
   function clearReportQuote() {
+    reportQuote.value = null;
+  }
+
+  function setReportEditState(state) {
+    if (!state || state.active !== true || !state.editContext) {
+      reportEditState.value = null;
+      reportQuote.value = null;
+      return;
+    }
+    reportEditState.value = {
+      active: true,
+      scopeKind: state.scopeKind || "",
+      editContext: { ...state.editContext },
+    };
+    if (state.scopeKind === "partial_selection" && String(state.editContext.selectionText || "").trim()) {
+      setReportQuote(state.editContext);
+      return;
+    }
     reportQuote.value = null;
   }
 
@@ -274,6 +293,7 @@ let _msgSeq = 0;
     subgoals.value = [];
     memoryFacts.value = {};
     reportQuote.value = null;
+    reportEditState.value = null;
   }
 
   function logout() {
@@ -308,10 +328,12 @@ let _msgSeq = 0;
     subgoals,
     memoryFacts,
     reportQuote,
+    reportEditState,
     addMessage,
     updateReport,
     setReportQuote,
     clearReportQuote,
+    setReportEditState,
     setRunning,
     setSession,
     setSelectedRun,

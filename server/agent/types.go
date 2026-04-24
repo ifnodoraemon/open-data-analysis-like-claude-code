@@ -12,24 +12,25 @@ type WSEvent struct {
 
 // 事件类型常量
 const (
-	EventSessionReady          = "session_ready"
-	EventSessionReset          = "session_reset"
-	EventUserMessage           = "user_message"
-	EventRunStarted            = "run_started"
-	EventThinking              = "thinking"
-	EventToolCall              = "tool_call"
-	EventToolResult            = "tool_result"
-	EventReportUpdate          = "report_update"
-	EventReportFinal           = "report_final"
-	EventError                 = "error"
-	EventRunCompleted          = "run_completed"
-	EventRunCancelled          = "run_cancelled"
-	EventStop                  = "stop_run"
-	EventReset                 = "reset_session"
-	EventUserRequestInput      = "user_request_input"
-	EventStateSubgoalsUpdated  = "state_subgoals_updated"
-	EventStateMemoryUpdated    = "state_memory_updated"
-	EventStateChildRunsUpdated = "state_child_runs_updated"
+	EventSessionReady           = "session_ready"
+	EventSessionReset           = "session_reset"
+	EventUserMessage            = "user_message"
+	EventRunStarted             = "run_started"
+	EventThinking               = "thinking"
+	EventToolCall               = "tool_call"
+	EventToolResult             = "tool_result"
+	EventReportUpdate           = "report_update"
+	EventReportFinal            = "report_final"
+	EventError                  = "error"
+	EventRunCompleted           = "run_completed"
+	EventRunCancelled           = "run_cancelled"
+	EventStop                   = "stop_run"
+	EventReset                  = "reset_session"
+	EventUserRequestInput       = "user_request_input"
+	EventStateSubgoalsUpdated   = "state_subgoals_updated"
+	EventStateMemoryUpdated     = "state_memory_updated"
+	EventStateReportEditUpdated = "state_report_edit_updated"
+	EventStateChildRunsUpdated  = "state_child_runs_updated"
 )
 
 // UserMessage 用户输入
@@ -71,6 +72,7 @@ type SessionReadyData struct {
 	Memory         map[string]string      `json:"memory,omitempty"`
 	ReportHTML     string                 `json:"report_html,omitempty"`
 	ReportSnapshot *domain.ReportSnapshot `json:"report_snapshot,omitempty"`
+	EditState      *EditStateUpdatedData  `json:"edit_state,omitempty"`
 }
 
 type SessionResetData struct {
@@ -129,6 +131,12 @@ type AskUserData struct {
 
 type MemoryUpdatedData struct {
 	Facts map[string]string `json:"facts"`
+}
+
+type EditStateUpdatedData struct {
+	Active      bool               `json:"active"`
+	ScopeKind   string             `json:"scopeKind,omitempty"`
+	EditContext *ReportEditContext `json:"editContext,omitempty"`
 }
 
 type ChildRunsUpdatedData struct {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
 	"github.com/ifnodoraemon/openDataAnalysis/metadata"
 	sqliterepo "github.com/ifnodoraemon/openDataAnalysis/repository/sqlite"
@@ -200,6 +201,17 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create report update: %v", err)
 	}
+	if err := messageRepo.Create(ctx, &domain.RunMessage{
+		ID:          "msg_6",
+		RunID:       childID,
+		SessionID:   "sess_1",
+		WorkspaceID: "ws_1",
+		Type:        string(agent.EventStateReportEditUpdated),
+		Content:     `{"active":true,"scopeKind":"partial_selection","editContext":{"mode":"regenerate_selection","targetRunId":"run_child","blockId":"blk_1","blockLabel":"概览","selectionText":"共享草稿已持久化","selectionStart":0,"selectionEnd":8,"preserveOtherBlocks":true}}`,
+		CreatedAt:   now.Add(7 * time.Second),
+	}); err != nil {
+		t.Fatalf("create report edit update: %v", err)
+	}
 
 	resp := map[string]interface{}{}
 	attachRunRuntimeState(ctx, resp, domain.AnalysisRun{
@@ -243,6 +255,13 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 	}
 	if !reportSnapshot.NeedsFinalize || len(reportSnapshot.Blocks) != 1 || reportSnapshot.Blocks[0].ID != "blk_1" {
 		t.Fatalf("expected structured draft snapshot, got %#v", reportSnapshot)
+	}
+	editState, ok := runtimeState["edit_state"].(*agent.EditStateUpdatedData)
+	if !ok || editState == nil {
+		t.Fatalf("expected persisted edit_state, got %#v", runtimeState["edit_state"])
+	}
+	if !editState.Active || editState.ScopeKind != "partial_selection" || editState.EditContext == nil || editState.EditContext.BlockID != "blk_1" {
+		t.Fatalf("expected grounded edit scope in runtime state, got %#v", editState)
 	}
 }
 
@@ -315,6 +334,15 @@ func TestHydrateSessionFromPersistenceRestoresStructuredReportState(t *testing.T
 		}`,
 		CreatedAt: now.Add(3 * time.Second),
 	})
+	mustCreateRunMessage(t, ctx, &domain.RunMessage{
+		ID:          "msg_report_edit",
+		RunID:       rootID,
+		SessionID:   "sess_1",
+		WorkspaceID: "ws_1",
+		Type:        string(agent.EventStateReportEditUpdated),
+		Content:     `{"active":true,"scopeKind":"partial_selection","editContext":{"mode":"regenerate_selection","targetRunId":"run_report_root","blockId":"blk_1","blockLabel":"概览","selectionText":"draft body","selectionStart":0,"selectionEnd":10,"preserveOtherBlocks":true}}`,
+		CreatedAt:   now.Add(4 * time.Second),
+	})
 
 	sess := &session.Session{
 		ID:          "sess_1",
@@ -344,6 +372,12 @@ func TestHydrateSessionFromPersistenceRestoresStructuredReportState(t *testing.T
 	}
 	if len(sess.ReportState.Charts) != 1 || sess.ReportState.Charts[0].ID != "chart_1" {
 		t.Fatalf("expected report charts to be restored, got %#v", sess.ReportState.Charts)
+	}
+	if sess.EditState == nil || !sess.EditState.Active() {
+		t.Fatalf("expected edit scope to be restored, got %#v", sess.EditState)
+	}
+	if sess.EditState.TargetBlockID != "blk_1" || sess.EditState.SelectionText != "draft body" || sess.EditState.SelectionStart != 0 || sess.EditState.SelectionEnd != 10 {
+		t.Fatalf("expected selection edit scope to be restored, got %#v", sess.EditState)
 	}
 }
 
@@ -404,7 +438,7 @@ func TestLoadSessionRuntimeStateFromPersistenceDoesNotTruncateLongHistory(t *tes
 		}
 	}
 
-	memory, subgoals, reportSnapshot, reportHTML := loadSessionRuntimeStateFromPersistence(ctx, "sess_1")
+	memory, subgoals, reportSnapshot, reportHTML, editState := loadSessionRuntimeStateFromPersistence(ctx, "sess_1")
 	if memory["oldest_fact"] != "must survive beyond 1000 roots" {
 		t.Fatalf("expected oldest root fact from %s to survive unlimited replay, got %#v", oldestRunID, memory)
 	}
@@ -413,6 +447,77 @@ func TestLoadSessionRuntimeStateFromPersistenceDoesNotTruncateLongHistory(t *tes
 	}
 	if reportSnapshot != nil || reportHTML != "" {
 		t.Fatalf("expected no report state in bulk replay test, got snapshot=%#v html=%q", reportSnapshot, reportHTML)
+	}
+	if editState != nil {
+		t.Fatalf("expected no edit state in bulk replay test, got %#v", editState)
+	}
+}
+
+func TestGetSessionRuntimeStatePrefersLiveSessionStateOverPersistedDraft(t *testing.T) {
+	ctx := context.Background()
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+	store, err := metadata.Open(t.TempDir() + "/metadata.db")
+	if err != nil {
+		t.Fatalf("open metadata: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.DB.Close()
+	})
+
+	setupRuntimeStateRepos(t, ctx, store)
+
+	now := time.Now()
+	rootID := "run_live_vs_persisted"
+	mustCreateRunMessage(t, ctx, &domain.AnalysisRun{
+		ID:           rootID,
+		SessionID:    "sess_1",
+		WorkspaceID:  "ws_1",
+		UserID:       "user_1",
+		RunKind:      domain.RunKindRoot,
+		Status:       domain.RunStatusCompleted,
+		InputMessage: "draft",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	mustCreateRunMessage(t, ctx, &domain.RunMessage{
+		ID:          "msg_live_vs_persisted_report",
+		RunID:       rootID,
+		SessionID:   "sess_1",
+		WorkspaceID: "ws_1",
+		Type:        string(agent.EventReportUpdate),
+		Content: `{
+			"html":"<p>persisted draft</p>",
+			"report_snapshot":{
+				"title":"旧草稿",
+				"needsFinalize":true,
+				"blocks":[{"id":"blk_1","kind":"markdown","content":"persisted draft"}],
+				"charts":[]
+			}
+		}`,
+		CreatedAt: now.Add(time.Second),
+	})
+
+	sessionManager = session.NewManager(t.TempDir(), nil, nil)
+	liveSess, _, err := sessionManager.GetOrCreate(ctx, "sess_1", "ws_1", "user_1")
+	if err != nil {
+		t.Fatalf("create live session: %v", err)
+	}
+	liveSess.ReportState = &tools.ReportState{}
+	liveSess.EditState = &tools.ReportEditState{}
+	liveSess.Memory = agent.NewWorkingMemory()
+	liveSess.Subgoals = agent.NewSubgoalManager()
+
+	memory, subgoals, reportSnapshot, reportHTML, editState := getSessionRuntimeState(ctx, "ws_1", "user_1", "sess_1")
+	if len(memory) != 0 || len(subgoals) != 0 {
+		t.Fatalf("expected live empty runtime state, got memory=%#v subgoals=%#v", memory, subgoals)
+	}
+	if reportSnapshot != nil || reportHTML != "" {
+		t.Fatalf("expected live session to suppress persisted draft fallback, got snapshot=%#v html=%q", reportSnapshot, reportHTML)
+	}
+	if editState == nil || editState.Active {
+		t.Fatalf("expected inactive live edit state, got %#v", editState)
 	}
 }
 
