@@ -101,6 +101,12 @@ func TestSessionRuntimeVars(t *testing.T) {
 
 	sess := &Session{
 		ID: "test-sess",
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "Overview", Content: "body"},
+			},
+			NeedsFinalize: true,
+		},
 	}
 
 	// 1. Test EditScope
@@ -110,13 +116,31 @@ func TestSessionRuntimeVars(t *testing.T) {
 		SelectionText: "hello",
 	}
 	vars := sess.RuntimeVars()
-	if len(vars) != 1 || vars[0].Name != "active_edit_scope" {
-		t.Fatalf("expected 1 active_edit_scope, got %v", vars)
+	if len(vars) != 2 {
+		t.Fatalf("expected 2 runtime facts, got %v", vars)
 	}
-	if !strings.Contains(vars[0].Content, "Mode: append") {
-		t.Errorf("missing Mode in edit scope fact: %s", vars[0].Content)
+	if vars[0].Name != "current_report_artifact" {
+		t.Fatalf("expected current_report_artifact first, got %v", vars)
 	}
-	if strings.Contains(vars[0].Content, "请仅在允许的边界") {
+	if !strings.Contains(vars[0].Content, "Artifact: current_report") {
+		t.Fatalf("missing report artifact fact: %s", vars[0].Content)
+	}
+	if !strings.Contains(vars[0].Content, "AddressableScopes: whole_report, block_by_id_or_title, quoted_selection, chart_by_id, layout") {
+		t.Fatalf("missing report addressable scopes fact: %s", vars[0].Content)
+	}
+	if !strings.Contains(vars[0].Content, "MutableViaTools: report_manage_blocks, report_create_chart, report_configure_layout, report_finalize") {
+		t.Fatalf("missing report mutation tool fact: %s", vars[0].Content)
+	}
+	if vars[1].Name != "active_edit_scope" {
+		t.Fatalf("expected active_edit_scope second, got %v", vars)
+	}
+	if !strings.Contains(vars[1].Content, "Mode: append") {
+		t.Errorf("missing Mode in edit scope fact: %s", vars[1].Content)
+	}
+	if !strings.Contains(vars[1].Content, "ScopeKind: partial_block") {
+		t.Errorf("missing ScopeKind in edit scope fact: %s", vars[1].Content)
+	}
+	if strings.Contains(vars[1].Content, "请仅在允许的边界") {
 		t.Errorf("imperative hint should not be present in edit scope")
 	}
 }

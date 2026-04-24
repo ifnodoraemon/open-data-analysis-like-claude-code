@@ -81,7 +81,7 @@ func (t *InspectReportStateTool) Name() string {
 }
 
 func (t *InspectReportStateTool) Description() string {
-	return "Read the fact view of the current report state. Returns blocks, charts, reference relationships, delivery_state, and finalize completeness counts; does not modify any state."
+	return "Read the fact view of the current report state. Returns blocks, charts, reference relationships, delivery_state, and finalize completeness counts. Block ids and titles are the stable references for addressing existing sections when the user asks to revise a specific part. Does not modify any state."
 }
 
 func (t *InspectReportStateTool) Parameters() json.RawMessage {
@@ -231,7 +231,7 @@ func (t *InspectReportEditStateTool) Name() string {
 }
 
 func (t *InspectReportEditStateTool) Description() string {
-	return "Read the fact state of the current report partial edit scope. Returns the target block, allowed modification scope, and associated charts. Does not modify any state."
+	return "Read the fact state of the current report edit scope. Returns whether the active scope is whole-report or partial-block, plus target block and associated charts when applicable. Does not modify any state."
 }
 
 func (t *InspectReportEditStateTool) Parameters() json.RawMessage {
@@ -243,7 +243,7 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 		return "", fmt.Errorf("report edit state is not initialized")
 	}
 	payload := t.EditState.Snapshot()
-	if t.ReportState != nil && t.EditState.Active() {
+	if t.ReportState != nil && t.EditState.Active() && strings.TrimSpace(t.EditState.TargetBlockID) != "" {
 		t.ReportState.RLock()
 		if block, ok := findEditTargetBlock(t.ReportState, t.EditState.TargetBlockID); ok {
 			payload["target_block"] = map[string]interface{}{
@@ -259,9 +259,13 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 	payload["ok"] = true
 	payload["tool"] = "state_report_edit_inspect"
 	if active, _ := payload["active"].(bool); active {
-		payload["ui_summary"] = fmt.Sprintf("Active partial edit scope, target block: %s.", t.EditState.TargetBlockID)
+		if t.EditState.ScopeKind() == "whole_report" {
+			payload["ui_summary"] = "Active whole-report edit scope."
+		} else {
+			payload["ui_summary"] = fmt.Sprintf("Active partial edit scope, target block: %s.", t.EditState.TargetBlockID)
+		}
 	} else {
-		payload["ui_summary"] = "No active partial edit scope."
+		payload["ui_summary"] = "No active report edit scope."
 	}
 	return marshalToolPayload(payload)
 }

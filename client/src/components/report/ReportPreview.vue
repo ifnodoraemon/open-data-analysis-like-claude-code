@@ -21,6 +21,13 @@
           源码
         </button>
         <div v-if="reportHTML" class="export-menu">
+          <button
+            class="toolbar-btn"
+            :disabled="isRunning"
+            @click="quoteWholeReport"
+          >
+            编辑整篇
+          </button>
           <button class="toolbar-btn export" @click="toggleExportMenu">
             ⬇ 导出报告
           </button>
@@ -303,6 +310,19 @@ function quoteSelection() {
     selectionText: selectedBlockText.value,
     preserveOtherBlocks: true,
   });
+}
+
+function quoteWholeReport() {
+  const label = selectedReport.value?.title || selectedRun.value?.id || "当前报告";
+  store.setReportQuote({
+    mode: "revise_report",
+    targetRunId: selectedRun.value?.id || activeRun.value?.id || "",
+    blockId: "",
+    blockLabel: label,
+    selectionText: `整篇报告：${label}`,
+    preserveOtherBlocks: false,
+  });
+  clearSelection();
 }
 
 function trimSelectionText(text) {

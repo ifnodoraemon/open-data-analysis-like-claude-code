@@ -279,6 +279,44 @@ func TestInspectReportStateToolReturnsFactsOnly(t *testing.T) {
 	}
 }
 
+func TestInspectReportEditStateToolWholeReportScope(t *testing.T) {
+	t.Parallel()
+
+	tool := &InspectReportEditStateTool{
+		EditState: &tools.ReportEditState{
+			Mode:                "revise_report",
+			PreserveOtherBlocks: false,
+		},
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "analysis", Kind: "markdown", Title: "Sales Analysis", Content: "body"},
+			},
+		},
+	}
+
+	result, err := tool.Execute(nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["tool"] != "state_report_edit_inspect" {
+		t.Fatalf("unexpected tool: %#v", payload["tool"])
+	}
+	if payload["scope_kind"] != "whole_report" {
+		t.Fatalf("expected whole_report scope, got %#v", payload["scope_kind"])
+	}
+	if payload["ui_summary"] != "Active whole-report edit scope." {
+		t.Fatalf("unexpected ui_summary: %#v", payload["ui_summary"])
+	}
+	if _, exists := payload["target_block"]; exists {
+		t.Fatalf("did not expect target_block for whole-report scope: %#v", payload["target_block"])
+	}
+}
+
 func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {
 	t.Parallel()
 

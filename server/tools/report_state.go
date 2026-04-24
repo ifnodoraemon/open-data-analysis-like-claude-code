@@ -83,6 +83,16 @@ func (s *ReportEditState) Active() bool {
 	return s != nil && strings.TrimSpace(s.Mode) != ""
 }
 
+func (s *ReportEditState) ScopeKind() string {
+	if !s.Active() {
+		return "inactive"
+	}
+	if strings.TrimSpace(s.TargetBlockID) != "" || s.PreserveOtherBlocks {
+		return "partial_block"
+	}
+	return "whole_report"
+}
+
 func (s *ReportEditState) Snapshot() map[string]interface{} {
 	if s == nil {
 		return map[string]interface{}{}
@@ -100,6 +110,7 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"selection_text":        s.SelectionText,
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,
+		"scope_kind":            s.ScopeKind(),
 		"active":                s.Active(),
 	}
 }

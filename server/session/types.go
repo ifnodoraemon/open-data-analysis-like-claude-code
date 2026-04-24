@@ -558,9 +558,28 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// 1. Current Report Artifact
+	if s.ReportState != nil {
+		delivery := tools.DescribeReportDeliveryState(s.ReportState)
+		if delivery.HasContent {
+			content := fmt.Sprintf("Artifact: current_report\nDeliveryState: %s\nBlockCount: %d\nChartCount: %d\nAddressableScopes: whole_report, block_by_id_or_title, quoted_selection, chart_by_id, layout\nMutableViaTools: report_manage_blocks, report_create_chart, report_configure_layout, report_finalize", delivery.DeliveryState, delivery.BlockCount, delivery.ChartCount)
+			if delivery.FinalTitle != "" {
+				content += fmt.Sprintf("\nReportTitle: %s", delivery.FinalTitle)
+			}
+			if delivery.FinalAuthor != "" {
+				content += fmt.Sprintf("\nReportAuthor: %s", delivery.FinalAuthor)
+			}
+			vars = append(vars, agent.RuntimeContextBlock{
+				Name:    "current_report_artifact",
+				Role:    "developer",
+				Content: strings.TrimSpace(content),
+			})
+		}
+	}
+
 	// 1. Active Edit Scope
 	if s.EditState != nil && s.EditState.Active() {
-		content := fmt.Sprintf("Mode: %s\n", s.EditState.Mode)
+		content := fmt.Sprintf("Mode: %s\nScopeKind: %s\n", s.EditState.Mode, s.EditState.ScopeKind())
 		if s.EditState.TargetBlockID != "" {
 			content += fmt.Sprintf("TargetBlockID: %s\n", s.EditState.TargetBlockID)
 		}

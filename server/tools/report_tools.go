@@ -96,7 +96,7 @@ func (t *ConfigureReportTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *ManageReportBlocksTool) Name() string { return "report_manage_blocks" }
 func (t *ManageReportBlocksTool) Description() string {
-	return "Modify report block structure. Supports append, upsert, remove, move for markdown, html, and chart blocks; markdown/html block content supports `{{chart:chart_id}}` placeholders for inline chart display, chart blocks are for standalone chart sections. Directly modifies report content structure and returns block_id, block_count, and delivery_state facts. When a partial edit scope is active, only authorized blocks can be modified."
+	return "Modify the current report artifact by appending, revising, removing, or reordering markdown, html, and chart blocks. Applies when the user wants the whole report or a specific section rewritten, reorganized, polished, inserted, deleted, or moved; `block_id` targets an existing section, while append inserts a new one. Markdown/html block content supports `{{chart:chart_id}}` placeholders for inline chart display, chart blocks are for standalone chart sections. Directly modifies report content structure and returns block_id, block_count, and delivery_state facts. When a partial edit scope is active, only authorized blocks can be modified."
 }
 func (t *ManageReportBlocksTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
