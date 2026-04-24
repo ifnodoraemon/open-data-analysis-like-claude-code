@@ -244,7 +244,7 @@ func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing
 		}, nil
 	})
 
-	prepared, extra, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
+	prepared, extra, _, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T
 		}, nil
 	})
 
-	prepared, extra, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
+	prepared, extra, _, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
 		Content: "把这份历史报告整体整理一下",
 		TurnContext: &agent.TurnContext{
 			ReportTargetRunID: "run_history_1",
@@ -323,7 +323,7 @@ func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) 
 		}, nil
 	})
 
-	prepared, extra, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把结论部分改一下"})
+	prepared, extra, _, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把结论部分改一下"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
@@ -332,5 +332,50 @@ func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) 
 	}
 	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "Scope: block") {
 		t.Fatalf("expected block-scope current_turn_resolution runtime block, got %#v", extra)
+	}
+}
+
+func TestResolvePreparedUserMessageIncludesGoalResolution(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+
+	subgoals := agent.NewSubgoalManager()
+	rootID, err := subgoals.AddGoal("先补充报告数据", "")
+	if err != nil {
+		t.Fatalf("add root goal: %v", err)
+	}
+
+	sess := &session.Session{
+		Engine:    agent.NewEngine(tools.NewRegistry(), ""),
+		EditState: &tools.ReportEditState{},
+		Subgoals:  subgoals,
+	}
+	sess.Engine.SetGoalResolver(func(context.Context, *agent.PromptBundle) (agent.GoalResolution, error) {
+		return agent.GoalResolution{
+			Action:        agent.GoalResolutionReconcile,
+			RejectGoalIDs: []string{rootID},
+			AddGoals:      []string{"改写当前报告结构"},
+			Confidence:    0.9,
+		}, nil
+	})
+
+	prepared, extra, _, goalResolution, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "别补数据了，直接整理当前报告结构"})
+	if err != nil {
+		t.Fatalf("resolve prepared user message: %v", err)
+	}
+	if prepared.EditContext != nil {
+		t.Fatalf("did not expect goal resolution alone to materialize edit context: %#v", prepared.EditContext)
+	}
+	if goalResolution.Action != agent.GoalResolutionReconcile {
+		t.Fatalf("unexpected goal resolution: %#v", goalResolution)
+	}
+	if len(extra) != 1 || extra[0].Name != "current_goal_resolution" {
+		t.Fatalf("expected current_goal_resolution runtime block, got %#v", extra)
+	}
+	if !strings.Contains(extra[0].Content, "RejectGoalIDs: "+rootID) {
+		t.Fatalf("expected reject goal id in runtime block, got %q", extra[0].Content)
 	}
 }

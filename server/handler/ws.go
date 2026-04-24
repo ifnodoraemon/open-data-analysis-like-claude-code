@@ -442,22 +442,31 @@ func turnContextRuntimeBlock(turnCtx *agent.TurnContext) *agent.RuntimeContextBl
 	}
 }
 
-func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, agent.TurnResolution, error) {
+func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, agent.TurnResolution, agent.GoalResolution, error) {
 	if sess == nil || sess.Engine == nil || userMsg.EditContext != nil {
-		return userMsg, nil, agent.TurnResolution{}, nil
+		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, nil
 	}
 
 	baseRuntime := sess.RuntimeVars()
 	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
 		baseRuntime = append(baseRuntime, *targetBlock)
 	}
-	if !hasRuntimeBlock(baseRuntime, "current_report_artifact") && !hasRuntimeBlock(baseRuntime, "current_turn_target") {
-		return userMsg, nil, agent.TurnResolution{}, nil
+	hasReportTarget := hasRuntimeBlock(baseRuntime, "current_report_artifact") || hasRuntimeBlock(baseRuntime, "current_turn_target")
+	hasGoalState := hasRuntimeBlock(baseRuntime, "current_goal_state")
+	if !hasReportTarget && !hasGoalState {
+		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, nil
 	}
 
-	resolution, err := sess.Engine.ResolveTurn(ctx, userMsg.Content, baseRuntime)
-	if err != nil {
-		return userMsg, nil, agent.TurnResolution{}, err
+	var (
+		resolution     agent.TurnResolution
+		goalResolution agent.GoalResolution
+		err            error
+	)
+	if hasReportTarget {
+		resolution, err = sess.Engine.ResolveTurn(ctx, userMsg.Content, baseRuntime)
+		if err != nil {
+			return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, err
+		}
 	}
 
 	var extra []agent.RuntimeContextBlock
@@ -467,13 +476,22 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 	if block := resolution.RuntimeContextBlock(); block != nil {
 		extra = append(extra, *block)
 	}
+	if hasGoalState {
+		goalResolution, err = sess.Engine.ResolveGoals(ctx, userMsg.Content, baseRuntime)
+		if err != nil {
+			return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, err
+		}
+		if block := goalResolution.RuntimeContextBlock(); block != nil {
+			extra = append(extra, *block)
+		}
+	}
 	if edit := resolution.MaterializeEditContext(); edit != nil {
 		if userMsg.TurnContext != nil && strings.TrimSpace(edit.TargetRunID) == "" {
 			edit.TargetRunID = strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID)
 		}
 		userMsg.EditContext = edit
 	}
-	return userMsg, extra, resolution, nil
+	return userMsg, extra, resolution, goalResolution, nil
 }
 
 func hasRuntimeBlock(blocks []agent.RuntimeContextBlock, name string) bool {
@@ -670,12 +688,13 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			preparedUserMsg, extraRuntime, resolution, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
+			preparedUserMsg, extraRuntime, resolution, goalResolution, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
 			if prepErr != nil {
 				log.Printf("turn resolution failed session_id=%s err=%v", sess.ID, prepErr)
 				preparedUserMsg = userMsg
 				extraRuntime = nil
 				resolution = agent.TurnResolution{}
+				goalResolution = agent.GoalResolution{}
 			}
 
 			if err := runBeforeUserRunHooks(r.Context(), sess, preparedUserMsg, prepareUserRunHook(handlerReportSnapshotLoader{})); err != nil {
@@ -760,6 +779,17 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				Type: agent.EventRunStarted,
 				Data: agent.RunStartedData{RunID: runID},
 			})
+			if agent.ApplyGoalResolution(sess.Subgoals, goalResolution) {
+				goals := sess.Subgoals.ListAll()
+				sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
+					Type: agent.EventStateSubgoalsUpdated,
+					Data: map[string]interface{}{"goals": goals},
+				})
+				saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
+					Type: agent.EventStateSubgoalsUpdated,
+					Data: map[string]interface{}{"goals": goals},
+				})
+			}
 			runEmitter := newRuntimeEventDispatcher(requestCtx, conn, &writeMu, sess, identity, runID)
 
 			userContent, err := buildRunUserContent(sess, userMsg)
