@@ -223,12 +223,12 @@ func TestRuntimeEventDispatcherRoutesChildRunEventsWithoutRootHooks(t *testing.T
 	}
 
 	dispatcher.Emit(agent.WSEvent{
-		Type:  agent.EventThinking,
+		Type:  agent.EventAssistantStatus,
 		RunID: "child_run",
-		Data:  agent.ThinkingData{Content: "child"},
+		Data:  agent.AssistantStatusData{Content: "child"},
 	})
 
-	if len(delivered) != 1 || delivered[0] != "child_run:thinking" {
+	if len(delivered) != 1 || delivered[0] != "child_run:assistant_status" {
 		t.Fatalf("unexpected deliveries: %v", delivered)
 	}
 	if hooked {

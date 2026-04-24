@@ -217,7 +217,7 @@ func TestIsExpectedWebSocketWriteCloseRecognizesClosedConnectionNoise(t *testing
 	}
 }
 
-func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing.T) {
+func TestResolvePreparedUserMessageDoesNotCallHiddenPlanner(t *testing.T) {
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -232,27 +232,16 @@ func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing
 		},
 		EditState: &tools.ReportEditState{},
 	}
-	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
-		return agent.TurnPlan{
-			Report: agent.TurnResolution{
-				Artifact:          agent.TurnArtifactReport,
-				Operation:         agent.TurnOperationRevise,
-				Scope:             agent.TurnScopeWholeReport,
-				MutationRequested: true,
-				Confidence:        0.93,
-			},
-		}, nil
-	})
 
-	prepared, extra, _, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
-	if prepared.EditContext == nil || prepared.EditContext.Mode != "revise_report" {
-		t.Fatalf("expected whole-report edit context, got %#v", prepared.EditContext)
+	if prepared.EditContext != nil {
+		t.Fatalf("did not expect hidden planner to materialize edit context: %#v", prepared.EditContext)
 	}
-	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" {
-		t.Fatalf("expected current_turn_resolution runtime block, got %#v", extra)
+	if len(extra) != 0 {
+		t.Fatalf("did not expect hidden resolution runtime blocks, got %#v", extra)
 	}
 }
 
@@ -265,19 +254,8 @@ func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T
 		Engine:    agent.NewEngine(tools.NewRegistry(), ""),
 		EditState: &tools.ReportEditState{},
 	}
-	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
-		return agent.TurnPlan{
-			Report: agent.TurnResolution{
-				Artifact:          agent.TurnArtifactReport,
-				Operation:         agent.TurnOperationRevise,
-				Scope:             agent.TurnScopeWholeReport,
-				MutationRequested: true,
-				Confidence:        0.94,
-			},
-		}, nil
-	})
 
-	prepared, extra, _, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
 		Content: "把这份历史报告整体整理一下",
 		TurnContext: &agent.TurnContext{
 			ReportTargetRunID: "run_history_1",
@@ -287,55 +265,18 @@ func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
-	if prepared.EditContext == nil || prepared.EditContext.Mode != "revise_report" || prepared.EditContext.TargetRunID != "run_history_1" {
-		t.Fatalf("expected whole-report edit context with target run, got %#v", prepared.EditContext)
-	}
-	if len(extra) != 2 || extra[0].Name != "current_turn_target" || extra[1].Name != "current_turn_resolution" {
-		t.Fatalf("expected target and resolution runtime blocks, got %#v", extra)
-	}
-}
-
-func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) {
-	prevCfg := config.Cfg
-	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
-	t.Cleanup(func() { config.Cfg = prevCfg })
-
-	sess := &session.Session{
-		Engine: agent.NewEngine(tools.NewRegistry(), ""),
-		ReportState: &tools.ReportState{
-			Blocks: []tools.ReportBlock{
-				{ID: "b1", Kind: "markdown", Title: "结论", Content: "body"},
-			},
-			NeedsFinalize: true,
-		},
-		EditState: &tools.ReportEditState{},
-	}
-	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
-		return agent.TurnPlan{
-			Report: agent.TurnResolution{
-				Artifact:          agent.TurnArtifactReport,
-				Operation:         agent.TurnOperationRevise,
-				Scope:             agent.TurnScopeBlock,
-				TargetRefHint:     "结论部分",
-				MutationRequested: true,
-				Confidence:        0.92,
-			},
-		}, nil
-	})
-
-	prepared, extra, _, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把结论部分改一下"})
-	if err != nil {
-		t.Fatalf("resolve prepared user message: %v", err)
-	}
 	if prepared.EditContext != nil {
-		t.Fatalf("did not expect block-scope resolution to auto-materialize edit context: %#v", prepared.EditContext)
+		t.Fatalf("did not expect turn target to imply edit context, got %#v", prepared.EditContext)
 	}
-	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "Scope: block") {
-		t.Fatalf("expected block-scope current_turn_resolution runtime block, got %#v", extra)
+	if len(extra) != 1 || extra[0].Name != "current_turn_target" {
+		t.Fatalf("expected factual current_turn_target runtime block, got %#v", extra)
+	}
+	if !strings.Contains(extra[0].Content, "ReportTargetRunID: run_history_1") {
+		t.Fatalf("expected target run fact, got %q", extra[0].Content)
 	}
 }
 
-func TestResolvePreparedUserMessageIncludesGoalResolution(t *testing.T) {
+func TestResolvePreparedUserMessageDoesNotReconcileGoals(t *testing.T) {
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -351,36 +292,24 @@ func TestResolvePreparedUserMessageIncludesGoalResolution(t *testing.T) {
 		EditState: &tools.ReportEditState{},
 		Subgoals:  subgoals,
 	}
-	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
-		return agent.TurnPlan{
-			Goals: agent.GoalResolution{
-				Action:        agent.GoalResolutionReconcile,
-				RejectGoalIDs: []string{rootID},
-				AddGoals:      []string{"改写当前报告结构"},
-				Confidence:    0.9,
-			},
-		}, nil
-	})
 
-	prepared, extra, _, goalResolution, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "别补数据了，直接整理当前报告结构"})
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "别补数据了，直接整理当前报告结构"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
 	if prepared.EditContext != nil {
-		t.Fatalf("did not expect goal resolution alone to materialize edit context: %#v", prepared.EditContext)
+		t.Fatalf("did not expect goal reconciliation to materialize edit context: %#v", prepared.EditContext)
 	}
-	if goalResolution.Action != agent.GoalResolutionReconcile {
-		t.Fatalf("unexpected goal resolution: %#v", goalResolution)
+	if len(extra) != 0 {
+		t.Fatalf("did not expect hidden goal runtime block, got %#v", extra)
 	}
-	if len(extra) != 1 || extra[0].Name != "current_goal_resolution" {
-		t.Fatalf("expected current_goal_resolution runtime block, got %#v", extra)
-	}
-	if !strings.Contains(extra[0].Content, "RejectGoalIDs: "+rootID) {
-		t.Fatalf("expected reject goal id in runtime block, got %q", extra[0].Content)
+	goals := subgoals.ListAll()
+	if len(goals) != 1 || goals[0].ID != rootID || goals[0].Status != agent.StatusPending {
+		t.Fatalf("expected goal tree to stay unchanged, got %#v", goals)
 	}
 }
 
-func TestResolvePreparedUserMessageReusesActiveSelectionScope(t *testing.T) {
+func TestResolvePreparedUserMessageDoesNotInferActiveSelectionScope(t *testing.T) {
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -404,106 +333,15 @@ func TestResolvePreparedUserMessageReusesActiveSelectionScope(t *testing.T) {
 			PreserveOtherBlocks: true,
 		},
 	}
-	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
-		return agent.TurnPlan{
-			Report: agent.TurnResolution{
-				Artifact:          agent.TurnArtifactReport,
-				Operation:         agent.TurnOperationRevise,
-				Scope:             agent.TurnScopeSelection,
-				MutationRequested: true,
-				Confidence:        0.9,
-			},
-		}, nil
-	})
 
-	prepared, extra, resolution, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "再改短一点"})
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "再改短一点"})
 	if err != nil {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
-	if resolution.Scope != agent.TurnScopeSelection {
-		t.Fatalf("expected selection-scope resolution, got %#v", resolution)
+	if prepared.EditContext != nil {
+		t.Fatalf("did not expect active session edit scope to be copied into user message: %#v", prepared.EditContext)
 	}
-	if prepared.EditContext == nil {
-		t.Fatal("expected selection edit context to be reused")
-	}
-	if prepared.EditContext.Mode != "regenerate_selection" || prepared.EditContext.BlockID != "b1" {
-		t.Fatalf("unexpected reused edit context: %#v", prepared.EditContext)
-	}
-	if prepared.EditContext.SelectionStart != 4 || prepared.EditContext.SelectionEnd != 10 {
-		t.Fatalf("expected reused selection anchors, got %#v", prepared.EditContext)
-	}
-	if prepared.EditContext.TargetRunID != "run_report_1" {
-		t.Fatalf("expected target run to carry through, got %#v", prepared.EditContext)
-	}
-	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "Scope: selection") {
-		t.Fatalf("expected selection-scope runtime block, got %#v", extra)
-	}
-}
-
-func TestResolvePreparedUserMessageGroundsSelectionWithinActiveBlock(t *testing.T) {
-	prevCfg := config.Cfg
-	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
-	t.Cleanup(func() { config.Cfg = prevCfg })
-
-	content := "第一句。第二句需要改短。第三句。"
-	targetText := "第二句需要改短"
-	start := strings.Index(content, targetText)
-	if start < 0 {
-		t.Fatalf("expected target text %q in content %q", targetText, content)
-	}
-
-	sess := &session.Session{
-		Engine: agent.NewEngine(tools.NewRegistry(), ""),
-		ReportState: &tools.ReportState{
-			Blocks: []tools.ReportBlock{
-				{ID: "b1", Kind: "markdown", Title: "结论", Content: content},
-			},
-			NeedsFinalize: true,
-		},
-		EditState: &tools.ReportEditState{
-			Mode:                "regenerate_block",
-			TargetRunID:         "run_report_1",
-			TargetBlockID:       "b1",
-			TargetBlockLabel:    "结论",
-			PreserveOtherBlocks: true,
-		},
-	}
-	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
-		return agent.TurnPlan{
-			Report: agent.TurnResolution{
-				Artifact:          agent.TurnArtifactReport,
-				Operation:         agent.TurnOperationRevise,
-				Scope:             agent.TurnScopeSelection,
-				TargetRefs:        []string{targetText},
-				MutationRequested: true,
-				Confidence:        0.9,
-			},
-		}, nil
-	})
-
-	prepared, extra, resolution, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把“第二句需要改短”这句再简洁一点"})
-	if err != nil {
-		t.Fatalf("resolve prepared user message: %v", err)
-	}
-	if resolution.Scope != agent.TurnScopeSelection {
-		t.Fatalf("expected selection-scope resolution, got %#v", resolution)
-	}
-	if prepared.EditContext == nil {
-		t.Fatal("expected grounded selection edit context")
-	}
-	if prepared.EditContext.Mode != "regenerate_selection" || prepared.EditContext.BlockID != "b1" {
-		t.Fatalf("unexpected grounded edit context: %#v", prepared.EditContext)
-	}
-	if prepared.EditContext.SelectionText != targetText {
-		t.Fatalf("expected grounded selection text %q, got %#v", targetText, prepared.EditContext)
-	}
-	if prepared.EditContext.SelectionStart != start || prepared.EditContext.SelectionEnd != start+len(targetText) {
-		t.Fatalf("expected grounded selection anchors [%d,%d), got %#v", start, start+len(targetText), prepared.EditContext)
-	}
-	if prepared.EditContext.TargetRunID != "run_report_1" {
-		t.Fatalf("expected target run to carry through, got %#v", prepared.EditContext)
-	}
-	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "TargetRefs: "+targetText) {
-		t.Fatalf("expected current_turn_resolution runtime block with target refs, got %#v", extra)
+	if len(extra) != 0 {
+		t.Fatalf("did not expect hidden selection runtime block, got %#v", extra)
 	}
 }

@@ -94,6 +94,7 @@ type Subgoal struct {
 	ParentGoalID string        `json:"parentGoalId,omitempty"`
 	Description  string        `json:"description"`
 	Status       SubgoalStatus `json:"status"`
+	Blocking     bool          `json:"blocking,omitempty"`
 	Result       string        `json:"result,omitempty"`
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
@@ -118,6 +119,10 @@ func NewSubgoalManager() *SubgoalManager {
 
 // AddGoal 增加一个新的子任务
 func (s *SubgoalManager) AddGoal(description, parentGoalID string) (string, error) {
+	return s.AddGoalWithBlocking(description, parentGoalID, false)
+}
+
+func (s *SubgoalManager) AddGoalWithBlocking(description, parentGoalID string, blocking bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -134,6 +139,7 @@ func (s *SubgoalManager) AddGoal(description, parentGoalID string) (string, erro
 		ParentGoalID: strings.TrimSpace(parentGoalID),
 		Description:  description,
 		Status:       StatusPending,
+		Blocking:     blocking,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	})
@@ -218,7 +224,7 @@ func (s *SubgoalManager) collectActiveBranchLines(snapshot finalizeSnapshot) []s
 	}
 
 	for _, root := range snapshot.roots {
-		if isTerminalSubgoalStatus(root.Status) {
+		if isTerminalSubgoalStatus(root.Status) || !root.Blocking {
 			continue
 		}
 		dfs(root, nil)
@@ -227,7 +233,8 @@ func (s *SubgoalManager) collectActiveBranchLines(snapshot finalizeSnapshot) []s
 }
 
 // CanFinalize 检查当前是否允许结束。
-// 判定只基于根目标是否闭环；已闭环根目标下面遗留的旧子步骤不会继续阻塞结束。
+// 判定只基于显式 blocking 的根目标是否闭环；scratchpad 目标不会阻塞交付。
+// 已闭环根目标下面遗留的旧子步骤不会继续阻塞结束。
 func (s *SubgoalManager) CanFinalize() (bool, []string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

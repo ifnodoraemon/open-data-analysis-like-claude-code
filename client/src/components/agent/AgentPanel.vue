@@ -57,13 +57,13 @@
             </div>
           </template>
 
-          <!-- 思考中 -->
-          <template v-else-if="msg.type === 'thinking'">
-            <div class="msg-icon">🧠</div>
+          <!-- 状态说明 -->
+          <template v-else-if="msg.type === 'assistant_status' || msg.type === 'thinking'">
+            <div class="msg-icon">●</div>
             <div class="msg-body">
-              <div class="msg-label">思考中</div>
+              <div class="msg-label">状态</div>
               <div
-                class="msg-content markdown-body thinking"
+                class="msg-content markdown-body assistant-status"
                 v-html="renderMarkdown(msg.content)"
               ></div>
             </div>
@@ -514,6 +514,7 @@ function submitMultiSelect(msg) {
   max-width: 85%;
 }
 
+.msg-assistant_status,
 .msg-thinking,
 .msg-tool_call,
 .msg-tool_result,
@@ -529,6 +530,7 @@ function submitMultiSelect(msg) {
   margin-top: 2px;
 }
 
+.assistant-status,
 .thinking {
   color: var(--text-muted);
   font-style: italic;

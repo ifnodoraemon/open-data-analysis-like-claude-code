@@ -10,6 +10,7 @@ import (
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/data"
+	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
 
 type stubSubgoalChecker struct {
@@ -456,6 +457,79 @@ func TestFinalizeReportRejectsInvalidReportState(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(joined, ","), "duplicate_chart:chart_sales(x2)") {
 		t.Fatalf("expected duplicate chart issue, got %#v", issues)
+	}
+}
+
+func TestFinalizeReportRejectsUnresolvedSemanticAmbiguity(t *testing.T) {
+	t.Parallel()
+
+	tool := &FinalizeReportTool{
+		ReportState: &ReportState{
+			Blocks: []ReportBlock{
+				{ID: "analysis", Kind: "markdown", Content: "收入增长 20%，净收入增长 12%。"},
+			},
+		},
+		SessionSourcesProvider: func() ([]service.SessionSourceSummary, error) {
+			return []service.SessionSourceSummary{
+				{
+					SourceID:          "src_1",
+					AnalysisTableName: "revenue_metrics",
+					SemanticStatus:    "profiled",
+					AmbiguityCount:    1,
+				},
+			}, nil
+		},
+	}
+
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("expected structured tool failure instead of error, got %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize failure json payload: %v", err)
+	}
+	if payload["ok"] != false || payload["error_code"] != "report_state_invalid" {
+		t.Fatalf("unexpected finalize failure payload: %#v", payload)
+	}
+	issues, ok := payload["finalize_issues"].([]interface{})
+	if !ok || len(issues) != 1 || !strings.Contains(issues[0].(string), "unresolved_semantic_ambiguity:revenue_metrics") {
+		t.Fatalf("expected unresolved semantic ambiguity issue, got %#v", payload["finalize_issues"])
+	}
+}
+
+func TestFinalizeReportAllowsDocumentedSemanticAssumption(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "analysis", Kind: "markdown", Content: "口径假设：收入采用 net_revenue。收入增长 12%。"},
+		},
+	}
+	tool := &FinalizeReportTool{
+		ReportState: state,
+		SessionSourcesProvider: func() ([]service.SessionSourceSummary, error) {
+			return []service.SessionSourceSummary{
+				{
+					SourceID:          "src_1",
+					AnalysisTableName: "revenue_metrics",
+					SemanticStatus:    "profiled",
+					AmbiguityCount:    1,
+				},
+			}, nil
+		},
+	}
+
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("finalize execute: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize json payload: %v", err)
+	}
+	if payload["ok"] != true || payload["delivery_state"] != "finalized" {
+		t.Fatalf("unexpected finalize payload: %#v", payload)
 	}
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -11,13 +12,15 @@ import (
 
 type Config struct {
 	// LLM 配置
-	LLMProvider    string // "openai" 或 "anthropic"
-	LLMBaseURL     string
-	LLMAPIEndpoint string
-	LLMAPIKey      string
-	LLMModel       string
-	LLMDebug       bool
-	LLMDebugDir    string
+	LLMProvider        string // "openai" 或 "anthropic"
+	LLMBaseURL         string
+	LLMAPIEndpoint     string
+	LLMAPIKey          string
+	LLMModel           string
+	LLMReasoningEffort string
+	LLMTextVerbosity   string
+	LLMDebug           bool
+	LLMDebugDir        string
 
 	// 服务配置
 	ServerPort           string
@@ -69,6 +72,8 @@ func Load() {
 		LLMAPIEndpoint:       getEnv("LLM_API_ENDPOINT", defaultAPIEndpoint),
 		LLMAPIKey:            getEnv("LLM_API_KEY", ""),
 		LLMModel:             getEnv("LLM_MODEL", defaultModel),
+		LLMReasoningEffort:   getEnv("LLM_REASONING_EFFORT", ""),
+		LLMTextVerbosity:     getEnv("LLM_TEXT_VERBOSITY", ""),
 		LLMDebug:             getEnvBool("LLM_DEBUG", false),
 		LLMDebugDir:          getEnv("LLM_DEBUG_DIR", "./data/llm-debug"),
 		ServerPort:           getEnv("SERVER_PORT", "8080"),
@@ -103,15 +108,36 @@ func Load() {
 		log.Printf("Warning: AUTH_SECRET is too short (%d chars). Recommend at least 32 characters.", len(Cfg.AuthSecret))
 	}
 
-	if Cfg.ReportEchartsUrl != "" &&
-		!strings.HasPrefix(Cfg.ReportEchartsUrl, "/") &&
-		!strings.HasPrefix(Cfg.ReportEchartsUrl, "https://") &&
-		!strings.HasPrefix(Cfg.ReportEchartsUrl, "http://") {
-		log.Printf("Warning: REPORT_ECHARTS_URL does not start with / or http(s)://, ignoring: %s", Cfg.ReportEchartsUrl)
+	if Cfg.ReportEchartsUrl != "" && !trustedReportScriptURL(Cfg.ReportEchartsUrl) {
+		log.Printf("Warning: REPORT_ECHARTS_URL is not same-origin or an allowed ECharts CDN, ignoring: %s", Cfg.ReportEchartsUrl)
 		Cfg.ReportEchartsUrl = ""
 	}
 
 	log.Printf("config loaded llm_provider=%s llm_model=%s llm_endpoint=%s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMAPIEndpoint)
+}
+
+func trustedReportScriptURL(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "//") {
+		return true
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
+	case "cdn.jsdelivr.net", "cdnjs.cloudflare.com":
+		return strings.HasSuffix(strings.ToLower(parsed.Path), "echarts.min.js")
+	default:
+		return false
+	}
 }
 
 func getEnv(key, fallback string) string {

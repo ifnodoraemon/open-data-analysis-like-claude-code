@@ -37,12 +37,25 @@ func TestSubgoalManager(t *testing.T) {
 	id2, _ := sm.AddGoal("goal 2", id1)
 
 	canFinalize, blockers = sm.CanFinalize()
+	if !canFinalize || len(blockers) != 0 {
+		t.Errorf("expected non-blocking scratchpad goal to allow finalize, blockers=%v", blockers)
+	}
+
+	blockingRootID, _ := sm.AddGoalWithBlocking("blocking goal", "", true)
+	_, _ = sm.AddGoal("blocking child", blockingRootID)
+
+	canFinalize, blockers = sm.CanFinalize()
 	if canFinalize || len(blockers) != 1 {
-		t.Errorf("expected pending root goal to block finalize, blockers=%v", blockers)
+		t.Errorf("expected pending blocking root goal to block finalize, blockers=%v", blockers)
+	}
+
+	err := sm.UpdateGoalStatus(blockingRootID, StatusComplete, "done")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 
 	// Test UpdateGoalStatus
-	err := sm.UpdateGoalStatus(id1, StatusComplete, "done")
+	err = sm.UpdateGoalStatus(id1, StatusComplete, "done")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -69,7 +82,7 @@ func TestSubgoalManager(t *testing.T) {
 
 func TestSubgoalManagerAllowsFinalizeWhenClosedRootHasStaleChildren(t *testing.T) {
 	sm := NewSubgoalManager()
-	rootID, _ := sm.AddGoal("root goal", "")
+	rootID, _ := sm.AddGoalWithBlocking("root goal", "", true)
 	childID, _ := sm.AddGoal("stale child", rootID)
 
 	if err := sm.UpdateGoalStatus(rootID, StatusComplete, "done"); err != nil {
@@ -200,6 +213,9 @@ func TestManageSubgoalsTool(t *testing.T) {
 	}
 	if _, exists := addPayload["can_finalize"]; exists {
 		t.Fatalf("did not expect add payload to expose can_finalize: %#v", addPayload["can_finalize"])
+	}
+	if addPayload["blocking"] != false {
+		t.Fatalf("expected scratchpad goal to default blocking=false, got %#v", addPayload["blocking"])
 	}
 
 	id := sm.Goals[0].ID

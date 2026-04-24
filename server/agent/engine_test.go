@@ -188,8 +188,8 @@ func TestInspectGoalsToolReturnsFactsOnly(t *testing.T) {
 	if payload["goal_count"].(float64) != 2 {
 		t.Fatalf("unexpected goal count: %#v", payload["goal_count"])
 	}
-	if payload["active_branch_count"].(float64) == 0 {
-		t.Fatalf("expected active branches in payload: %#v", payload)
+	if payload["active_branch_count"].(float64) != 0 {
+		t.Fatalf("expected non-blocking scratchpad goals not to block finalize: %#v", payload)
 	}
 	activeRoots, ok := payload["active_root_goal_ids"].([]interface{})
 	if !ok || len(activeRoots) != 2 {

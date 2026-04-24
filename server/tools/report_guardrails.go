@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
 
 var (
@@ -153,6 +155,80 @@ func reportFinalizeIssues(state *ReportState) []string {
 	}
 
 	return issues
+}
+
+func reportSemanticFinalizeIssues(state *ReportState, sources []service.SessionSourceSummary) []string {
+	if state == nil || len(sources) == 0 {
+		return nil
+	}
+
+	var unresolved []service.SessionSourceSummary
+	for _, source := range sources {
+		if source.AmbiguityCount <= 0 {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(source.SemanticStatus))
+		if status == "confirmed" || source.ConfirmedOverrideCount >= source.AmbiguityCount {
+			continue
+		}
+		unresolved = append(unresolved, source)
+	}
+	if len(unresolved) == 0 {
+		return nil
+	}
+
+	state.RLock()
+	defer state.RUnlock()
+	if reportContainsSemanticAssumptionLocked(state) {
+		return nil
+	}
+
+	issues := make([]string, 0, len(unresolved))
+	for _, source := range unresolved {
+		ref := strings.TrimSpace(source.AnalysisTableName)
+		if ref == "" {
+			ref = strings.TrimSpace(source.ProfileID)
+		}
+		if ref == "" {
+			ref = strings.TrimSpace(source.SourceID)
+		}
+		if ref == "" {
+			ref = "unknown_source"
+		}
+		issues = append(issues, fmt.Sprintf("unresolved_semantic_ambiguity:%s(%d)", ref, source.AmbiguityCount))
+	}
+	sort.Strings(issues)
+	return issues
+}
+
+func reportContainsSemanticAssumptionLocked(state *ReportState) bool {
+	if state == nil {
+		return false
+	}
+	markers := []string{
+		"假设",
+		"口径",
+		"歧义",
+		"未确认",
+		"待确认",
+		"assumption",
+		"assumed",
+		"ambiguous",
+		"unconfirmed",
+		"definition",
+	}
+	for _, block := range state.Blocks {
+		text := strings.ToLower(strings.TrimSpace(block.Content + " " + block.Title))
+		for _, source := range block.Sources {
+			text += " " + strings.ToLower(source.Summary+" "+source.SQL+" "+source.TableName+" "+source.ToolName)
+		}
+		for _, marker := range markers {
+			if strings.Contains(text, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasDuplicateLeadingHeading(block ReportBlock) bool {

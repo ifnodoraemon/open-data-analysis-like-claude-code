@@ -16,7 +16,7 @@ const (
 	EventSessionReset           = "session_reset"
 	EventUserMessage            = "user_message"
 	EventRunStarted             = "run_started"
-	EventThinking               = "thinking"
+	EventAssistantStatus        = "assistant_status"
 	EventToolCall               = "tool_call"
 	EventToolResult             = "tool_result"
 	EventReportUpdate           = "report_update"
@@ -90,8 +90,8 @@ type UploadedFile struct {
 	Size   int64  `json:"size"`
 }
 
-// ThinkingData 思考事件
-type ThinkingData struct {
+// AssistantStatusData is visible progress/status text emitted before tool use.
+type AssistantStatusData struct {
 	Content string `json:"content"`
 }
 

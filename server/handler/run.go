@@ -17,6 +17,7 @@ import (
 )
 
 const runPreviewLimit = 3
+const reportHTMLCSP = "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self';"
 
 func ListRunsHandler(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.FromContext(r.Context())
@@ -125,7 +126,7 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	report, reportErr := reportRepo.GetByRunID(r.Context(), runID)
 	if reportErr == nil && report != nil {
 		if html, ok := renderReportHTMLFromSnapshot(report); ok {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			setReportHTMLHeaders(w)
 			w.Header().Set("Content-Disposition", `inline; filename="`+safeHeaderFilename(reportFilename(report.Title, runID))+`"`)
 			_, _ = io.WriteString(w, html)
 			return
@@ -133,7 +134,7 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 		reader, err := fileService.OpenStoredObject(r.Context(), identity.UserID, identity.WorkspaceID, report.HTMLStorageKey)
 		if err == nil {
 			defer reader.Close()
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			setReportHTMLHeaders(w)
 			w.Header().Set("Content-Disposition", `inline; filename="`+safeHeaderFilename(reportFilename(report.Title, runID))+`"`)
 			_, _ = io.Copy(w, reader)
 			return
@@ -164,8 +165,18 @@ func GetRunReportHandler(w http.ResponseWriter, r *http.Request) {
 	defer reader.Close()
 
 	w.Header().Set("Content-Type", defaultContentType(file.ContentType))
+	if strings.Contains(strings.ToLower(defaultContentType(file.ContentType)), "text/html") {
+		w.Header().Set("Content-Security-Policy", reportHTMLCSP)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	}
 	w.Header().Set("Content-Disposition", `inline; filename="`+safeHeaderFilename(file.DisplayName)+`"`)
 	_, _ = io.Copy(w, reader)
+}
+
+func setReportHTMLHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", reportHTMLCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 func renderReportHTMLFromSnapshot(report *domain.Report) (string, bool) {
@@ -304,7 +315,7 @@ func buildRunPreview(ctx context.Context, runID string) []map[string]interface{}
 func summarizeRunMessage(msg domain.RunMessage) string {
 	content := strings.TrimSpace(msg.Content)
 	switch msg.Type {
-	case "thinking":
+	case "assistant_status", "thinking":
 		return clipPreviewText(content, 120)
 	case "tool_call":
 		return msg.Name

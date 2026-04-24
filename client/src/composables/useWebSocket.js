@@ -75,6 +75,7 @@ export function useWebSocket() {
 
   function summarizeEventForPreview(event) {
     switch (event.type) {
+      case "assistant_status":
       case "thinking":
         return clipPreviewText(event.data?.content);
       case "tool_call":
@@ -429,7 +430,7 @@ export function useWebSocket() {
   function handleEvent(event, store) {
     if (event.sessionId && store.sessionId && event.sessionId !== store.sessionId) return;
     const relevantRunIds = [store.activeRunId, store.selectedRunId].filter(Boolean);
-    const selectedRunScopedTypes = new Set(["thinking", "tool_call", "tool_result", "user_request_input"]);
+    const selectedRunScopedTypes = new Set(["assistant_status", "thinking", "tool_call", "tool_result", "user_request_input"]);
     if (event.runId && relevantRunIds.length > 0 && !relevantRunIds.includes(event.runId) && selectedRunScopedTypes.has(event.type)) return;
 
     switch (event.type) {
@@ -461,10 +462,11 @@ export function useWebSocket() {
           createdAt: new Date().toISOString(),
         });
         break;
+      case "assistant_status":
       case "thinking":
         appendRunPreview(event);
         if (!shouldShowRunEvent(event.runId)) break;
-        store.addMessage({ type: "thinking", content: event.data.content });
+        store.addMessage({ type: "assistant_status", content: event.data.content });
         break;
       case "tool_call":
         appendRunPreview(event);

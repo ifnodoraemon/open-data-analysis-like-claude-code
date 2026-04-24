@@ -15,8 +15,9 @@ func init() {
 	})
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
 		return &FinalizeReportTool{
-			ReportState: ctx.ReportState,
-			Subgoals:    ctx.Subgoals,
+			ReportState:            ctx.ReportState,
+			Subgoals:               ctx.Subgoals,
+			SessionSourcesProvider: ctx.SessionSourcesProvider,
 		}
 	})
 }
@@ -32,8 +33,9 @@ type ManageReportBlocksTool struct {
 
 // FinalizeReportTool 校验并更新报告交付状态
 type FinalizeReportTool struct {
-	ReportState *ReportState
-	Subgoals    SubgoalChecker
+	ReportState            *ReportState
+	Subgoals               SubgoalChecker
+	SessionSourcesProvider SessionSourcesProvider
 }
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
@@ -168,7 +170,7 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 
 func (t *FinalizeReportTool) Name() string { return "report_finalize" }
 func (t *FinalizeReportTool) Description() string {
-	return "Validate current report state and unclosed goals; if valid, write final title/author and set delivery_state to finalized. On failure returns blockers or structural issues; does not auto-complete missing content or silently rewrite existing blocks or charts."
+	return "Validate current report state, explicitly blocking goals, and unresolved semantic ambiguities; if valid, write final title/author and set delivery_state to finalized. On failure returns blockers or validation issues; does not auto-complete missing content or silently rewrite existing blocks or charts."
 }
 func (t *FinalizeReportTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
@@ -187,8 +189,18 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 
+	var semanticIssues []string
+	if t.SessionSourcesProvider != nil {
+		sources, sourceErr := t.SessionSourcesProvider()
+		if sourceErr != nil {
+			semanticIssues = append(semanticIssues, "semantic_sources_unavailable")
+		} else {
+			semanticIssues = reportSemanticFinalizeIssues(t.ReportState, sources)
+		}
+	}
+
 	t.ReportState.Lock()
-	result, err := finalizeReportState(t.ReportState, t.Subgoals, params)
+	result, err := finalizeReportState(t.ReportState, t.Subgoals, params, semanticIssues)
 	if err != nil {
 		var blockedErr reportFinalizeBlockedError
 		if errors.As(err, &blockedErr) {

@@ -155,31 +155,19 @@ func TestSessionRuntimeVars(t *testing.T) {
 		SelectionText: "hello",
 	}
 	vars := sess.RuntimeVars()
-	if len(vars) != 2 {
-		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	if len(vars) != 1 {
+		t.Fatalf("expected 1 runtime fact, got %v", vars)
 	}
-	if vars[0].Name != "current_report_artifact" {
-		t.Fatalf("expected current_report_artifact first, got %v", vars)
+	if vars[0].Name != "active_edit_scope" {
+		t.Fatalf("expected active_edit_scope, got %v", vars)
 	}
-	if !strings.Contains(vars[0].Content, "Artifact: current_report") {
-		t.Fatalf("missing report artifact fact: %s", vars[0].Content)
+	if !strings.Contains(vars[0].Content, "Mode: append") {
+		t.Errorf("missing Mode in edit scope fact: %s", vars[0].Content)
 	}
-	if !strings.Contains(vars[0].Content, "AddressableScopes: whole_report, block_by_id_or_title, quoted_selection, chart_by_id, layout") {
-		t.Fatalf("missing report addressable scopes fact: %s", vars[0].Content)
+	if !strings.Contains(vars[0].Content, "ScopeKind: partial_block") {
+		t.Errorf("missing ScopeKind in edit scope fact: %s", vars[0].Content)
 	}
-	if !strings.Contains(vars[0].Content, "MutableViaTools: report_manage_blocks, report_create_chart, report_configure_layout, report_finalize") {
-		t.Fatalf("missing report mutation tool fact: %s", vars[0].Content)
-	}
-	if vars[1].Name != "active_edit_scope" {
-		t.Fatalf("expected active_edit_scope second, got %v", vars)
-	}
-	if !strings.Contains(vars[1].Content, "Mode: append") {
-		t.Errorf("missing Mode in edit scope fact: %s", vars[1].Content)
-	}
-	if !strings.Contains(vars[1].Content, "ScopeKind: partial_block") {
-		t.Errorf("missing ScopeKind in edit scope fact: %s", vars[1].Content)
-	}
-	if strings.Contains(vars[1].Content, "请仅在允许的边界") {
+	if strings.Contains(vars[0].Content, "请仅在允许的边界") {
 		t.Errorf("imperative hint should not be present in edit scope")
 	}
 }
@@ -206,14 +194,14 @@ func TestSessionRuntimeVarsChartScope(t *testing.T) {
 	}
 
 	vars := sess.RuntimeVars()
-	if len(vars) != 2 {
-		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	if len(vars) != 1 {
+		t.Fatalf("expected 1 runtime fact, got %v", vars)
 	}
-	if !strings.Contains(vars[1].Content, "ScopeKind: partial_chart") {
-		t.Fatalf("missing partial_chart scope fact: %s", vars[1].Content)
+	if !strings.Contains(vars[0].Content, "ScopeKind: partial_chart") {
+		t.Fatalf("missing partial_chart scope fact: %s", vars[0].Content)
 	}
-	if !strings.Contains(vars[1].Content, "TargetChartID: chart_sales") {
-		t.Fatalf("missing TargetChartID fact: %s", vars[1].Content)
+	if !strings.Contains(vars[0].Content, "TargetChartID: chart_sales") {
+		t.Fatalf("missing TargetChartID fact: %s", vars[0].Content)
 	}
 }
 
@@ -240,17 +228,17 @@ func TestSessionRuntimeVarsSelectionScope(t *testing.T) {
 	}
 
 	vars := sess.RuntimeVars()
-	if len(vars) != 2 {
-		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	if len(vars) != 1 {
+		t.Fatalf("expected 1 runtime fact, got %v", vars)
 	}
-	if !strings.Contains(vars[1].Content, "ScopeKind: partial_selection") {
-		t.Fatalf("missing partial_selection scope fact: %s", vars[1].Content)
+	if !strings.Contains(vars[0].Content, "ScopeKind: partial_selection") {
+		t.Fatalf("missing partial_selection scope fact: %s", vars[0].Content)
 	}
-	if !strings.Contains(vars[1].Content, "SelectionText: 其中这句需要改") {
-		t.Fatalf("missing selection text fact: %s", vars[1].Content)
+	if !strings.Contains(vars[0].Content, "SelectionText: 其中这句需要改") {
+		t.Fatalf("missing selection text fact: %s", vars[0].Content)
 	}
-	if !strings.Contains(vars[1].Content, "SelectionRange: 0-7") {
-		t.Fatalf("missing selection range fact: %s", vars[1].Content)
+	if !strings.Contains(vars[0].Content, "SelectionRange: 0-7") {
+		t.Fatalf("missing selection range fact: %s", vars[0].Content)
 	}
 }
 
@@ -271,15 +259,15 @@ func TestSessionRuntimeVarsLayoutScope(t *testing.T) {
 	}
 
 	vars := sess.RuntimeVars()
-	if len(vars) != 2 {
-		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	if len(vars) != 1 {
+		t.Fatalf("expected 1 runtime fact, got %v", vars)
 	}
-	if !strings.Contains(vars[1].Content, "ScopeKind: layout") {
-		t.Fatalf("missing layout scope fact: %s", vars[1].Content)
+	if !strings.Contains(vars[0].Content, "ScopeKind: layout") {
+		t.Fatalf("missing layout scope fact: %s", vars[0].Content)
 	}
 }
 
-func TestSessionRuntimeVarsIncludeGoalState(t *testing.T) {
+func TestSessionRuntimeVarsDoNotInjectGoalState(t *testing.T) {
 	t.Parallel()
 
 	subgoals := agent.NewSubgoalManager()
@@ -307,17 +295,8 @@ func TestSessionRuntimeVarsIncludeGoalState(t *testing.T) {
 	}
 
 	vars := sess.RuntimeVars()
-	if len(vars) == 0 || vars[0].Name != "current_goal_state" {
-		t.Fatalf("expected current_goal_state first, got %#v", vars)
-	}
-	if !strings.Contains(vars[0].Content, "GoalCount: 2") {
-		t.Fatalf("missing goal count in runtime fact: %s", vars[0].Content)
-	}
-	if !strings.Contains(vars[0].Content, "ActiveBranchCount: 1") {
-		t.Fatalf("missing active branch count in runtime fact: %s", vars[0].Content)
-	}
-	if !strings.Contains(vars[0].Content, rootID+":整理当前报告结构[pending]") {
-		t.Fatalf("missing active root goal in runtime fact: %s", vars[0].Content)
+	if len(vars) != 0 {
+		t.Fatalf("expected goal/report state to stay pull-based, got %#v; root=%s", vars, rootID)
 	}
 }
 

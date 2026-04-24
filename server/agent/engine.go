@@ -15,15 +15,12 @@ import (
 
 // Engine Agent 主循环引擎
 type Engine struct {
-	llm              *LLMClient
-	registry         *tools.Registry
-	policy           string
-	history          []ConversationItem
-	contextDigest    string
-	turnPlanResolver func(context.Context, *PromptBundle) (TurnPlan, error)
-	turnResolver     func(context.Context, *PromptBundle) (TurnResolution, error)
-	goalResolver     func(context.Context, *PromptBundle) (GoalResolution, error)
-	mu               sync.Mutex
+	llm           *LLMClient
+	registry      *tools.Registry
+	policy        string
+	history       []ConversationItem
+	contextDigest string
+	mu            sync.Mutex
 }
 
 const (
@@ -150,24 +147,6 @@ func (e *Engine) ResetMessages() {
 	e.contextDigest = ""
 }
 
-func (e *Engine) SetTurnResolver(resolver func(context.Context, *PromptBundle) (TurnResolution, error)) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.turnResolver = resolver
-}
-
-func (e *Engine) SetTurnPlanResolver(resolver func(context.Context, *PromptBundle) (TurnPlan, error)) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.turnPlanResolver = resolver
-}
-
-func (e *Engine) SetGoalResolver(resolver func(context.Context, *PromptBundle) (GoalResolution, error)) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.goalResolver = resolver
-}
-
 // RestoreHistory 从外部持久化存储恢复 LLM 执行历史
 func (e *Engine) RestoreHistory(history []ConversationItem) {
 	e.mu.Lock()
@@ -179,7 +158,7 @@ func (e *Engine) RestoreHistory(history []ConversationItem) {
 
 // summarizeMessageForDigest 为历史摘要提取每条消息的最有价值片段。
 // - tool result：优先使用 ui_summary/message 等语义字段（由 digestSummary 提取），不截断
-// - assistant thinking：取末段结论（结论往往在末尾），而非首部截断
+// - assistant status/content：取末段结论（结论往往在末尾），而非首部截断
 // - user / tool_call：取末段，400 字上限
 func summarizeMessageForDigest(msg ConversationItem) string {
 	switch msg.Role {
@@ -189,7 +168,7 @@ func summarizeMessageForDigest(msg ConversationItem) string {
 		}
 	case LLMRoleAssistant:
 		parts := make([]string, 0, len(msg.ToolCalls)+1)
-		// 取 thinking 末段结论，400 字
+		// 取 assistant 可见状态文本的末段结论，400 字
 		if text := digestSummary(msg.Content, 400); text != "" {
 			parts = append(parts, "assistant: "+text)
 		}
@@ -537,11 +516,10 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 
 		choice := resp.Choices[0]
 
-		// 有文本内容时，推送 LLM 的实际思考（而不是固定文字）
+		// 有文本内容时，推送模型面向用户的状态说明。
 		if choice.Message.Content != "" {
 			if len(choice.Message.ToolCalls) > 0 {
-				// 有文本 + 有工具调用 → 推送思考内容
-				emit(WSEvent{Type: EventThinking, Data: ThinkingData{Content: choice.Message.Content}})
+				emit(WSEvent{Type: EventAssistantStatus, Data: AssistantStatusData{Content: choice.Message.Content}})
 			} else {
 				// 有文本 + 无工具调用 → 最终回复
 				e.mu.Lock()
@@ -857,7 +835,7 @@ func compactToolResult(toolName, result string) string {
 				"goal_id":          payload["goal_id"],
 				"allowed_tools":    payload["allowed_tools"],
 				"delegate_summary": payload["delegate_summary"],
-				"trace_count":      traceCount(payload["trace"]),
+				"trace_count":      delegateTraceCount(payload),
 			})
 			return string(minified)
 		}
@@ -960,6 +938,13 @@ func buildColumnStats(columns []interface{}, rows []interface{}) map[string]inte
 		}
 	}
 	return stats
+}
+
+func delegateTraceCount(payload map[string]interface{}) int {
+	if count, ok := payload["trace_count"].(float64); ok {
+		return int(count)
+	}
+	return traceCount(payload["trace"])
 }
 
 func traceCount(value interface{}) int {

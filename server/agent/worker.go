@@ -79,7 +79,7 @@ func (t *ManageSubgoalsTool) Name() string {
 }
 
 func (t *ManageSubgoalsTool) Description() string {
-	return "Record or update node states in the goal tree. Supports add, complete, reject; only modifies goal state, does not execute tasks. Returns the changed goal_id and current goal tree facts."
+	return "Record or update node states in the goal tree. Supports add, complete, reject; only modifies goal state, does not execute tasks. Added goals are non-blocking scratchpad notes unless blocking=true is provided. Returns the changed goal_id and current goal tree facts."
 }
 
 func (t *ManageSubgoalsTool) Parameters() json.RawMessage {
@@ -98,6 +98,10 @@ func (t *ManageSubgoalsTool) Parameters() json.RawMessage {
 			"parent_goal_id": {
 				"type": "string",
 				"description": "Optional, only for action=add. Parent goal ID. Used to express that the current goal is a sub-step of a larger goal."
+			},
+			"blocking": {
+				"type": "boolean",
+				"description": "Optional, only for action=add. When true on a root goal, report_finalize is blocked until that goal branch is terminal. Defaults to false for scratchpad goals."
 			},
 			"goal_id": {
 				"type": "string",
@@ -121,6 +125,7 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		Action       string `json:"action"`
 		Description  string `json:"description"`
 		ParentGoalID string `json:"parent_goal_id"`
+		Blocking     bool   `json:"blocking"`
 		GoalID       string `json:"goal_id"`
 		Result       string `json:"result"`
 	}
@@ -133,7 +138,7 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		if payload.Description == "" {
 			return "", fmt.Errorf("description is required for add action")
 		}
-		id, addErr := t.Subgoals.AddGoal(payload.Description, payload.ParentGoalID)
+		id, addErr := t.Subgoals.AddGoalWithBlocking(payload.Description, payload.ParentGoalID, payload.Blocking)
 		if addErr != nil {
 			result := map[string]interface{}{
 				"ok":         false,
@@ -152,6 +157,7 @@ func (t *ManageSubgoalsTool) Execute(args json.RawMessage) (string, error) {
 		result["goal_id"] = id
 		result["status"] = StatusPending
 		result["description"] = payload.Description
+		result["blocking"] = payload.Blocking
 		if strings.TrimSpace(payload.ParentGoalID) != "" {
 			result["parent_goal_id"] = payload.ParentGoalID
 		}
@@ -233,7 +239,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return "Create a constrained sub-agent and execute a specified task. Reads role_name, task_instruction, allowed_tools, and optional goal_id/policy_appendix; allowed_tools only describes the tool boundary visible to the sub-agent; user_request_input and report_finalize cannot be delegated. On success returns child_run_id, delegate_summary, trace; on failure returns structured error, child_run_status, and optional disallowed_tools."
+	return "Create a constrained sub-agent and execute a specified task. Reads role_name, task_instruction, allowed_tools, and optional goal_id/policy_appendix; allowed_tools only describes the tool boundary visible to the sub-agent; user_request_input and report_finalize cannot be delegated. On success returns child_run_id, delegate_summary, trace_count, and child_run_status; detailed child trace is persisted for UI/debug instead of being returned to the parent context."
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -443,8 +449,8 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 		choice := resp.Choices[0]
 		if choice.Message.Content != "" {
 			content := strings.TrimSpace(choice.Message.Content)
-			trace = append(trace, delegateTraceItem{Kind: "thinking", Summary: clipText(content, 160)})
-			ev := WSEvent{Type: EventThinking, RunID: childRunID, Data: ThinkingData{Content: content}}
+			trace = append(trace, delegateTraceItem{Kind: "assistant_status", Summary: clipText(content, 160)})
+			ev := WSEvent{Type: EventAssistantStatus, RunID: childRunID, Data: AssistantStatusData{Content: content}}
 			childEmit(ev)
 		}
 
@@ -547,7 +553,7 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 		"delegate_summary": summary,
 		"child_run_status": string(domain.RunStatusCompleted),
 		"ui_summary":       fmt.Sprintf("Sub-agent %s completed: %s", roleName, summary),
-		"trace":            trace,
+		"trace_count":      len(trace),
 	}
 	if strings.TrimSpace(goalID) != "" {
 		payload["goal_id"] = goalID

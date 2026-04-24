@@ -166,7 +166,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 	masterReg.LoadGlobalTools(ctx)
 
 	// 主控和子 Agent 使用同一套工具语义；子 Agent 只是按本次任务裁剪过工具边界的递归实例。
-	plannerAllowed := []string{
+	runtimeAllowed := []string{
 		"state_time_context_inspect",
 		"state_session_sources_inspect",
 		"state_semantic_profile_inspect",
@@ -192,12 +192,12 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			if err := runPython.HealthCheck(context.Background()); err != nil {
 				log.Printf("code_run_python disabled for session %s: %v", id, err)
 			} else {
-				plannerAllowed = append(plannerAllowed, "code_run_python")
+				runtimeAllowed = append(runtimeAllowed, "code_run_python")
 			}
 		}
 	}
-	var buildPlannerRegistry func([]string) *tools.Registry
-	buildPlannerRegistry = func(allowed []string) *tools.Registry {
+	var buildRuntimeRegistry func([]string) *tools.Registry
+	buildRuntimeRegistry = func(allowed []string) *tools.Registry {
 		reg := tools.NewRegistry()
 		reg.LoadGlobalTools(ctx)
 		if len(allowed) > 0 {
@@ -205,24 +205,24 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		}
 		if dt, err := reg.Get("task_delegate"); err == nil {
 			if dtTool, ok := dt.(*agent.DelegateTaskTool); ok {
-				dtTool.RegistryFactory = buildPlannerRegistry
+				dtTool.RegistryFactory = buildRuntimeRegistry
 				dtTool.Subgoals = subgoals
 				dtTool.Memory = memory
 			}
 		}
 		return reg
 	}
-	plannerRegistry := buildPlannerRegistry(plannerAllowed)
+	runtimeRegistry := buildRuntimeRegistry(runtimeAllowed)
 
-	s.Registry = plannerRegistry
-	if ft, err := plannerRegistry.Get("report_finalize"); err == nil {
+	s.Registry = runtimeRegistry
+	if ft, err := runtimeRegistry.Get("report_finalize"); err == nil {
 		if ftt, ok := ft.(*tools.FinalizeReportTool); ok {
 			s.FinalizeTool = ftt
 		}
 	}
 
 	policyPrompt := agent.BuildPolicyPrompt()
-	s.Engine = agent.NewEngine(plannerRegistry, policyPrompt)
+	s.Engine = agent.NewEngine(runtimeRegistry, policyPrompt)
 
 	return s, nil
 }
@@ -609,32 +609,8 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.Subgoals != nil {
-		if block := agent.BuildGoalRuntimeContextBlock(s.Subgoals); block != nil {
-			vars = append(vars, *block)
-		}
-	}
-
-	// 1. Current Report Artifact
-	if s.ReportState != nil {
-		delivery := tools.DescribeReportDeliveryState(s.ReportState)
-		if delivery.HasContent {
-			content := fmt.Sprintf("Artifact: current_report\nDeliveryState: %s\nBlockCount: %d\nChartCount: %d\nAddressableScopes: whole_report, block_by_id_or_title, quoted_selection, chart_by_id, layout\nMutableViaTools: report_manage_blocks, report_create_chart, report_configure_layout, report_finalize", delivery.DeliveryState, delivery.BlockCount, delivery.ChartCount)
-			if delivery.FinalTitle != "" {
-				content += fmt.Sprintf("\nReportTitle: %s", delivery.FinalTitle)
-			}
-			if delivery.FinalAuthor != "" {
-				content += fmt.Sprintf("\nReportAuthor: %s", delivery.FinalAuthor)
-			}
-			vars = append(vars, agent.RuntimeContextBlock{
-				Name:    "current_report_artifact",
-				Role:    "developer",
-				Content: strings.TrimSpace(content),
-			})
-		}
-	}
-
-	// 1. Active Edit Scope
+	// Active edit scope is explicit UI/turn state. Broader report and goal facts
+	// stay pull-based through state_* inspection tools.
 	if s.EditState != nil && s.EditState.Active() {
 		content := fmt.Sprintf("Mode: %s\nScopeKind: %s\n", s.EditState.Mode, s.EditState.ScopeKind())
 		if s.EditState.TargetBlockID != "" {

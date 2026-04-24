@@ -442,194 +442,16 @@ func turnContextRuntimeBlock(turnCtx *agent.TurnContext) *agent.RuntimeContextBl
 	}
 }
 
-func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, agent.TurnResolution, agent.GoalResolution, error) {
-	if sess == nil || sess.Engine == nil || userMsg.EditContext != nil {
-		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, nil
+func resolvePreparedUserMessage(_ context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, error) {
+	if sess == nil || userMsg.EditContext != nil {
+		return userMsg, nil, nil
 	}
-
-	currentEdit := sess.CurrentEditContext()
-	baseRuntime := sess.RuntimeVars()
-	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
-		baseRuntime = append(baseRuntime, *targetBlock)
-	}
-	hasReportTarget := hasRuntimeBlock(baseRuntime, "current_report_artifact") || hasRuntimeBlock(baseRuntime, "current_turn_target")
-	hasGoalState := hasRuntimeBlock(baseRuntime, "current_goal_state")
-	if !hasReportTarget && !hasGoalState {
-		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, nil
-	}
-
-	var (
-		resolution     agent.TurnResolution
-		goalResolution agent.GoalResolution
-		err            error
-	)
-	plan, err := sess.Engine.ResolveTurnPlan(ctx, userMsg.Content, baseRuntime)
-	if err != nil {
-		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, err
-	}
-	resolution = plan.Report
-	goalResolution = plan.Goals
 
 	var extra []agent.RuntimeContextBlock
 	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
 		extra = append(extra, *targetBlock)
 	}
-	if block := resolution.RuntimeContextBlock(); block != nil {
-		extra = append(extra, *block)
-	}
-	if hasGoalState {
-		if block := goalResolution.RuntimeContextBlock(); block != nil {
-			extra = append(extra, *block)
-		}
-	}
-	if edit := resolution.MaterializeEditContext(); edit != nil {
-		if userMsg.TurnContext != nil && strings.TrimSpace(edit.TargetRunID) == "" {
-			edit.TargetRunID = strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID)
-		}
-		userMsg.EditContext = edit
-	} else if edit := materializeSelectionEditContext(resolution, currentEdit, sess.ReportState, userMsg.TurnContext); edit != nil {
-		userMsg.EditContext = edit
-	}
-	return userMsg, extra, resolution, goalResolution, nil
-}
-
-func materializeSelectionEditContext(resolution agent.TurnResolution, currentEdit *agent.ReportEditContext, reportState *tools.ReportState, turnCtx *agent.TurnContext) *agent.ReportEditContext {
-	res := agent.NormalizeTurnResolutionForHandler(resolution)
-	if res.Artifact != agent.TurnArtifactReport || !res.MutationRequested || res.NeedsClarification {
-		return nil
-	}
-	if res.Scope != agent.TurnScopeSelection || res.Confidence < 0.80 {
-		return nil
-	}
-	if edit := groundSelectionWithinCurrentBlock(res, currentEdit, reportState, turnCtx); edit != nil {
-		return edit
-	}
-	if currentEdit == nil || strings.TrimSpace(currentEdit.SelectionText) == "" {
-		return nil
-	}
-	mode := strings.ToLower(strings.TrimSpace(currentEdit.Mode))
-	if mode != "regenerate_selection" && mode != "revise_selection" {
-		return nil
-	}
-	edit := &agent.ReportEditContext{
-		Mode:                currentEdit.Mode,
-		TargetRunID:         currentEdit.TargetRunID,
-		BlockID:             currentEdit.BlockID,
-		BlockLabel:          currentEdit.BlockLabel,
-		SelectionText:       currentEdit.SelectionText,
-		SelectionStart:      currentEdit.SelectionStart,
-		SelectionEnd:        currentEdit.SelectionEnd,
-		PreserveOtherBlocks: true,
-	}
-	if turnCtx != nil && strings.TrimSpace(turnCtx.ReportTargetRunID) != "" {
-		edit.TargetRunID = strings.TrimSpace(turnCtx.ReportTargetRunID)
-	}
-	return edit
-}
-
-func groundSelectionWithinCurrentBlock(resolution agent.TurnResolution, currentEdit *agent.ReportEditContext, reportState *tools.ReportState, turnCtx *agent.TurnContext) *agent.ReportEditContext {
-	if currentEdit == nil || reportState == nil || strings.TrimSpace(currentEdit.BlockID) == "" {
-		return nil
-	}
-	refs := selectionGroundingRefs(resolution)
-	if len(refs) == 0 {
-		return nil
-	}
-
-	reportState.RLock()
-	block, ok := findReportBlockByID(reportState, currentEdit.BlockID)
-	reportState.RUnlock()
-	if !ok || strings.TrimSpace(block.Content) == "" {
-		return nil
-	}
-
-	start, end, text, ok := findUniqueSelectionRange(block.Content, refs)
-	if !ok {
-		return nil
-	}
-
-	edit := &agent.ReportEditContext{
-		Mode:                "regenerate_selection",
-		TargetRunID:         currentEdit.TargetRunID,
-		BlockID:             currentEdit.BlockID,
-		BlockLabel:          firstNonEmpty(strings.TrimSpace(currentEdit.BlockLabel), strings.TrimSpace(block.Title)),
-		SelectionText:       text,
-		SelectionStart:      start,
-		SelectionEnd:        end,
-		PreserveOtherBlocks: true,
-	}
-	if turnCtx != nil && strings.TrimSpace(turnCtx.ReportTargetRunID) != "" {
-		edit.TargetRunID = strings.TrimSpace(turnCtx.ReportTargetRunID)
-	}
-	return edit
-}
-
-func selectionGroundingRefs(resolution agent.TurnResolution) []string {
-	refs := make([]string, 0, len(resolution.TargetRefs)+1)
-	for _, ref := range resolution.TargetRefs {
-		if trimmed := strings.TrimSpace(ref); trimmed != "" {
-			refs = append(refs, trimmed)
-		}
-	}
-	if hint := strings.TrimSpace(resolution.TargetRefHint); hint != "" {
-		refs = append(refs, hint)
-	}
-	return refs
-}
-
-func findReportBlockByID(state *tools.ReportState, blockID string) (tools.ReportBlock, bool) {
-	target := strings.TrimSpace(blockID)
-	for _, block := range state.Blocks {
-		if strings.TrimSpace(block.ID) == target {
-			return block, true
-		}
-	}
-	return tools.ReportBlock{}, false
-}
-
-func findUniqueSelectionRange(content string, refs []string) (int, int, string, bool) {
-	bestStart, bestEnd := 0, 0
-	bestText := ""
-	for _, ref := range refs {
-		trimmed := strings.TrimSpace(ref)
-		if trimmed == "" {
-			continue
-		}
-		start := strings.Index(content, trimmed)
-		if start < 0 {
-			continue
-		}
-		if strings.Count(content, trimmed) != 1 {
-			continue
-		}
-		end := start + len(trimmed)
-		if len(trimmed) > len(bestText) {
-			bestStart, bestEnd, bestText = start, end, trimmed
-		}
-	}
-	if bestText == "" {
-		return 0, 0, "", false
-	}
-	return bestStart, bestEnd, bestText, true
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func hasRuntimeBlock(blocks []agent.RuntimeContextBlock, name string) bool {
-	target := strings.TrimSpace(name)
-	for _, block := range blocks {
-		if strings.TrimSpace(block.Name) == target {
-			return true
-		}
-	}
-	return false
+	return userMsg, extra, nil
 }
 
 func mergeRuntimeVarProvider(base func() []agent.RuntimeContextBlock, extra []agent.RuntimeContextBlock) func() []agent.RuntimeContextBlock {
@@ -817,13 +639,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			preparedUserMsg, extraRuntime, resolution, goalResolution, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
+			preparedUserMsg, extraRuntime, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
 			if prepErr != nil {
 				log.Printf("turn resolution failed session_id=%s err=%v", sess.ID, prepErr)
 				preparedUserMsg = userMsg
 				extraRuntime = nil
-				resolution = agent.TurnResolution{}
-				goalResolution = agent.GoalResolution{}
 			}
 
 			if err := runBeforeUserRunHooks(r.Context(), sess, preparedUserMsg, prepareUserRunHook(handlerReportSnapshotLoader{})); err != nil {
@@ -833,17 +653,6 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				})
 				continue
 			}
-			if preparedUserMsg.EditContext == nil {
-				grounded := agent.GroundTurnResolution(resolution, sess.ReportState)
-				if block := grounded.RuntimeContextBlock(); block != nil {
-					extraRuntime = append(extraRuntime, *block)
-				}
-				if edit := grounded.MaterializeEditContext(preparedUserMsg.TurnContext); edit != nil {
-					preparedUserMsg.EditContext = edit
-					sess.ConfigureEditState(edit)
-				}
-			}
-
 			runID, ctx, err := sess.StartRun(requestCtx)
 			if err != nil {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
@@ -917,17 +726,6 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				Type: agent.EventStateReportEditUpdated,
 				Data: editPayload,
 			})
-			if agent.ApplyGoalResolution(sess.Subgoals, goalResolution) {
-				goals := sess.Subgoals.ListAll()
-				sendSessionEvent(conn, &writeMu, sess.ID, runID, agent.WSEvent{
-					Type: agent.EventStateSubgoalsUpdated,
-					Data: map[string]interface{}{"goals": goals},
-				})
-				saveEventToDB(requestCtx, sess.WorkspaceID, sess.ID, runID, agent.WSEvent{
-					Type: agent.EventStateSubgoalsUpdated,
-					Data: map[string]interface{}{"goals": goals},
-				})
-			}
 			runEmitter := newRuntimeEventDispatcher(requestCtx, conn, &writeMu, sess, identity, runID)
 
 			userContent, err := buildRunUserContent(sess, userMsg)
@@ -1066,7 +864,7 @@ func saveEventToDBSync(workspaceID, sessionID, runID string, ev agent.WSEvent) {
 	switch data := ev.Data.(type) {
 	case agent.UserMessage:
 		msg.Content = data.Content
-	case agent.ThinkingData:
+	case agent.AssistantStatusData:
 		msg.Content = data.Content
 	case agent.AskUserData:
 		argsBytes, _ := json.Marshal(data)

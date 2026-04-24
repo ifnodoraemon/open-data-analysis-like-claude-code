@@ -42,7 +42,7 @@ func reportFinalizeBlockedFailure(state *ReportState, blockers []string) string 
 }
 
 func reportFinalizeIssuesFailure(state *ReportState, issues []string) string {
-	return toolFailure("report_finalize", "report_state_invalid", "report structure validation failed; delivery_state stays draft.", mergePayloads(
+	return toolFailure("report_finalize", "report_state_invalid", "report validation failed; delivery_state stays draft.", mergePayloads(
 		reportDraftPayload(state, nil),
 		map[string]interface{}{
 			"finalize_issue_count": len(issues),

@@ -170,7 +170,7 @@ export function sanitizeMarkdownHTML(html) {
   return doc.body.innerHTML;
 }
 
-const ECHARTS_CDN_HOSTS = new Set(["cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"]);
+const ECHARTS_CDN_HOSTS = new Set(["cdn.jsdelivr.net", "cdnjs.cloudflare.com"]);
 
 function isEChartsLoaderScript(node) {
   const src = node.getAttribute("src") || "";

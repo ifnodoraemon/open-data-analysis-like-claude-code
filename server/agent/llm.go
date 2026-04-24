@@ -170,12 +170,10 @@ func runtimeContextTransportRole(block RuntimeContextBlock) string {
 func responsesRuntimeContextRole(block RuntimeContextBlock) string {
 	role := strings.TrimSpace(runtimeContextTransportRole(block))
 	switch role {
-	case LLMRoleAssistant:
-		return LLMRoleAssistant
+	case LLMRoleAssistant, LLMRoleUser, LLMRoleSystem, "developer":
+		return role
 	default:
-		// Responses input message roles are transport-limited; preserve the
-		// semantic layer in the content prefix instead of sending role=developer.
-		return LLMRoleUser
+		return "developer"
 	}
 }
 
@@ -536,9 +534,13 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, toolSpecs []tool
 	req := &responsesAPIRequest{
 		Model: l.model,
 	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l.model)), "gpt-5") {
-		req.Reasoning = &responsesReasoning{Effort: "low"}
-		req.Text = &responsesText{Verbosity: "medium"}
+	if config.Cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(l.model)), "gpt-5") {
+		if effort := strings.TrimSpace(config.Cfg.LLMReasoningEffort); effort != "" {
+			req.Reasoning = &responsesReasoning{Effort: effort}
+		}
+		if verbosity := strings.TrimSpace(config.Cfg.LLMTextVerbosity); verbosity != "" {
+			req.Text = &responsesText{Verbosity: verbosity}
+		}
 	}
 
 	if bundle.Policy != "" {

@@ -166,8 +166,8 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	if len(req.Input) != 1 {
 		t.Fatalf("expected 1 input, got %d", len(req.Input))
 	}
-	if req.Input[0]["role"] != "user" {
-		t.Fatalf("expected runtime context to use legal responses role=user, got %#v", req.Input[0]["role"])
+	if req.Input[0]["role"] != "developer" {
+		t.Fatalf("expected runtime context to preserve responses role=developer, got %#v", req.Input[0]["role"])
 	}
 	expected := "[runtime_context role=developer name=active_subgoals]\n[g1] test_goal (pending)"
 	contentStr := req.Input[0]["content"].(string)
