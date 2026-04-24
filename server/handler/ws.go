@@ -487,19 +487,22 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 			edit.TargetRunID = strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID)
 		}
 		userMsg.EditContext = edit
-	} else if edit := reuseActiveSelectionEditContext(resolution, currentEdit, userMsg.TurnContext); edit != nil {
+	} else if edit := materializeSelectionEditContext(resolution, currentEdit, sess.ReportState, userMsg.TurnContext); edit != nil {
 		userMsg.EditContext = edit
 	}
 	return userMsg, extra, resolution, goalResolution, nil
 }
 
-func reuseActiveSelectionEditContext(resolution agent.TurnResolution, currentEdit *agent.ReportEditContext, turnCtx *agent.TurnContext) *agent.ReportEditContext {
+func materializeSelectionEditContext(resolution agent.TurnResolution, currentEdit *agent.ReportEditContext, reportState *tools.ReportState, turnCtx *agent.TurnContext) *agent.ReportEditContext {
 	res := agent.NormalizeTurnResolutionForHandler(resolution)
 	if res.Artifact != agent.TurnArtifactReport || !res.MutationRequested || res.NeedsClarification {
 		return nil
 	}
 	if res.Scope != agent.TurnScopeSelection || res.Confidence < 0.80 {
 		return nil
+	}
+	if edit := groundSelectionWithinCurrentBlock(res, currentEdit, reportState, turnCtx); edit != nil {
+		return edit
 	}
 	if currentEdit == nil || strings.TrimSpace(currentEdit.SelectionText) == "" {
 		return nil
@@ -522,6 +525,101 @@ func reuseActiveSelectionEditContext(resolution agent.TurnResolution, currentEdi
 		edit.TargetRunID = strings.TrimSpace(turnCtx.ReportTargetRunID)
 	}
 	return edit
+}
+
+func groundSelectionWithinCurrentBlock(resolution agent.TurnResolution, currentEdit *agent.ReportEditContext, reportState *tools.ReportState, turnCtx *agent.TurnContext) *agent.ReportEditContext {
+	if currentEdit == nil || reportState == nil || strings.TrimSpace(currentEdit.BlockID) == "" {
+		return nil
+	}
+	refs := selectionGroundingRefs(resolution)
+	if len(refs) == 0 {
+		return nil
+	}
+
+	reportState.RLock()
+	block, ok := findReportBlockByID(reportState, currentEdit.BlockID)
+	reportState.RUnlock()
+	if !ok || strings.TrimSpace(block.Content) == "" {
+		return nil
+	}
+
+	start, end, text, ok := findUniqueSelectionRange(block.Content, refs)
+	if !ok {
+		return nil
+	}
+
+	edit := &agent.ReportEditContext{
+		Mode:                "regenerate_selection",
+		TargetRunID:         currentEdit.TargetRunID,
+		BlockID:             currentEdit.BlockID,
+		BlockLabel:          firstNonEmpty(strings.TrimSpace(currentEdit.BlockLabel), strings.TrimSpace(block.Title)),
+		SelectionText:       text,
+		SelectionStart:      start,
+		SelectionEnd:        end,
+		PreserveOtherBlocks: true,
+	}
+	if turnCtx != nil && strings.TrimSpace(turnCtx.ReportTargetRunID) != "" {
+		edit.TargetRunID = strings.TrimSpace(turnCtx.ReportTargetRunID)
+	}
+	return edit
+}
+
+func selectionGroundingRefs(resolution agent.TurnResolution) []string {
+	refs := make([]string, 0, len(resolution.TargetRefs)+1)
+	for _, ref := range resolution.TargetRefs {
+		if trimmed := strings.TrimSpace(ref); trimmed != "" {
+			refs = append(refs, trimmed)
+		}
+	}
+	if hint := strings.TrimSpace(resolution.TargetRefHint); hint != "" {
+		refs = append(refs, hint)
+	}
+	return refs
+}
+
+func findReportBlockByID(state *tools.ReportState, blockID string) (tools.ReportBlock, bool) {
+	target := strings.TrimSpace(blockID)
+	for _, block := range state.Blocks {
+		if strings.TrimSpace(block.ID) == target {
+			return block, true
+		}
+	}
+	return tools.ReportBlock{}, false
+}
+
+func findUniqueSelectionRange(content string, refs []string) (int, int, string, bool) {
+	bestStart, bestEnd := 0, 0
+	bestText := ""
+	for _, ref := range refs {
+		trimmed := strings.TrimSpace(ref)
+		if trimmed == "" {
+			continue
+		}
+		start := strings.Index(content, trimmed)
+		if start < 0 {
+			continue
+		}
+		if strings.Count(content, trimmed) != 1 {
+			continue
+		}
+		end := start + len(trimmed)
+		if len(trimmed) > len(bestText) {
+			bestStart, bestEnd, bestText = start, end, trimmed
+		}
+	}
+	if bestText == "" {
+		return 0, 0, "", false
+	}
+	return bestStart, bestEnd, bestText, true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func hasRuntimeBlock(blocks []agent.RuntimeContextBlock, name string) bool {

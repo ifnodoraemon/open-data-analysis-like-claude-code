@@ -439,3 +439,71 @@ func TestResolvePreparedUserMessageReusesActiveSelectionScope(t *testing.T) {
 		t.Fatalf("expected selection-scope runtime block, got %#v", extra)
 	}
 }
+
+func TestResolvePreparedUserMessageGroundsSelectionWithinActiveBlock(t *testing.T) {
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+
+	content := "第一句。第二句需要改短。第三句。"
+	targetText := "第二句需要改短"
+	start := strings.Index(content, targetText)
+	if start < 0 {
+		t.Fatalf("expected target text %q in content %q", targetText, content)
+	}
+
+	sess := &session.Session{
+		Engine: agent.NewEngine(tools.NewRegistry(), ""),
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "结论", Content: content},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{
+			Mode:                "regenerate_block",
+			TargetRunID:         "run_report_1",
+			TargetBlockID:       "b1",
+			TargetBlockLabel:    "结论",
+			PreserveOtherBlocks: true,
+		},
+	}
+	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
+		return agent.TurnPlan{
+			Report: agent.TurnResolution{
+				Artifact:          agent.TurnArtifactReport,
+				Operation:         agent.TurnOperationRevise,
+				Scope:             agent.TurnScopeSelection,
+				TargetRefs:        []string{targetText},
+				MutationRequested: true,
+				Confidence:        0.9,
+			},
+		}, nil
+	})
+
+	prepared, extra, resolution, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把“第二句需要改短”这句再简洁一点"})
+	if err != nil {
+		t.Fatalf("resolve prepared user message: %v", err)
+	}
+	if resolution.Scope != agent.TurnScopeSelection {
+		t.Fatalf("expected selection-scope resolution, got %#v", resolution)
+	}
+	if prepared.EditContext == nil {
+		t.Fatal("expected grounded selection edit context")
+	}
+	if prepared.EditContext.Mode != "regenerate_selection" || prepared.EditContext.BlockID != "b1" {
+		t.Fatalf("unexpected grounded edit context: %#v", prepared.EditContext)
+	}
+	if prepared.EditContext.SelectionText != targetText {
+		t.Fatalf("expected grounded selection text %q, got %#v", targetText, prepared.EditContext)
+	}
+	if prepared.EditContext.SelectionStart != start || prepared.EditContext.SelectionEnd != start+len(targetText) {
+		t.Fatalf("expected grounded selection anchors [%d,%d), got %#v", start, start+len(targetText), prepared.EditContext)
+	}
+	if prepared.EditContext.TargetRunID != "run_report_1" {
+		t.Fatalf("expected target run to carry through, got %#v", prepared.EditContext)
+	}
+	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "TargetRefs: "+targetText) {
+		t.Fatalf("expected current_turn_resolution runtime block with target refs, got %#v", extra)
+	}
+}
