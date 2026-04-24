@@ -409,6 +409,8 @@ func (s *Session) ConfigureEditState(edit *agent.ReportEditContext) {
 	s.EditState.TargetBlockLabel = strings.TrimSpace(edit.BlockLabel)
 	s.EditState.TargetChartID = strings.TrimSpace(edit.ChartID)
 	s.EditState.SelectionText = strings.TrimSpace(edit.SelectionText)
+	s.EditState.SelectionStart = edit.SelectionStart
+	s.EditState.SelectionEnd = edit.SelectionEnd
 	s.EditState.PreserveOtherBlocks = edit.PreserveOtherBlocks
 	s.EditState.RefreshFromReportState(s.ReportState)
 }
@@ -604,6 +606,9 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 		}
 		if s.EditState.SelectionText != "" {
 			content += fmt.Sprintf("SelectionText: %s\n", s.EditState.SelectionText)
+			if s.EditState.SelectionEnd > s.EditState.SelectionStart {
+				content += fmt.Sprintf("SelectionRange: %d-%d\n", s.EditState.SelectionStart, s.EditState.SelectionEnd)
+			}
 		}
 		vars = append(vars, agent.RuntimeContextBlock{
 			Name:    "active_edit_scope",

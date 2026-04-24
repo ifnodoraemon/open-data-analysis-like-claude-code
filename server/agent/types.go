@@ -46,6 +46,8 @@ type ReportEditContext struct {
 	BlockLabel          string `json:"blockLabel,omitempty"`
 	ChartID             string `json:"chartId,omitempty"`
 	SelectionText       string `json:"selectionText,omitempty"`
+	SelectionStart      int    `json:"selectionStart,omitempty"`
+	SelectionEnd        int    `json:"selectionEnd,omitempty"`
 	PreserveOtherBlocks bool   `json:"preserveOtherBlocks,omitempty"`
 }
 

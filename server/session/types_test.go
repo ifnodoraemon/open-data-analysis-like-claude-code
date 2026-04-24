@@ -233,6 +233,8 @@ func TestSessionRuntimeVarsSelectionScope(t *testing.T) {
 			TargetBlockID:       "b1",
 			TargetBlockLabel:    "结论",
 			SelectionText:       "其中这句需要改",
+			SelectionStart:      0,
+			SelectionEnd:        7,
 			PreserveOtherBlocks: true,
 		},
 	}
@@ -246,6 +248,9 @@ func TestSessionRuntimeVarsSelectionScope(t *testing.T) {
 	}
 	if !strings.Contains(vars[1].Content, "SelectionText: 其中这句需要改") {
 		t.Fatalf("missing selection text fact: %s", vars[1].Content)
+	}
+	if !strings.Contains(vars[1].Content, "SelectionRange: 0-7") {
+		t.Fatalf("missing selection range fact: %s", vars[1].Content)
 	}
 }
 

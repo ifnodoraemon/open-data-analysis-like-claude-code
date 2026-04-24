@@ -52,6 +52,8 @@ type ReportEditState struct {
 	TargetBlockLabel    string              `json:"targetBlockLabel,omitempty"`
 	TargetChartID       string              `json:"targetChartId,omitempty"`
 	SelectionText       string              `json:"selectionText,omitempty"`
+	SelectionStart      int                 `json:"selectionStart,omitempty"`
+	SelectionEnd        int                 `json:"selectionEnd,omitempty"`
 	PreserveOtherBlocks bool                `json:"preserveOtherBlocks,omitempty"`
 	AllowedChartIDs     map[string]struct{} `json:"-"`
 }
@@ -77,6 +79,8 @@ func (s *ReportEditState) Reset() {
 	s.TargetBlockLabel = ""
 	s.TargetChartID = ""
 	s.SelectionText = ""
+	s.SelectionStart = 0
+	s.SelectionEnd = 0
 	s.PreserveOtherBlocks = false
 	s.AllowedChartIDs = nil
 }
@@ -124,6 +128,8 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"target_block_label":    s.TargetBlockLabel,
 		"target_chart_id":       s.TargetChartID,
 		"selection_text":        s.SelectionText,
+		"selection_start":       s.SelectionStart,
+		"selection_end":         s.SelectionEnd,
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,
 		"scope_kind":            s.ScopeKind(),

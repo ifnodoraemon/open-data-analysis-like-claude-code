@@ -122,6 +122,8 @@ let _msgSeq = 0;
       blockId: quote.blockId || "",
       blockLabel: quote.blockLabel || "",
       selectionText: String(quote.selectionText || "").trim(),
+      selectionStart: Number.isInteger(quote.selectionStart) ? quote.selectionStart : null,
+      selectionEnd: Number.isInteger(quote.selectionEnd) ? quote.selectionEnd : null,
       preserveOtherBlocks: quote.preserveOtherBlocks !== false,
     };
   }

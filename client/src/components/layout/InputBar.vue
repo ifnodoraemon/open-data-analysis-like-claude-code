@@ -184,6 +184,8 @@ async function handleSend() {
         blockId: quote.blockId || "",
         blockLabel: quote.blockLabel || "",
         selectionText: quote.selectionText || "",
+        selectionStart: Number.isInteger(quote.selectionStart) ? quote.selectionStart : undefined,
+        selectionEnd: Number.isInteger(quote.selectionEnd) ? quote.selectionEnd : undefined,
         preserveOtherBlocks: quote.preserveOtherBlocks !== false,
       }
     : null;

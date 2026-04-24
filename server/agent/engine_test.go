@@ -369,6 +369,8 @@ func TestInspectReportEditStateToolSelectionScope(t *testing.T) {
 			TargetBlockID:       "analysis",
 			TargetBlockLabel:    "销售结论",
 			SelectionText:       "其中这句需要重写",
+			SelectionStart:      12,
+			SelectionEnd:        20,
 			PreserveOtherBlocks: true,
 		},
 		ReportState: &tools.ReportState{
@@ -390,7 +392,10 @@ func TestInspectReportEditStateToolSelectionScope(t *testing.T) {
 	if payload["scope_kind"] != "partial_selection" {
 		t.Fatalf("expected partial_selection scope, got %#v", payload["scope_kind"])
 	}
-	if payload["ui_summary"] != "Active partial selection edit scope inside block: analysis." {
+	if payload["selection_start"] != float64(12) || payload["selection_end"] != float64(20) {
+		t.Fatalf("expected selection range payload, got start=%#v end=%#v", payload["selection_start"], payload["selection_end"])
+	}
+	if payload["ui_summary"] != "Active partial selection edit scope inside block: analysis, range 12-20." {
 		t.Fatalf("unexpected ui_summary: %#v", payload["ui_summary"])
 	}
 	if payload["selection_text"] != "其中这句需要重写" {

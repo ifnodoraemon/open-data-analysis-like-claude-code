@@ -118,6 +118,8 @@ const selectedBlockId = ref("");
 const selectedFragmentIndex = ref("");
 const selectedBlockLabel = ref("");
 const selectedBlockText = ref("");
+const selectedSelectionStart = ref(null);
+const selectedSelectionEnd = ref(null);
 const selectedByText = ref(false);
 const runMetaLabel = computed(() => {
   if (selectedReport.value?.title) {
@@ -173,6 +175,8 @@ function clearSelection() {
   selectedFragmentIndex.value = "";
   selectedBlockLabel.value = "";
   selectedBlockText.value = "";
+  selectedSelectionStart.value = null;
+  selectedSelectionEnd.value = null;
   selectedByText.value = false;
   applySelectionHighlight("");
 }
@@ -237,10 +241,13 @@ function handleFrameMouseUp() {
     const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
     const block = findClosestReportBlock(range?.commonAncestorContainer);
     if (!block) return;
+    const offsets = computeSelectionOffsets(block, range);
 
     selectReportBlock(block, {
       text: selectedText,
       byText: true,
+      selectionStart: offsets?.start ?? null,
+      selectionEnd: offsets?.end ?? null,
     });
   }, 0);
 }
@@ -268,6 +275,8 @@ function selectReportBlock(block, options = {}) {
   selectedFragmentIndex.value = fragmentIdx;
   selectedBlockLabel.value = extractBlockLabel(block);
   selectedBlockText.value = trimSelectionText(options.text || "");
+  selectedSelectionStart.value = Number.isInteger(options.selectionStart) ? options.selectionStart : null;
+  selectedSelectionEnd.value = Number.isInteger(options.selectionEnd) ? options.selectionEnd : null;
   selectedByText.value = !!options.byText;
   applySelectionHighlight(fragmentIdx);
 }
@@ -308,6 +317,8 @@ function quoteSelection() {
     blockId: selectedBlockId.value,
     blockLabel: selectedBlockLabel.value,
     selectionText: selectedBlockText.value,
+    selectionStart: selectedSelectionStart.value,
+    selectionEnd: selectedSelectionEnd.value,
     preserveOtherBlocks: true,
   });
 }
@@ -328,6 +339,25 @@ function quoteWholeReport() {
 function trimSelectionText(text) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   return normalized.length > 3000 ? `${normalized.slice(0, 3000)}...` : normalized;
+}
+
+function computeSelectionOffsets(block, range) {
+  if (!block || !range) return null;
+  try {
+    const fullRange = block.ownerDocument.createRange();
+    fullRange.selectNodeContents(block);
+
+    const startRange = fullRange.cloneRange();
+    startRange.setEnd(range.startContainer, range.startOffset);
+    const start = startRange.toString().length;
+    const length = range.toString().length;
+    return {
+      start,
+      end: start + length,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function exportReport(format) {
