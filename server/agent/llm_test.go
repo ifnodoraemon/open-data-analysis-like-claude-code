@@ -154,7 +154,7 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	client := &LLMClient{model: "gpt-4o"}
 	bundle := &PromptBundle{
 		RuntimeContext: []RuntimeContextBlock{
-			{Name: "active_subgoals", Content: "[g1] test_goal (pending)"},
+			{Name: "active_subgoals", Role: "developer", Content: "[g1] test_goal (pending)"},
 		},
 	}
 
@@ -166,10 +166,10 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	if len(req.Input) != 1 {
 		t.Fatalf("expected 1 input, got %d", len(req.Input))
 	}
-	if req.Input[0]["role"] != "developer" {
-		t.Fatalf("expected runtime context to use developer role, got %#v", req.Input[0]["role"])
+	if req.Input[0]["role"] != "user" {
+		t.Fatalf("expected runtime context to use legal responses role=user, got %#v", req.Input[0]["role"])
 	}
-	expected := "[active_subgoals]\n[g1] test_goal (pending)"
+	expected := "[runtime_context role=developer name=active_subgoals]\n[g1] test_goal (pending)"
 	contentStr := req.Input[0]["content"].(string)
 	if contentStr != expected {
 		t.Fatalf("expected explicitly prefixed runtime core, got %q", contentStr)

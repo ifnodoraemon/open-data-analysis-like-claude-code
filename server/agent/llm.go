@@ -167,6 +167,18 @@ func runtimeContextTransportRole(block RuntimeContextBlock) string {
 	return role
 }
 
+func responsesRuntimeContextRole(block RuntimeContextBlock) string {
+	role := strings.TrimSpace(runtimeContextTransportRole(block))
+	switch role {
+	case LLMRoleAssistant:
+		return LLMRoleAssistant
+	default:
+		// Responses input message roles are transport-limited; preserve the
+		// semantic layer in the content prefix instead of sending role=developer.
+		return LLMRoleUser
+	}
+}
+
 func countHistoryChars(hist []ConversationItem) int {
 	var total int
 	for _, h := range hist {
@@ -539,8 +551,8 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, toolSpecs []tool
 
 	for _, block := range bundle.RuntimeContext {
 		req.Input = append(req.Input, responsesInput{
-			"role":    runtimeContextTransportRole(block),
-			"content": fmt.Sprintf("[%s]\n%s", block.Name, block.Content),
+			"role":    responsesRuntimeContextRole(block),
+			"content": fmt.Sprintf("[runtime_context role=%s name=%s]\n%s", runtimeContextTransportRole(block), block.Name, block.Content),
 		})
 	}
 

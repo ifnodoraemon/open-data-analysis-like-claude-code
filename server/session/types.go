@@ -565,6 +565,12 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.Subgoals != nil {
+		if block := agent.BuildGoalRuntimeContextBlock(s.Subgoals); block != nil {
+			vars = append(vars, *block)
+		}
+	}
+
 	// 1. Current Report Artifact
 	if s.ReportState != nil {
 		delivery := tools.DescribeReportDeliveryState(s.ReportState)

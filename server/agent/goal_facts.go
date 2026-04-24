@@ -1,6 +1,9 @@
 package agent
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 func buildGoalStateFacts(subgoals *SubgoalManager, includeGoals bool) map[string]interface{} {
 	payload := map[string]interface{}{
@@ -72,4 +75,46 @@ func buildGoalStateFacts(subgoals *SubgoalManager, includeGoals bool) map[string
 	payload["active_branches"] = blockers
 	payload["active_branch_count"] = len(blockers)
 	return payload
+}
+
+func BuildGoalRuntimeContextBlock(subgoals *SubgoalManager) *RuntimeContextBlock {
+	payload := buildGoalStateFacts(subgoals, false)
+	goalCount, _ := payload["goal_count"].(int)
+	if goalCount == 0 {
+		return nil
+	}
+
+	lines := []string{
+		fmt.Sprintf("GoalCount: %d", goalCount),
+		fmt.Sprintf("ActiveRoots: %d", payload["active_roots"]),
+		fmt.Sprintf("RunningGoals: %d", payload["running_goals"]),
+		fmt.Sprintf("PendingGoals: %d", payload["pending_goals"]),
+		fmt.Sprintf("CompleteGoals: %d", payload["complete_goals"]),
+		fmt.Sprintf("RejectedGoals: %d", payload["rejected_goals"]),
+		fmt.Sprintf("ActiveBranchCount: %d", payload["active_branch_count"]),
+	}
+
+	if roots, ok := payload["active_root_goals"].([]map[string]interface{}); ok && len(roots) > 0 {
+		rootParts := make([]string, 0, len(roots))
+		for _, root := range roots {
+			desc, _ := root["description"].(string)
+			id, _ := root["id"].(string)
+			status, _ := root["status"].(SubgoalStatus)
+			rootParts = append(rootParts, fmt.Sprintf("%s:%s[%s]", id, desc, status))
+		}
+		lines = append(lines, "ActiveRootGoals: "+strings.Join(rootParts, " | "))
+	}
+
+	if branches, ok := payload["active_branches"].([]string); ok && len(branches) > 0 {
+		lines = append(lines, "ActiveBranches:")
+		for _, branch := range branches {
+			lines = append(lines, "- "+branch)
+		}
+	}
+
+	return &RuntimeContextBlock{
+		Name:    "current_goal_state",
+		Role:    "developer",
+		Content: strings.Join(lines, "\n"),
+	}
 }

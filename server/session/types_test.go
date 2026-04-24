@@ -217,6 +217,48 @@ func TestSessionRuntimeVarsChartScope(t *testing.T) {
 	}
 }
 
+func TestSessionRuntimeVarsIncludeGoalState(t *testing.T) {
+	t.Parallel()
+
+	subgoals := agent.NewSubgoalManager()
+	rootID, err := subgoals.AddGoal("整理当前报告结构", "")
+	if err != nil {
+		t.Fatalf("add root goal: %v", err)
+	}
+	childID, err := subgoals.AddGoal("重写结论部分", rootID)
+	if err != nil {
+		t.Fatalf("add child goal: %v", err)
+	}
+	if err := subgoals.UpdateGoalStatus(childID, agent.StatusRunning, ""); err != nil {
+		t.Fatalf("mark child running: %v", err)
+	}
+
+	sess := &Session{
+		ID:        "test-sess",
+		Subgoals:  subgoals,
+		EditState: &tools.ReportEditState{},
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "Overview", Content: "body"},
+			},
+		},
+	}
+
+	vars := sess.RuntimeVars()
+	if len(vars) == 0 || vars[0].Name != "current_goal_state" {
+		t.Fatalf("expected current_goal_state first, got %#v", vars)
+	}
+	if !strings.Contains(vars[0].Content, "GoalCount: 2") {
+		t.Fatalf("missing goal count in runtime fact: %s", vars[0].Content)
+	}
+	if !strings.Contains(vars[0].Content, "ActiveBranchCount: 1") {
+		t.Fatalf("missing active branch count in runtime fact: %s", vars[0].Content)
+	}
+	if !strings.Contains(vars[0].Content, rootID+":整理当前报告结构[pending]") {
+		t.Fatalf("missing active root goal in runtime fact: %s", vars[0].Content)
+	}
+}
+
 func TestSessionWaitingRunRecovery(t *testing.T) {
 	t.Parallel()
 
