@@ -425,6 +425,55 @@ func buildRunUserContent(sess *session.Session, userMsg agent.UserMessage) (stri
 	return strings.TrimSpace(userMsg.Content), nil
 }
 
+func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, error) {
+	if sess == nil || sess.Engine == nil || userMsg.EditContext != nil {
+		return userMsg, nil, nil
+	}
+
+	baseRuntime := sess.RuntimeVars()
+	if !hasRuntimeBlock(baseRuntime, "current_report_artifact") {
+		return userMsg, nil, nil
+	}
+
+	resolution, err := sess.Engine.ResolveTurn(ctx, userMsg.Content, baseRuntime)
+	if err != nil {
+		return userMsg, nil, err
+	}
+
+	var extra []agent.RuntimeContextBlock
+	if block := resolution.RuntimeContextBlock(); block != nil {
+		extra = append(extra, *block)
+	}
+	if edit := resolution.MaterializeEditContext(); edit != nil {
+		userMsg.EditContext = edit
+	}
+	return userMsg, extra, nil
+}
+
+func hasRuntimeBlock(blocks []agent.RuntimeContextBlock, name string) bool {
+	target := strings.TrimSpace(name)
+	for _, block := range blocks {
+		if strings.TrimSpace(block.Name) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeRuntimeVarProvider(base func() []agent.RuntimeContextBlock, extra []agent.RuntimeContextBlock) func() []agent.RuntimeContextBlock {
+	if len(extra) == 0 {
+		return base
+	}
+	return func() []agent.RuntimeContextBlock {
+		var merged []agent.RuntimeContextBlock
+		if base != nil {
+			merged = append(merged, base()...)
+		}
+		merged = append(merged, extra...)
+		return merged
+	}
+}
+
 // WSHandler WebSocket 连接处理
 func WSHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -595,7 +644,14 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			if err := runBeforeUserRunHooks(r.Context(), sess, userMsg, prepareUserRunHook(handlerReportSnapshotLoader{})); err != nil {
+			preparedUserMsg, extraRuntime, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
+			if prepErr != nil {
+				log.Printf("turn resolution failed session_id=%s err=%v", sess.ID, prepErr)
+				preparedUserMsg = userMsg
+				extraRuntime = nil
+			}
+
+			if err := runBeforeUserRunHooks(r.Context(), sess, preparedUserMsg, prepareUserRunHook(handlerReportSnapshotLoader{})); err != nil {
 				sendSessionEvent(conn, &writeMu, sess.ID, "", agent.WSEvent{
 					Type: agent.EventError,
 					Data: agent.ErrorData{Message: err.Error()},
@@ -694,7 +750,8 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 				emit:        runEmitter.Emit,
 			})
 
-			go sess.Engine.Run(ctx, userContent, sess.RuntimeVars, runEmitter.Emit)
+			runtimeVarProvider := mergeRuntimeVarProvider(sess.RuntimeVars, extraRuntime)
+			go sess.Engine.Run(ctx, userContent, runtimeVarProvider, runEmitter.Emit)
 
 		case agent.EventStop:
 			dataBytes, _ := json.Marshal(event.Data)

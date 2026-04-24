@@ -13,7 +13,10 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/ifnodoraemon/openDataAnalysis/agent"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/domain"
+	"github.com/ifnodoraemon/openDataAnalysis/session"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
 type captureMessageRepo struct {
@@ -211,5 +214,84 @@ func TestIsExpectedWebSocketWriteCloseRecognizesClosedConnectionNoise(t *testing
 		if !isExpectedWebSocketWriteClose(err) {
 			t.Fatalf("expected write close to be classified as expected: %v", err)
 		}
+	}
+}
+
+func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+
+	sess := &session.Session{
+		Engine: agent.NewEngine(tools.NewRegistry(), ""),
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "Overview", Content: "body"},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{},
+	}
+	sess.Engine.SetTurnResolver(func(context.Context, *agent.PromptBundle) (agent.TurnResolution, error) {
+		return agent.TurnResolution{
+			Artifact:          agent.TurnArtifactReport,
+			Operation:         agent.TurnOperationRevise,
+			Scope:             agent.TurnScopeWholeReport,
+			MutationRequested: true,
+			Confidence:        0.93,
+		}, nil
+	})
+
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把当前报告整体整理一下"})
+	if err != nil {
+		t.Fatalf("resolve prepared user message: %v", err)
+	}
+	if prepared.EditContext == nil || prepared.EditContext.Mode != "revise_report" {
+		t.Fatalf("expected whole-report edit context, got %#v", prepared.EditContext)
+	}
+	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" {
+		t.Fatalf("expected current_turn_resolution runtime block, got %#v", extra)
+	}
+}
+
+func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+
+	sess := &session.Session{
+		Engine: agent.NewEngine(tools.NewRegistry(), ""),
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "结论", Content: "body"},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{},
+	}
+	sess.Engine.SetTurnResolver(func(context.Context, *agent.PromptBundle) (agent.TurnResolution, error) {
+		return agent.TurnResolution{
+			Artifact:          agent.TurnArtifactReport,
+			Operation:         agent.TurnOperationRevise,
+			Scope:             agent.TurnScopeBlock,
+			TargetRefHint:     "结论部分",
+			MutationRequested: true,
+			Confidence:        0.92,
+		}, nil
+	})
+
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "把结论部分改一下"})
+	if err != nil {
+		t.Fatalf("resolve prepared user message: %v", err)
+	}
+	if prepared.EditContext != nil {
+		t.Fatalf("did not expect block-scope resolution to auto-materialize edit context: %#v", prepared.EditContext)
+	}
+	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "Scope: block") {
+		t.Fatalf("expected block-scope current_turn_resolution runtime block, got %#v", extra)
 	}
 }

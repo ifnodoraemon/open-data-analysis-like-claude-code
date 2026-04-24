@@ -20,6 +20,7 @@ type Engine struct {
 	policy        string
 	history       []ConversationItem
 	contextDigest string
+	turnResolver  func(context.Context, *PromptBundle) (TurnResolution, error)
 	mu            sync.Mutex
 }
 
@@ -145,6 +146,12 @@ func (e *Engine) ResetMessages() {
 	defer e.mu.Unlock()
 	e.history = nil
 	e.contextDigest = ""
+}
+
+func (e *Engine) SetTurnResolver(resolver func(context.Context, *PromptBundle) (TurnResolution, error)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.turnResolver = resolver
 }
 
 // RestoreHistory 从外部持久化存储恢复 LLM 执行历史
