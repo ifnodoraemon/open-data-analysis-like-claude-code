@@ -317,6 +317,49 @@ func TestInspectReportEditStateToolWholeReportScope(t *testing.T) {
 	}
 }
 
+func TestInspectReportEditStateToolChartScope(t *testing.T) {
+	t.Parallel()
+
+	tool := &InspectReportEditStateTool{
+		EditState: &tools.ReportEditState{
+			Mode:                "revise_chart",
+			TargetChartID:       "chart_sales",
+			PreserveOtherBlocks: true,
+		},
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "analysis", Kind: "chart", Title: "销售趋势", ChartID: "chart_sales"},
+			},
+			Charts: []tools.ChartData{
+				{ID: "chart_sales"},
+			},
+		},
+	}
+
+	result, err := tool.Execute(nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["scope_kind"] != "partial_chart" {
+		t.Fatalf("expected partial_chart scope, got %#v", payload["scope_kind"])
+	}
+	if payload["ui_summary"] != "Active partial chart edit scope, target chart: chart_sales." {
+		t.Fatalf("unexpected ui_summary: %#v", payload["ui_summary"])
+	}
+	targetChart, ok := payload["target_chart"].(map[string]interface{})
+	if !ok || targetChart["id"] != "chart_sales" {
+		t.Fatalf("expected target_chart payload, got %#v", payload["target_chart"])
+	}
+	if _, exists := payload["target_block"]; exists {
+		t.Fatalf("did not expect target_block for chart-only scope: %#v", payload["target_block"])
+	}
+}
+
 func TestCompactMessagesByMeasuredPromptTokens(t *testing.T) {
 	t.Parallel()
 

@@ -184,6 +184,39 @@ func TestSessionRuntimeVars(t *testing.T) {
 	}
 }
 
+func TestSessionRuntimeVarsChartScope(t *testing.T) {
+	t.Parallel()
+
+	sess := &Session{
+		ID: "test-sess",
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "chart", Title: "销售趋势", ChartID: "chart_sales"},
+			},
+			Charts: []tools.ChartData{
+				{ID: "chart_sales"},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{
+			Mode:                "revise_chart",
+			TargetChartID:       "chart_sales",
+			PreserveOtherBlocks: true,
+		},
+	}
+
+	vars := sess.RuntimeVars()
+	if len(vars) != 2 {
+		t.Fatalf("expected 2 runtime facts, got %v", vars)
+	}
+	if !strings.Contains(vars[1].Content, "ScopeKind: partial_chart") {
+		t.Fatalf("missing partial_chart scope fact: %s", vars[1].Content)
+	}
+	if !strings.Contains(vars[1].Content, "TargetChartID: chart_sales") {
+		t.Fatalf("missing TargetChartID fact: %s", vars[1].Content)
+	}
+}
+
 func TestSessionWaitingRunRecovery(t *testing.T) {
 	t.Parallel()
 

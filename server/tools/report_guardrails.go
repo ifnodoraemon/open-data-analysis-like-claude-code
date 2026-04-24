@@ -17,12 +17,15 @@ func (s *ReportEditState) RefreshFromReportState(state *ReportState) {
 	if s == nil {
 		return
 	}
-	s.AllowedChartIDs = collectEditableChartIDs(state, s.TargetBlockID)
+	s.AllowedChartIDs = collectEditableChartIDs(state, s.TargetBlockID, s.TargetChartID)
 }
 
 func (s *ReportEditState) BlockMutationAllowed(action, blockID string) bool {
 	if !s.Active() || !s.PreserveOtherBlocks {
 		return true
+	}
+	if strings.TrimSpace(s.TargetChartID) != "" && strings.TrimSpace(s.TargetBlockID) == "" {
+		return false
 	}
 	target := strings.TrimSpace(s.TargetBlockID)
 	id := strings.TrimSpace(blockID)
@@ -42,8 +45,11 @@ func (s *ReportEditState) ChartMutationAllowed(chartID string) bool {
 	return ok
 }
 
-func collectEditableChartIDs(state *ReportState, blockID string) map[string]struct{} {
+func collectEditableChartIDs(state *ReportState, blockID, chartID string) map[string]struct{} {
 	refs := make(map[string]struct{})
+	if trimmedChartID := strings.TrimSpace(chartID); trimmedChartID != "" {
+		refs[trimmedChartID] = struct{}{}
+	}
 	if state == nil || strings.TrimSpace(blockID) == "" {
 		return refs
 	}

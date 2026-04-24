@@ -231,7 +231,7 @@ func (t *InspectReportEditStateTool) Name() string {
 }
 
 func (t *InspectReportEditStateTool) Description() string {
-	return "Read the fact state of the current report edit scope. Returns whether the active scope is whole-report or partial-block, plus target block and associated charts when applicable. Does not modify any state."
+	return "Read the fact state of the current report edit scope. Returns whether the active scope is whole-report, partial-block, or partial-chart, plus grounded target block/chart facts when applicable. Does not modify any state."
 }
 
 func (t *InspectReportEditStateTool) Parameters() json.RawMessage {
@@ -254,14 +254,36 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 				"content":  block.Content,
 			}
 		}
+		if chart, ok := findEditTargetChart(t.ReportState, t.EditState.TargetChartID); ok {
+			payload["target_chart"] = map[string]interface{}{
+				"id":     chart.ID,
+				"width":  chart.Width,
+				"height": chart.Height,
+				"option": chart.Option,
+			}
+		}
+		t.ReportState.RUnlock()
+	} else if t.ReportState != nil && t.EditState.Active() && strings.TrimSpace(t.EditState.TargetChartID) != "" {
+		t.ReportState.RLock()
+		if chart, ok := findEditTargetChart(t.ReportState, t.EditState.TargetChartID); ok {
+			payload["target_chart"] = map[string]interface{}{
+				"id":     chart.ID,
+				"width":  chart.Width,
+				"height": chart.Height,
+				"option": chart.Option,
+			}
+		}
 		t.ReportState.RUnlock()
 	}
 	payload["ok"] = true
 	payload["tool"] = "state_report_edit_inspect"
 	if active, _ := payload["active"].(bool); active {
-		if t.EditState.ScopeKind() == "whole_report" {
+		switch t.EditState.ScopeKind() {
+		case "whole_report":
 			payload["ui_summary"] = "Active whole-report edit scope."
-		} else {
+		case "partial_chart":
+			payload["ui_summary"] = fmt.Sprintf("Active partial chart edit scope, target chart: %s.", t.EditState.TargetChartID)
+		default:
 			payload["ui_summary"] = fmt.Sprintf("Active partial edit scope, target block: %s.", t.EditState.TargetBlockID)
 		}
 	} else {
@@ -281,6 +303,19 @@ func findEditTargetBlock(state *tools.ReportState, blockID string) (tools.Report
 		}
 	}
 	return tools.ReportBlock{}, false
+}
+
+func findEditTargetChart(state *tools.ReportState, chartID string) (tools.ChartData, bool) {
+	if state == nil {
+		return tools.ChartData{}, false
+	}
+	target := strings.TrimSpace(chartID)
+	for _, chart := range state.Charts {
+		if strings.TrimSpace(chart.ID) == target {
+			return chart, true
+		}
+	}
+	return tools.ChartData{}, false
 }
 
 func chartRefsInContent(content string) []string {

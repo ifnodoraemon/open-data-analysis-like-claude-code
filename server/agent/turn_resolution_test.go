@@ -127,3 +127,43 @@ func TestGroundTurnResolutionBlockAmbiguous(t *testing.T) {
 		t.Fatalf("did not expect ambiguous grounding to materialize edit context: %#v", edit)
 	}
 }
+
+func TestGroundTurnResolutionChartByHint(t *testing.T) {
+	t.Parallel()
+
+	res := TurnResolution{
+		Artifact:          TurnArtifactReport,
+		Operation:         TurnOperationReviseChart,
+		Scope:             TurnScopeChart,
+		TargetRefHint:     "销售趋势图",
+		MutationRequested: true,
+		Confidence:        0.9,
+	}
+	state := &tools.ReportState{
+		Blocks: []tools.ReportBlock{
+			{ID: "blk_sales", Kind: "chart", Title: "销售趋势图", ChartID: "chart_sales"},
+		},
+		Charts: []tools.ChartData{
+			{ID: "chart_sales"},
+			{ID: "chart_other"},
+		},
+	}
+
+	grounded := GroundTurnResolution(res, state)
+	if grounded.TargetChartID != "chart_sales" || grounded.Ambiguous {
+		t.Fatalf("unexpected grounded chart resolution: %#v", grounded)
+	}
+	edit := grounded.MaterializeEditContext(&TurnContext{ReportTargetRunID: "run_chart_1"})
+	if edit == nil {
+		t.Fatal("expected chart grounding to materialize edit context")
+	}
+	if edit.Mode != "revise_chart" || edit.ChartID != "chart_sales" || !edit.PreserveOtherBlocks {
+		t.Fatalf("unexpected chart edit context: %#v", edit)
+	}
+	if edit.BlockID != "" {
+		t.Fatalf("did not expect chart-scoped edit to materialize block target: %#v", edit)
+	}
+	if edit.TargetRunID != "run_chart_1" {
+		t.Fatalf("expected target run to carry through, got %#v", edit)
+	}
+}

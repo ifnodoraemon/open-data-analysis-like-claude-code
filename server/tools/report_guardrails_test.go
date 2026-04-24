@@ -50,13 +50,49 @@ func TestReportEditStateRefreshFromReportStateCollectsEditableCharts(t *testing.
 	}
 }
 
+func TestReportEditStateChartScopeRestrictsToTargetChart(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "analysis",
+				Kind:    "markdown",
+				Title:   "分析",
+				Content: "结论如下：{{chart:chart_inline}}",
+				ChartID: "chart_primary",
+			},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "revise_chart",
+		TargetChartID:       "chart_inline",
+		PreserveOtherBlocks: true,
+	}
+
+	editState.RefreshFromReportState(state)
+
+	if editState.ScopeKind() != "partial_chart" {
+		t.Fatalf("expected partial_chart scope, got %q", editState.ScopeKind())
+	}
+	if !editState.ChartMutationAllowed("chart_inline") {
+		t.Fatalf("expected target chart to remain editable, got %#v", editState.AllowedChartIDs)
+	}
+	if editState.ChartMutationAllowed("chart_primary") {
+		t.Fatalf("expected unrelated chart to be blocked, got %#v", editState.AllowedChartIDs)
+	}
+	if editState.BlockMutationAllowed("upsert", "analysis") {
+		t.Fatal("expected block mutations to be blocked for chart-only scope")
+	}
+}
+
 func TestNormalizeSectionTitleStripsCommonOrdinalPrefixes(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"二、各维度分布":   "各维度分布",
-		"2. 各维度分布":   "各维度分布",
-		"第3章 各维度分布": "各维度分布",
+		"二、各维度分布":      "各维度分布",
+		"2. 各维度分布":     "各维度分布",
+		"第3章 各维度分布":    "各维度分布",
 		"  第十部分 经营分析 ": "经营分析",
 	}
 

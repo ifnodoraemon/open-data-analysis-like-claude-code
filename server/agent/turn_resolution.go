@@ -429,13 +429,12 @@ func (g GroundedTurnResolution) MaterializeEditContext(turnCtx *TurnContext) *Re
 		}
 		return edit
 	case TurnScopeChart:
-		if g.TargetBlockID == "" || g.Ambiguous {
+		if g.TargetChartID == "" || g.Ambiguous {
 			return nil
 		}
 		edit := &ReportEditContext{
-			Mode:                "regenerate_block",
-			BlockID:             g.TargetBlockID,
-			BlockLabel:          g.TargetBlockTitle,
+			Mode:                "revise_chart",
+			ChartID:             g.TargetChartID,
 			PreserveOtherBlocks: true,
 		}
 		if turnCtx != nil {

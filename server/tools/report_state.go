@@ -50,6 +50,7 @@ type ReportEditState struct {
 	TargetRunID         string              `json:"targetRunId,omitempty"`
 	TargetBlockID       string              `json:"targetBlockId,omitempty"`
 	TargetBlockLabel    string              `json:"targetBlockLabel,omitempty"`
+	TargetChartID       string              `json:"targetChartId,omitempty"`
 	SelectionText       string              `json:"selectionText,omitempty"`
 	PreserveOtherBlocks bool                `json:"preserveOtherBlocks,omitempty"`
 	AllowedChartIDs     map[string]struct{} `json:"-"`
@@ -74,6 +75,7 @@ func (s *ReportEditState) Reset() {
 	s.TargetRunID = ""
 	s.TargetBlockID = ""
 	s.TargetBlockLabel = ""
+	s.TargetChartID = ""
 	s.SelectionText = ""
 	s.PreserveOtherBlocks = false
 	s.AllowedChartIDs = nil
@@ -87,7 +89,13 @@ func (s *ReportEditState) ScopeKind() string {
 	if !s.Active() {
 		return "inactive"
 	}
-	if strings.TrimSpace(s.TargetBlockID) != "" || s.PreserveOtherBlocks {
+	if strings.TrimSpace(s.TargetBlockID) != "" {
+		return "partial_block"
+	}
+	if strings.TrimSpace(s.TargetChartID) != "" {
+		return "partial_chart"
+	}
+	if s.PreserveOtherBlocks {
 		return "partial_block"
 	}
 	return "whole_report"
@@ -107,6 +115,7 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"target_run_id":         s.TargetRunID,
 		"target_block_id":       s.TargetBlockID,
 		"target_block_label":    s.TargetBlockLabel,
+		"target_chart_id":       s.TargetChartID,
 		"selection_text":        s.SelectionText,
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,
