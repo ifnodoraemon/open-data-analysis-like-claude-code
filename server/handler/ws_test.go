@@ -218,8 +218,6 @@ func TestIsExpectedWebSocketWriteCloseRecognizesClosedConnectionNoise(t *testing
 }
 
 func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing.T) {
-	t.Parallel()
-
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -234,13 +232,15 @@ func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing
 		},
 		EditState: &tools.ReportEditState{},
 	}
-	sess.Engine.SetTurnResolver(func(context.Context, *agent.PromptBundle) (agent.TurnResolution, error) {
-		return agent.TurnResolution{
-			Artifact:          agent.TurnArtifactReport,
-			Operation:         agent.TurnOperationRevise,
-			Scope:             agent.TurnScopeWholeReport,
-			MutationRequested: true,
-			Confidence:        0.93,
+	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
+		return agent.TurnPlan{
+			Report: agent.TurnResolution{
+				Artifact:          agent.TurnArtifactReport,
+				Operation:         agent.TurnOperationRevise,
+				Scope:             agent.TurnScopeWholeReport,
+				MutationRequested: true,
+				Confidence:        0.93,
+			},
 		}, nil
 	})
 
@@ -257,8 +257,6 @@ func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing
 }
 
 func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T) {
-	t.Parallel()
-
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -267,13 +265,15 @@ func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T
 		Engine:    agent.NewEngine(tools.NewRegistry(), ""),
 		EditState: &tools.ReportEditState{},
 	}
-	sess.Engine.SetTurnResolver(func(context.Context, *agent.PromptBundle) (agent.TurnResolution, error) {
-		return agent.TurnResolution{
-			Artifact:          agent.TurnArtifactReport,
-			Operation:         agent.TurnOperationRevise,
-			Scope:             agent.TurnScopeWholeReport,
-			MutationRequested: true,
-			Confidence:        0.94,
+	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
+		return agent.TurnPlan{
+			Report: agent.TurnResolution{
+				Artifact:          agent.TurnArtifactReport,
+				Operation:         agent.TurnOperationRevise,
+				Scope:             agent.TurnScopeWholeReport,
+				MutationRequested: true,
+				Confidence:        0.94,
+			},
 		}, nil
 	})
 
@@ -296,8 +296,6 @@ func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T
 }
 
 func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) {
-	t.Parallel()
-
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -312,14 +310,16 @@ func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) 
 		},
 		EditState: &tools.ReportEditState{},
 	}
-	sess.Engine.SetTurnResolver(func(context.Context, *agent.PromptBundle) (agent.TurnResolution, error) {
-		return agent.TurnResolution{
-			Artifact:          agent.TurnArtifactReport,
-			Operation:         agent.TurnOperationRevise,
-			Scope:             agent.TurnScopeBlock,
-			TargetRefHint:     "结论部分",
-			MutationRequested: true,
-			Confidence:        0.92,
+	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
+		return agent.TurnPlan{
+			Report: agent.TurnResolution{
+				Artifact:          agent.TurnArtifactReport,
+				Operation:         agent.TurnOperationRevise,
+				Scope:             agent.TurnScopeBlock,
+				TargetRefHint:     "结论部分",
+				MutationRequested: true,
+				Confidence:        0.92,
+			},
 		}, nil
 	})
 
@@ -336,8 +336,6 @@ func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) 
 }
 
 func TestResolvePreparedUserMessageIncludesGoalResolution(t *testing.T) {
-	t.Parallel()
-
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -353,12 +351,14 @@ func TestResolvePreparedUserMessageIncludesGoalResolution(t *testing.T) {
 		EditState: &tools.ReportEditState{},
 		Subgoals:  subgoals,
 	}
-	sess.Engine.SetGoalResolver(func(context.Context, *agent.PromptBundle) (agent.GoalResolution, error) {
-		return agent.GoalResolution{
-			Action:        agent.GoalResolutionReconcile,
-			RejectGoalIDs: []string{rootID},
-			AddGoals:      []string{"改写当前报告结构"},
-			Confidence:    0.9,
+	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
+		return agent.TurnPlan{
+			Goals: agent.GoalResolution{
+				Action:        agent.GoalResolutionReconcile,
+				RejectGoalIDs: []string{rootID},
+				AddGoals:      []string{"改写当前报告结构"},
+				Confidence:    0.9,
+			},
 		}, nil
 	})
 

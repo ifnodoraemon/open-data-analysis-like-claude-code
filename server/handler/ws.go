@@ -462,12 +462,12 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 		goalResolution agent.GoalResolution
 		err            error
 	)
-	if hasReportTarget {
-		resolution, err = sess.Engine.ResolveTurn(ctx, userMsg.Content, baseRuntime)
-		if err != nil {
-			return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, err
-		}
+	plan, err := sess.Engine.ResolveTurnPlan(ctx, userMsg.Content, baseRuntime)
+	if err != nil {
+		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, err
 	}
+	resolution = plan.Report
+	goalResolution = plan.Goals
 
 	var extra []agent.RuntimeContextBlock
 	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
@@ -477,10 +477,6 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 		extra = append(extra, *block)
 	}
 	if hasGoalState {
-		goalResolution, err = sess.Engine.ResolveGoals(ctx, userMsg.Content, baseRuntime)
-		if err != nil {
-			return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, err
-		}
 		if block := goalResolution.RuntimeContextBlock(); block != nil {
 			extra = append(extra, *block)
 		}

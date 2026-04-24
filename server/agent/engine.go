@@ -15,14 +15,15 @@ import (
 
 // Engine Agent 主循环引擎
 type Engine struct {
-	llm           *LLMClient
-	registry      *tools.Registry
-	policy        string
-	history       []ConversationItem
-	contextDigest string
-	turnResolver  func(context.Context, *PromptBundle) (TurnResolution, error)
-	goalResolver  func(context.Context, *PromptBundle) (GoalResolution, error)
-	mu            sync.Mutex
+	llm              *LLMClient
+	registry         *tools.Registry
+	policy           string
+	history          []ConversationItem
+	contextDigest    string
+	turnPlanResolver func(context.Context, *PromptBundle) (TurnPlan, error)
+	turnResolver     func(context.Context, *PromptBundle) (TurnResolution, error)
+	goalResolver     func(context.Context, *PromptBundle) (GoalResolution, error)
+	mu               sync.Mutex
 }
 
 const (
@@ -153,6 +154,12 @@ func (e *Engine) SetTurnResolver(resolver func(context.Context, *PromptBundle) (
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.turnResolver = resolver
+}
+
+func (e *Engine) SetTurnPlanResolver(resolver func(context.Context, *PromptBundle) (TurnPlan, error)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.turnPlanResolver = resolver
 }
 
 func (e *Engine) SetGoalResolver(resolver func(context.Context, *PromptBundle) (GoalResolution, error)) {
