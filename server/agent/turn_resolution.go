@@ -152,6 +152,10 @@ func normalizeTurnResolution(res TurnResolution) TurnResolution {
 	return res
 }
 
+func NormalizeTurnResolutionForHandler(res TurnResolution) TurnResolution {
+	return normalizeTurnResolution(res)
+}
+
 func normalizeEnum(value, fallback string, allowed []string) string {
 	for _, item := range allowed {
 		if value == item {

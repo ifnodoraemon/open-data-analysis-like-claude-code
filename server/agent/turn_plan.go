@@ -44,6 +44,7 @@ report rules:
 - Set mutation_requested=true only when the user wants the report changed.
 - Prefer whole_report only when the whole report is the target.
 - Prefer block, selection, chart, or layout when the user is clearly targeting that narrower scope.
+- If runtime context contains an active partial_selection edit scope and the user gives a follow-up refinement without naming a new target, prefer scope="selection" so the current anchored selection can be reused.
 
 goals object:
 - action: "keep" | "reconcile" | "clarify" | "unknown"

@@ -419,6 +419,25 @@ func (s *Session) ClearEditState() {
 	s.ConfigureEditState(nil)
 }
 
+func (s *Session) CurrentEditContext() *agent.ReportEditContext {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.EditState == nil || !s.EditState.Active() {
+		return nil
+	}
+	return &agent.ReportEditContext{
+		Mode:                s.EditState.Mode,
+		TargetRunID:         s.EditState.TargetRunID,
+		BlockID:             s.EditState.TargetBlockID,
+		BlockLabel:          s.EditState.TargetBlockLabel,
+		ChartID:             s.EditState.TargetChartID,
+		SelectionText:       s.EditState.SelectionText,
+		SelectionStart:      s.EditState.SelectionStart,
+		SelectionEnd:        s.EditState.SelectionEnd,
+		PreserveOtherBlocks: s.EditState.PreserveOtherBlocks,
+	}
+}
+
 func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

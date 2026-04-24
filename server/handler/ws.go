@@ -447,6 +447,7 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 		return userMsg, nil, agent.TurnResolution{}, agent.GoalResolution{}, nil
 	}
 
+	currentEdit := sess.CurrentEditContext()
 	baseRuntime := sess.RuntimeVars()
 	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
 		baseRuntime = append(baseRuntime, *targetBlock)
@@ -486,8 +487,41 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 			edit.TargetRunID = strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID)
 		}
 		userMsg.EditContext = edit
+	} else if edit := reuseActiveSelectionEditContext(resolution, currentEdit, userMsg.TurnContext); edit != nil {
+		userMsg.EditContext = edit
 	}
 	return userMsg, extra, resolution, goalResolution, nil
+}
+
+func reuseActiveSelectionEditContext(resolution agent.TurnResolution, currentEdit *agent.ReportEditContext, turnCtx *agent.TurnContext) *agent.ReportEditContext {
+	res := agent.NormalizeTurnResolutionForHandler(resolution)
+	if res.Artifact != agent.TurnArtifactReport || !res.MutationRequested || res.NeedsClarification {
+		return nil
+	}
+	if res.Scope != agent.TurnScopeSelection || res.Confidence < 0.80 {
+		return nil
+	}
+	if currentEdit == nil || strings.TrimSpace(currentEdit.SelectionText) == "" {
+		return nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(currentEdit.Mode))
+	if mode != "regenerate_selection" && mode != "revise_selection" {
+		return nil
+	}
+	edit := &agent.ReportEditContext{
+		Mode:                currentEdit.Mode,
+		TargetRunID:         currentEdit.TargetRunID,
+		BlockID:             currentEdit.BlockID,
+		BlockLabel:          currentEdit.BlockLabel,
+		SelectionText:       currentEdit.SelectionText,
+		SelectionStart:      currentEdit.SelectionStart,
+		SelectionEnd:        currentEdit.SelectionEnd,
+		PreserveOtherBlocks: true,
+	}
+	if turnCtx != nil && strings.TrimSpace(turnCtx.ReportTargetRunID) != "" {
+		edit.TargetRunID = strings.TrimSpace(turnCtx.ReportTargetRunID)
+	}
+	return edit
 }
 
 func hasRuntimeBlock(blocks []agent.RuntimeContextBlock, name string) bool {

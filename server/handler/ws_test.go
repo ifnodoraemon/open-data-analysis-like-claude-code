@@ -379,3 +379,63 @@ func TestResolvePreparedUserMessageIncludesGoalResolution(t *testing.T) {
 		t.Fatalf("expected reject goal id in runtime block, got %q", extra[0].Content)
 	}
 }
+
+func TestResolvePreparedUserMessageReusesActiveSelectionScope(t *testing.T) {
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+
+	sess := &session.Session{
+		Engine: agent.NewEngine(tools.NewRegistry(), ""),
+		ReportState: &tools.ReportState{
+			Blocks: []tools.ReportBlock{
+				{ID: "b1", Kind: "markdown", Title: "结论", Content: "原文内容"},
+			},
+			NeedsFinalize: true,
+		},
+		EditState: &tools.ReportEditState{
+			Mode:                "regenerate_selection",
+			TargetRunID:         "run_report_1",
+			TargetBlockID:       "b1",
+			TargetBlockLabel:    "结论",
+			SelectionText:       "这句需要改短",
+			SelectionStart:      4,
+			SelectionEnd:        10,
+			PreserveOtherBlocks: true,
+		},
+	}
+	sess.Engine.SetTurnPlanResolver(func(context.Context, *agent.PromptBundle) (agent.TurnPlan, error) {
+		return agent.TurnPlan{
+			Report: agent.TurnResolution{
+				Artifact:          agent.TurnArtifactReport,
+				Operation:         agent.TurnOperationRevise,
+				Scope:             agent.TurnScopeSelection,
+				MutationRequested: true,
+				Confidence:        0.9,
+			},
+		}, nil
+	})
+
+	prepared, extra, resolution, _, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{Content: "再改短一点"})
+	if err != nil {
+		t.Fatalf("resolve prepared user message: %v", err)
+	}
+	if resolution.Scope != agent.TurnScopeSelection {
+		t.Fatalf("expected selection-scope resolution, got %#v", resolution)
+	}
+	if prepared.EditContext == nil {
+		t.Fatal("expected selection edit context to be reused")
+	}
+	if prepared.EditContext.Mode != "regenerate_selection" || prepared.EditContext.BlockID != "b1" {
+		t.Fatalf("unexpected reused edit context: %#v", prepared.EditContext)
+	}
+	if prepared.EditContext.SelectionStart != 4 || prepared.EditContext.SelectionEnd != 10 {
+		t.Fatalf("expected reused selection anchors, got %#v", prepared.EditContext)
+	}
+	if prepared.EditContext.TargetRunID != "run_report_1" {
+		t.Fatalf("expected target run to carry through, got %#v", prepared.EditContext)
+	}
+	if len(extra) != 1 || extra[0].Name != "current_turn_resolution" || !strings.Contains(extra[0].Content, "Scope: selection") {
+		t.Fatalf("expected selection-scope runtime block, got %#v", extra)
+	}
+}
