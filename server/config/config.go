@@ -140,17 +140,17 @@ func trustedReportScriptURL(raw string) bool {
 	}
 }
 
-func getEnv(key, fallback string) string {
+func getEnv(key, defaultValue string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}
-	return fallback
+	return defaultValue
 }
 
-func getEnvBool(key string, fallback bool) bool {
+func getEnvBool(key string, defaultValue bool) bool {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return fallback
+		return defaultValue
 	}
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":
@@ -158,18 +158,18 @@ func getEnvBool(key string, fallback bool) bool {
 	case "0", "false", "no", "off":
 		return false
 	default:
-		return fallback
+		return defaultValue
 	}
 }
 
-func getEnvInt(key string, fallback int) int {
+func getEnvInt(key string, defaultValue int) int {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return fallback
+		return defaultValue
 	}
 	result, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
-		return fallback
+		return defaultValue
 	}
 	return result
 }

@@ -273,7 +273,6 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, toolSp
 		"output_preview":      clipText(apiResp.OutputText, 300),
 		"output_chars":        len([]rune(apiResp.OutputText)),
 		"item_count":          len(apiResp.Output),
-		"choice_count":        len(apiResp.Choices),
 		"status":              apiResp.Status,
 		"instructions_match":  !hasPromptMismatch(reqBody.Instructions, apiResp.Instructions),
 		"tool_call_count":     countResponsesToolCalls(apiResp.Output),
@@ -325,7 +324,6 @@ type responsesAPIResponse struct {
 	Output       []responsesOutputItem `json:"output"`
 	Usage        responsesAPIUsage     `json:"usage"`
 	Error        *responsesAPIError    `json:"error"`
-	Choices      []responsesChoice     `json:"choices"`
 	Message      *responsesMessage     `json:"message"`
 	Content      interface{}           `json:"content"`
 	Text         interface{}           `json:"text"`
@@ -361,26 +359,9 @@ type responsesOutputContent struct {
 	Text string `json:"text"`
 }
 
-type responsesChoice struct {
-	Message      responsesMessage `json:"message"`
-	FinishReason string           `json:"finish_reason"`
-}
-
 type responsesMessage struct {
-	Role      string                  `json:"role"`
-	Content   interface{}             `json:"content"`
-	ToolCalls []responsesChatToolCall `json:"tool_calls"`
-}
-
-type responsesChatToolCall struct {
-	ID       string                    `json:"id"`
-	Type     string                    `json:"type"`
-	Function responsesChatFunctionCall `json:"function"`
-}
-
-type responsesChatFunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
 }
 
 type responsesSSEEvent struct {
@@ -468,7 +449,7 @@ func (r *responsesAPIResponse) isEmptyOutput() bool {
 	if strings.TrimSpace(contentToText(r.Content)) != "" || strings.TrimSpace(messageText(r.Message)) != "" {
 		return false
 	}
-	return len(r.Output) == 0 && len(r.Choices) == 0
+	return len(r.Output) == 0
 }
 
 func hasPromptMismatch(requestInstructions, responseInstructions string) bool {
@@ -665,35 +646,6 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *LLMRes
 			})
 		}
 	}
-	for _, compatibleChoice := range resp.Choices {
-		if strings.TrimSpace(resp.OutputText) == "" {
-			if text := contentToText(compatibleChoice.Message.Content); text != "" {
-				textParts = append(textParts, text)
-			}
-		}
-		for _, toolCall := range compatibleChoice.Message.ToolCalls {
-			if strings.TrimSpace(toolCall.Function.Name) == "" {
-				continue
-			}
-			choice.FinishReason = LLMFinishReasonToolCalls
-			callType := toolCall.Type
-			if callType == "" {
-				callType = LLMToolTypeFunction
-			}
-			choice.Message.ToolCalls = append(choice.Message.ToolCalls, LLMToolCall{
-				ID:   toolCall.ID,
-				Type: callType,
-				Function: LLMFunctionCall{
-					Name:      toolCall.Function.Name,
-					Arguments: toolCall.Function.Arguments,
-				},
-			})
-		}
-		if compatibleChoice.FinishReason == "tool_calls" {
-			choice.FinishReason = LLMFinishReasonToolCalls
-		}
-	}
-
 	choice.Message.Content = strings.TrimSpace(strings.Join(textParts, "\n"))
 	return &LLMResponse{
 		Choices: []LLMChoice{choice},

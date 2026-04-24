@@ -490,7 +490,7 @@ func TestGetSessionRuntimeStatePrefersLiveSessionStateOverPersistedDraft(t *test
 		Content: `{
 			"html":"<p>persisted draft</p>",
 			"report_snapshot":{
-				"title":"旧草稿",
+				"title":"暂存草稿",
 				"needsFinalize":true,
 				"blocks":[{"id":"blk_1","kind":"markdown","content":"persisted draft"}],
 				"charts":[]
@@ -514,7 +514,7 @@ func TestGetSessionRuntimeStatePrefersLiveSessionStateOverPersistedDraft(t *test
 		t.Fatalf("expected live empty runtime state, got memory=%#v subgoals=%#v", memory, subgoals)
 	}
 	if reportSnapshot != nil || reportHTML != "" {
-		t.Fatalf("expected live session to suppress persisted draft fallback, got snapshot=%#v html=%q", reportSnapshot, reportHTML)
+		t.Fatalf("expected live session to suppress persisted draft snapshot, got snapshot=%#v html=%q", reportSnapshot, reportHTML)
 	}
 	if editState == nil || editState.Active {
 		t.Fatalf("expected inactive live edit state, got %#v", editState)

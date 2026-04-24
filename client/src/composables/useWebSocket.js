@@ -76,7 +76,6 @@ export function useWebSocket() {
   function summarizeEventForPreview(event) {
     switch (event.type) {
       case "assistant_status":
-      case "thinking":
         return clipPreviewText(event.data?.content);
       case "tool_call":
         return event.data?.name || "tool_call";
@@ -84,7 +83,7 @@ export function useWebSocket() {
         const raw = event.data?.result || "";
         try {
           const parsed = JSON.parse(raw);
-          return clipPreviewText(parsed.ui_summary || parsed.delegate_summary || parsed.message || `${event.data?.name || "tool_result"}: ${raw}`);
+          return clipPreviewText(parsed.ui_summary || parsed.message || `${event.data?.name || "tool_result"}: ${raw}`);
         } catch {
           return clipPreviewText(`${event.data?.name || "tool_result"}: ${raw}`);
         }
@@ -299,7 +298,7 @@ export function useWebSocket() {
             if (msg.type === "tool_call") {
               try { parsedArgs = JSON.parse(msg.content); } catch { parsedArgs = msg.content; }
             } else if (msg.type === "user_request_input") {
-              try { parsedArgs = JSON.parse(msg.content); } catch { parsedArgs = { question: msg.content }; }
+              try { parsedArgs = JSON.parse(msg.content); } catch { parsedArgs = {}; }
             }
             if (msg.type === "tool_result") {
               try { parsedResult = JSON.parse(msg.content); } catch { parsedResult = null; }
@@ -312,8 +311,14 @@ export function useWebSocket() {
               name: msg.name,
               arguments: msg.type === "tool_call" ? parsedArgs : undefined,
               question: msg.type === "user_request_input" ? parsedArgs?.question : undefined,
-              options: msg.type === "user_request_input" ? parsedArgs?.options : undefined,
+              reason: msg.type === "user_request_input" ? parsedArgs?.reason : undefined,
+              scope: msg.type === "user_request_input" ? parsedArgs?.scope : undefined,
+              context_ref: msg.type === "user_request_input" ? parsedArgs?.context_ref : undefined,
+              input_hint: msg.type === "user_request_input" ? parsedArgs?.input_hint : undefined,
+              required: msg.type === "user_request_input" ? parsedArgs?.required || false : undefined,
               allow_multiple: msg.type === "user_request_input" ? parsedArgs?.allow_multiple || false : undefined,
+              allow_custom: msg.type === "user_request_input" ? parsedArgs?.allow_custom !== false : undefined,
+              options: msg.type === "user_request_input" ? parsedArgs?.options || [] : undefined,
               result: msg.type === "tool_result" ? msg.content : undefined,
               parsedResult,
               duration: msg.duration,
@@ -430,7 +435,7 @@ export function useWebSocket() {
   function handleEvent(event, store) {
     if (event.sessionId && store.sessionId && event.sessionId !== store.sessionId) return;
     const relevantRunIds = [store.activeRunId, store.selectedRunId].filter(Boolean);
-    const selectedRunScopedTypes = new Set(["assistant_status", "thinking", "tool_call", "tool_result", "user_request_input"]);
+    const selectedRunScopedTypes = new Set(["assistant_status", "tool_call", "tool_result", "user_request_input"]);
     if (event.runId && relevantRunIds.length > 0 && !relevantRunIds.includes(event.runId) && selectedRunScopedTypes.has(event.type)) return;
 
     switch (event.type) {
@@ -463,7 +468,6 @@ export function useWebSocket() {
         });
         break;
       case "assistant_status":
-      case "thinking":
         appendRunPreview(event);
         if (!shouldShowRunEvent(event.runId)) break;
         store.addMessage({ type: "assistant_status", content: event.data.content });
@@ -541,8 +545,16 @@ export function useWebSocket() {
         appendRunPreview(event);
         if (!shouldShowRunEvent(event.runId)) break;
         store.addMessage({
-          type: "user_request_input", question: event.data.question,
-          options: event.data.options, allow_multiple: event.data.allow_multiple || false,
+          type: "user_request_input",
+          question: event.data.question,
+          reason: event.data.reason,
+          scope: event.data.scope,
+          context_ref: event.data.context_ref,
+          input_hint: event.data.input_hint,
+          required: event.data.required || false,
+          allow_multiple: event.data.allow_multiple || false,
+          allow_custom: event.data.allow_custom !== false,
+          options: event.data.options || [],
         });
         break;
       case "state_subgoals_updated":
@@ -637,18 +649,25 @@ export function useWebSocket() {
       return;
     }
 
+    const waitingRunId = store.activeRunId;
+    const waitingRun = waitingRunId ? store.getRun(waitingRunId) : null;
+    const isAnsweringUserRequest = waitingRun?.status === "waiting_user_input";
+
     store.setRunning(true);
-    if (store.sessionId) {
+    if (isAnsweringUserRequest) {
+      store.patchRun(waitingRunId, { status: "running", updatedAt: new Date().toISOString() });
+    }
+    if (!isAnsweringUserRequest && store.sessionId) {
       store.upsertSession({ id: store.sessionId, title: deriveSessionTitle(value), lastSeenAt: new Date().toISOString() });
     }
-    const payload = { content: value };
-    if (options.editContext) payload.editContext = options.editContext;
-    if (options.turnContext) payload.turnContext = options.turnContext;
+    const payload = { content: String(options.payloadContent || value).trim() };
+    if (!isAnsweringUserRequest && options.editContext) payload.editContext = options.editContext;
+    if (!isAnsweringUserRequest && options.turnContext) payload.turnContext = options.turnContext;
     store.addMessage({
       type: "user",
       content: value,
-      editContext: options.editContext || null,
-      turnContext: options.turnContext || null,
+      editContext: isAnsweringUserRequest ? null : options.editContext || null,
+      turnContext: isAnsweringUserRequest ? null : options.turnContext || null,
     });
     send("user_message", payload);
   }

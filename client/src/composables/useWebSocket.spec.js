@@ -28,7 +28,7 @@ describe("useWebSocket deduplication", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not inject a synthetic completion message on report_final", async () => {
+  it("does not inject an artificial completion message on report_final", async () => {
     const store = useAgentStore();
     store.setToken("test-token");
     store.setSession("sess-1");
@@ -489,6 +489,77 @@ describe("useWebSocket deduplication", () => {
     expect(store.subgoals[0].id).toBe("goal_123");
     expect(store.reportHTML).toBe("<p>shared draft html</p>");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends waiting user input as a raw tool answer without edit context", async () => {
+    const store = useAgentStore();
+    store.setToken("test-token");
+    store.setSession("sess-1");
+    store.upsertSession({ id: "sess-1", title: "Existing title" });
+    store.upsertRun({ id: "run-1", sessionId: "sess-1", status: "waiting_user_input" });
+    store.startRun("run-1");
+    store.setRunning(false);
+    store.patchRun("run-1", { status: "waiting_user_input" });
+
+    global.location = { protocol: "http:", host: "localhost" };
+
+    const sent = [];
+    class MockWebSocket {
+      constructor(url, protocols) {
+        this.url = url;
+        this.protocols = protocols;
+        this.readyState = 1;
+        setTimeout(() => {
+          this.onopen?.();
+        }, 1);
+      }
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      }
+      close() {
+        this.onclose?.();
+      }
+    }
+    MockWebSocket.CONNECTING = 0;
+    MockWebSocket.OPEN = 1;
+    MockWebSocket.CLOSING = 2;
+    MockWebSocket.CLOSED = 3;
+    vi.stubGlobal("WebSocket", MockWebSocket);
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+      text: async () => "",
+    });
+
+    const { connect, disconnect, sendMessage } = useWebSocket();
+    await connect();
+    const answerPayload = JSON.stringify({
+      response_type: "selection",
+      selected_option_ids: ["gross"],
+      selected_options: [{ id: "gross", label: "Gross amount" }],
+      custom_response: "",
+    });
+    await sendMessage("选择：Gross amount", {
+      payloadContent: answerPayload,
+      editContext: { mode: "regenerate_selection", blockId: "b1" },
+      turnContext: { reportTargetRunId: "run-old" },
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].type).toBe("user_message");
+    expect(sent[0].data).toEqual({ content: answerPayload });
+    expect(store.getRun("run-1")?.status).toBe("running");
+    expect(store.sessions[0]?.title).toBe("Existing title");
+    expect(store.messages.at(-1)).toMatchObject({
+      type: "user",
+      content: "选择：Gross amount",
+      editContext: null,
+      turnContext: null,
+    });
+
+    disconnect();
+    global.fetch = undefined;
   });
 
   it("does not let report_update from another run overwrite the selected historical report", async () => {

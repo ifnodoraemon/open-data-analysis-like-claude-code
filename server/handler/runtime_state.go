@@ -200,10 +200,9 @@ func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]st
 				}
 				switch callPayload.Action {
 				case "add":
-					// 从 tool result 中提取真实 goal_id，而不是用 fallback derived_goal_N
+					// 从 tool result 中提取真实 goal_id；格式异常时不构造派生占位 ID。
 					realID := extractGoalIDFromResult(msg.Content)
 					if realID == "" {
-						// 最后手段：无法获取真实 ID，说明 result 格式异常，跳过
 						continue
 					}
 					subgoals = append(subgoals, agent.Subgoal{

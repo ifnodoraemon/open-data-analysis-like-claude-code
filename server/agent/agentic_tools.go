@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
@@ -91,12 +92,12 @@ func (t *SaveMemoryTool) Execute(args json.RawMessage) (string, error) {
 	saved := t.Memory.SaveFact(payload.Key, payload.Fact)
 	if !saved {
 		return marshalToolPayload(map[string]interface{}{
-			"ok":                      false,
-			"tool":                    "memory_save_fact",
-			"memory_key":              payload.Key,
-			"error":                   fmt.Sprintf("working memory full (%d facts max)", maxFacts),
-			"fact_count":              len(t.Memory.Snapshot()),
-			"ui_summary":              fmt.Sprintf("Working memory full, cannot save [%s].", payload.Key),
+			"ok":         false,
+			"tool":       "memory_save_fact",
+			"memory_key": payload.Key,
+			"error":      fmt.Sprintf("working memory full (%d facts max)", maxFacts),
+			"fact_count": len(t.Memory.Snapshot()),
+			"ui_summary": fmt.Sprintf("Working memory full, cannot save [%s].", payload.Key),
 		})
 	}
 	facts := t.Memory.Snapshot()
@@ -162,7 +163,7 @@ func (t *AskUserTool) Name() string {
 }
 
 func (t *AskUserTool) Description() string {
-	return "Send an input request to the user and suspend the current run as waiting_user_input. Reads the `question` parameter and optional `options`; does not directly return the user answer. The subsequent user reply will be written back as the tool call result."
+	return "Send an input request to the user and suspend the current run as waiting_user_input. Supports optional selectable options, single or multiple selection, and optional custom text. Reads question, reason, scope, context_ref, input_hint, required, allow_multiple, allow_custom, and options. Does not directly return the user answer; the subsequent user reply is written back as the tool call result."
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {
@@ -186,6 +187,10 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 				"type": "string",
 				"description": "Associated context, e.g. table name, column name, metric name."
 			},
+			"input_hint": {
+				"type": "string",
+				"description": "Optional concise hint for the user's custom answer, e.g. 'Type the join key to use, or explain another rule'."
+			},
 			"required": {
 				"type": "boolean",
 				"description": "Whether confirmation is required; if true, user cannot skip.",
@@ -193,39 +198,81 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 			},
 			"allow_multiple": {
 				"type": "boolean",
-				"description": "Whether multiple selections are allowed; if true, returns option IDs as a JSON array.",
+				"description": "Whether multiple option selections are allowed when options are provided.",
 				"default": false
+			},
+			"allow_custom": {
+				"type": "boolean",
+				"description": "Whether the user may provide a custom text answer instead of, or in addition to, selecting options.",
+				"default": true
 			},
 			"options": {
 				"type": "array",
 				"items": {
 					"type": "object",
 					"properties": {
-						"id":    {"type": "string", "description": "Stable option ID"},
-						"label": {"type": "string", "description": "Option display text"},
-						"hint":  {"type": "string", "description": "Option description"}
+						"id": {"type": "string", "description": "Stable option ID."},
+						"label": {"type": "string", "description": "Display label."},
+						"hint": {"type": "string", "description": "Optional short explanation."}
 					},
 					"required": ["id", "label"]
 				},
-				"description": "List of selectable options, each with a stable ID."
+				"description": "Optional selectable options. If omitted, the UI presents a custom text answer only."
 			}
 		},
 		"required": ["question"]
 	}`)
 }
 
-func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
-	var payload struct {
-		Question      string          `json:"question"`
-		Reason        string          `json:"reason"`
-		Scope         string          `json:"scope"`
-		ContextRef    string          `json:"context_ref"`
-		Required      bool            `json:"required"`
-		AllowMultiple bool            `json:"allow_multiple"`
-		Options       []AskUserOption `json:"options"`
+type askUserToolCallArguments struct {
+	Question      string          `json:"question"`
+	Reason        string          `json:"reason"`
+	Scope         string          `json:"scope"`
+	ContextRef    string          `json:"context_ref"`
+	InputHint     string          `json:"input_hint"`
+	Required      bool            `json:"required"`
+	AllowMultiple bool            `json:"allow_multiple"`
+	AllowCustom   *bool           `json:"allow_custom"`
+	Options       []AskUserOption `json:"options"`
+}
+
+func parseAskUserToolCallArguments(rawArgs string) (AskUserData, error) {
+	var args askUserToolCallArguments
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return AskUserData{}, fmt.Errorf("user_request_input parameter parse failed: %w", err)
 	}
-	if err := json.Unmarshal(args, &payload); err != nil {
-		return "", fmt.Errorf("invalid arguments: %v", err)
+	question := strings.TrimSpace(args.Question)
+	if question == "" {
+		return AskUserData{}, fmt.Errorf("user_request_input question is required")
+	}
+	allowCustom := true
+	if args.AllowCustom != nil {
+		allowCustom = *args.AllowCustom
+	}
+	options, err := validateAskUserOptions(args.Options)
+	if err != nil {
+		return AskUserData{}, err
+	}
+	if len(options) == 0 && !allowCustom {
+		return AskUserData{}, fmt.Errorf("user_request_input requires options when allow_custom is false")
+	}
+	return AskUserData{
+		Question:      question,
+		Reason:        strings.TrimSpace(args.Reason),
+		Scope:         strings.TrimSpace(args.Scope),
+		ContextRef:    strings.TrimSpace(args.ContextRef),
+		InputHint:     strings.TrimSpace(args.InputHint),
+		Required:      args.Required,
+		AllowMultiple: args.AllowMultiple,
+		AllowCustom:   allowCustom,
+		Options:       options,
+	}, nil
+}
+
+func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
+	payload, err := parseAskUserToolCallArguments(string(args))
+	if err != nil {
+		return "", err
 	}
 
 	return marshalToolPayload(map[string]interface{}{
@@ -235,10 +282,34 @@ func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 		"reason":         payload.Reason,
 		"scope":          payload.Scope,
 		"context_ref":    payload.ContextRef,
+		"input_hint":     payload.InputHint,
 		"required":       payload.Required,
 		"allow_multiple": payload.AllowMultiple,
+		"allow_custom":   payload.AllowCustom,
 		"options":        payload.Options,
 		"run_status":     "waiting_user_input",
 		"ui_summary":     "User input request sent.",
 	})
+}
+
+func validateAskUserOptions(options []AskUserOption) ([]AskUserOption, error) {
+	out := make([]AskUserOption, 0, len(options))
+	seen := make(map[string]struct{}, len(options))
+	for index, option := range options {
+		id := strings.TrimSpace(option.ID)
+		label := strings.TrimSpace(option.Label)
+		if id == "" || label == "" {
+			return nil, fmt.Errorf("user_request_input options[%d] requires non-empty id and label", index)
+		}
+		if _, exists := seen[id]; exists {
+			return nil, fmt.Errorf("user_request_input option id %q is duplicated", id)
+		}
+		seen[id] = struct{}{}
+		out = append(out, AskUserOption{
+			ID:    id,
+			Label: label,
+			Hint:  strings.TrimSpace(option.Hint),
+		})
+	}
+	return out, nil
 }

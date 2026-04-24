@@ -332,7 +332,7 @@ func TestReimport_ClearsStaleSemanticState(t *testing.T) {
 		t.Fatalf("GenerateSchemaMetadata: %v", err)
 	}
 	mockChatFn := func(ctx context.Context, sys, usr string) (string, error) {
-		return `{"table_summary":"旧分析","columns":[],"relations":[]}`, nil
+		return `{"table_summary":"既有分析","columns":[],"relations":[]}`, nil
 	}
 	if err := ing.EnrichSemanticProfile(context.Background(), "sales", mockChatFn); err != nil {
 		t.Fatalf("EnrichSemanticProfile: %v", err)
@@ -358,7 +358,7 @@ func TestReimport_ClearsStaleSemanticState(t *testing.T) {
 		t.Fatalf("GenerateSchemaMetadata (reimport): %v", err)
 	}
 
-	// 旧的 semantic 状态应被清除
+	// 已失效的 semantic 状态应被清除
 	schemaReady, semanticReady, relationsVerified := ing.GetMetadataReadiness("sales")
 	if !schemaReady {
 		t.Fatal("expected schema_ready=true after reimport")

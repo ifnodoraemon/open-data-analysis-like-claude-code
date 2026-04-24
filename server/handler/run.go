@@ -315,7 +315,7 @@ func buildRunPreview(ctx context.Context, runID string) []map[string]interface{}
 func summarizeRunMessage(msg domain.RunMessage) string {
 	content := strings.TrimSpace(msg.Content)
 	switch msg.Type {
-	case "assistant_status", "thinking":
+	case "assistant_status":
 		return clipPreviewText(content, 120)
 	case "tool_call":
 		return msg.Name
@@ -323,9 +323,6 @@ func summarizeRunMessage(msg domain.RunMessage) string {
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(content), &payload); err == nil {
 			if summary, ok := payload["ui_summary"].(string); ok && strings.TrimSpace(summary) != "" {
-				return clipPreviewText(summary, 120)
-			}
-			if summary, ok := payload["delegate_summary"].(string); ok && strings.TrimSpace(summary) != "" {
 				return clipPreviewText(summary, 120)
 			}
 			if message, ok := payload["message"].(string); ok && strings.TrimSpace(message) != "" {

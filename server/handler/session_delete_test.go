@@ -216,7 +216,7 @@ func TestDeleteSessionResourcesRemovesRuntimeStateAndArtifacts(t *testing.T) {
 		RunID:       "r_1",
 		SessionID:   "s_1",
 		WorkspaceID: "w_1",
-		Type:        "thinking",
+		Type:        "assistant_status",
 		Content:     "working",
 		CreatedAt:   now,
 	}); err != nil {

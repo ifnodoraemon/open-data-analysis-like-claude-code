@@ -14,7 +14,7 @@ func TestApplyReportBlockMutationPreservesExistingSourcesOnUpsert(t *testing.T) 
 				ID:      "summary",
 				Kind:    "markdown",
 				Title:   "摘要",
-				Content: "旧内容",
+				Content: "原内容",
 				Sources: []EvidenceRef{
 					{Kind: "sql", SQL: "select 1"},
 				},

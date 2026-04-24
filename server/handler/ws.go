@@ -641,7 +641,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 			preparedUserMsg, extraRuntime, prepErr := resolvePreparedUserMessage(r.Context(), sess, userMsg)
 			if prepErr != nil {
-				log.Printf("turn resolution failed session_id=%s err=%v", sess.ID, prepErr)
+				log.Printf("prepare user message failed session_id=%s err=%v", sess.ID, prepErr)
 				preparedUserMsg = userMsg
 				extraRuntime = nil
 			}

@@ -35,7 +35,7 @@ func TestPrepareUserRunLoadsSnapshotThroughLoader(t *testing.T) {
 	}
 	loader := &stubSnapshotLoader{
 		snapshot: &domain.ReportSnapshot{
-			Title:         "旧报告",
+			Title:         "原报告",
 			Author:        "tester",
 			NeedsFinalize: true,
 			Blocks: []domain.ReportSnapshotBlock{
@@ -62,7 +62,7 @@ func TestPrepareUserRunLoadsSnapshotThroughLoader(t *testing.T) {
 	if loader.calls != 1 || loader.runID != "run_123" {
 		t.Fatalf("expected loader to be called for target run, calls=%d runID=%q", loader.calls, loader.runID)
 	}
-	if sess.ReportState.FinalTitle != "旧报告" || len(sess.ReportState.Blocks) != 1 {
+	if sess.ReportState.FinalTitle != "原报告" || len(sess.ReportState.Blocks) != 1 {
 		t.Fatalf("expected snapshot to be loaded into report state: %#v", sess.ReportState)
 	}
 	if !sess.ReportState.NeedsFinalize {

@@ -198,11 +198,6 @@ func extractToolSummary(content string) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 		if summary := buildStructuredToolSummary(payload); summary != "" {
-			if tool, ok := payload["tool"].(string); ok && tool == "task_delegate" {
-				if delegateSum, hasSum := payload["delegate_summary"].(string); hasSum && strings.TrimSpace(delegateSum) != "" {
-					return summary + ", delegate_summary=" + strings.TrimSpace(delegateSum)
-				}
-			}
 			return summary
 		}
 		if result, ok := payload["result"].(string); ok && strings.TrimSpace(result) != "" {
@@ -246,6 +241,7 @@ func buildStructuredToolSummary(payload map[string]interface{}) string {
 		"affects_report_delivery",
 		"run_status",
 		"child_run_status",
+		"child_result",
 		"block_count",
 		"chart_count",
 		"delivery_state",
@@ -303,7 +299,7 @@ func buildHistoryDigest(existing string, messages []ConversationItem) string {
 	// 由调用方在注入 RuntimeContext 时统一添加前缀，避免“摘要包摘要”的前缀累积。
 	parts := make([]string, 0, 2)
 	if trimmed := strings.TrimSpace(existing); trimmed != "" {
-		// 已有摘要可能带有前缀（来自旧版本），统一剥离
+		// RuntimeContext 注入时会带展示前缀；digest 正文内部保持无前缀。
 		trimmed = strings.TrimPrefix(trimmed, historyDigestPrefix)
 		trimmed = strings.TrimSpace(trimmed)
 		if trimmed != "" {
@@ -394,39 +390,9 @@ func (e *Engine) prepareRuntimeTools(ctx context.Context, emit func(WSEvent)) {
 func (e *Engine) specialToolHandlers() map[string]specialToolHandler {
 	return map[string]specialToolHandler{
 		"user_request_input": func(ctx context.Context, toolCall LLMToolCall, emit func(WSEvent)) (string, error, bool) {
-			var payload AskUserData
-			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &payload); err != nil {
-				// LLM 可能发送了字符串数组作为 options，尝试降级兼容
-				var raw map[string]interface{}
-				if err2 := json.Unmarshal([]byte(toolCall.Function.Arguments), &raw); err2 == nil {
-					if q, ok := raw["question"].(string); ok {
-						payload.Question = q
-					}
-					if r, ok := raw["reason"].(string); ok {
-						payload.Reason = r
-					}
-					if s, ok := raw["scope"].(string); ok {
-						payload.Scope = s
-					}
-					if c, ok := raw["context_ref"].(string); ok {
-						payload.ContextRef = c
-					}
-					if req, ok := raw["required"].(bool); ok {
-						payload.Required = req
-					}
-					if am, ok := raw["allow_multiple"].(bool); ok {
-						payload.AllowMultiple = am
-					}
-					if opts, ok := raw["options"].([]interface{}); ok {
-						for _, o := range opts {
-							if strOpt, ok2 := o.(string); ok2 {
-								payload.Options = append(payload.Options, AskUserOption{ID: strOpt, Label: strOpt})
-							}
-						}
-					}
-				} else {
-					return "", fmt.Errorf("user_request_input parameter parse failed: %w", err), true
-				}
+			payload, err := parseAskUserToolCallArguments(toolCall.Function.Arguments)
+			if err != nil {
+				return "", err, true
 			}
 			emit(WSEvent{Type: EventUserRequestInput, Data: payload})
 			return "", nil, true
@@ -668,7 +634,7 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			continue // 继续循环
 		}
 
-		// 保护性兜底：正常流程不会到达此处。不要硬编码最终回复；
+		// 保护性错误路径：正常流程不会到达此处。不要硬编码最终回复；
 		// 若模型没有给出文本或工具调用，让 run 以可诊断错误结束。
 		emit(WSEvent{Type: EventError, Data: ErrorData{
 			Message: "模型没有返回可展示的分析内容，也没有请求工具调用。",
@@ -828,14 +794,14 @@ func compactToolResult(toolName, result string) string {
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 			minified, _ := json.Marshal(map[string]interface{}{
-				"ok":               payload["ok"],
-				"tool":             payload["tool"],
-				"child_run_id":     payload["child_run_id"],
-				"delegate_role":    payload["delegate_role"],
-				"goal_id":          payload["goal_id"],
-				"allowed_tools":    payload["allowed_tools"],
-				"delegate_summary": payload["delegate_summary"],
-				"trace_count":      delegateTraceCount(payload),
+				"ok":            payload["ok"],
+				"tool":          payload["tool"],
+				"child_run_id":  payload["child_run_id"],
+				"delegate_role": payload["delegate_role"],
+				"goal_id":       payload["goal_id"],
+				"allowed_tools": payload["allowed_tools"],
+				"child_result":  payload["child_result"],
+				"trace_count":   delegateTraceCount(payload),
 			})
 			return string(minified)
 		}
@@ -970,7 +936,7 @@ func toolCallSucceeded(result string, execErr error) bool {
 	return true
 }
 
-// ProvideAskUserResult 将用户的直接回复作为 user_request_input 工具的执行结果注入 LLM 对话上下文
+// ProvideAskUserResult 将用户回复作为 user_request_input 工具的结构化执行结果注入 LLM 对话上下文。
 func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1014,11 +980,34 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 
 	e.history = append(e.history, ConversationItem{
 		Role:       LLMRoleTool,
-		Content:    "[User Response]: " + userResponse,
+		Content:    buildAskUserToolResult(userResponse),
 		ToolCallID: toolCallID,
 	})
 
 	return nil
+}
+
+func buildAskUserToolResult(userResponse string) string {
+	trimmed := strings.TrimSpace(userResponse)
+	payload := map[string]interface{}{
+		"ok":            true,
+		"tool":          "user_request_input",
+		"response_text": trimmed,
+		"response_json": false,
+		"ui_summary":    "User input received.",
+	}
+	var parsed interface{}
+	if trimmed != "" && json.Unmarshal([]byte(trimmed), &parsed) == nil {
+		payload["response"] = parsed
+		payload["response_json"] = true
+	} else {
+		payload["response"] = trimmed
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return `{"ok":false,"tool":"user_request_input","error":"failed to encode user response"}`
+	}
+	return string(encoded)
 }
 
 var toolErrorSanitizePatterns = []struct {

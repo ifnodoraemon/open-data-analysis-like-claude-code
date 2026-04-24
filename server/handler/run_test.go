@@ -20,27 +20,12 @@ func TestSummarizeRunMessagePrefersUISummary(t *testing.T) {
 	msg := domain.RunMessage{
 		Type:    "tool_result",
 		Name:    "task_delegate",
-		Content: `{"tool":"task_delegate","ui_summary":"子 Agent researcher 已完成: 收集到了 3 个事实","delegate_summary":"收集到了 3 个事实"}`,
+		Content: `{"tool":"task_delegate","ui_summary":"子 Agent researcher 已完成: 收集到了 3 个事实"}`,
 	}
 
 	summary := summarizeRunMessage(msg)
 	if summary != "子 Agent researcher 已完成: 收集到了 3 个事实" {
 		t.Fatalf("expected ui_summary to win, got %q", summary)
-	}
-}
-
-func TestSummarizeRunMessageFallsBackToDelegateSummary(t *testing.T) {
-	t.Parallel()
-
-	msg := domain.RunMessage{
-		Type:    "tool_result",
-		Name:    "task_delegate",
-		Content: `{"tool":"task_delegate","delegate_summary":"收集到了 2 个事实"}`,
-	}
-
-	summary := summarizeRunMessage(msg)
-	if summary != "收集到了 2 个事实" {
-		t.Fatalf("expected delegate_summary fallback, got %q", summary)
 	}
 }
 
@@ -239,7 +224,7 @@ func TestHandlerReportSnapshotLoaderFallsBackToPersistedSessionDraft(t *testing.
 	loader := handlerReportSnapshotLoader{}
 	snapshot, err := loader.LoadReportSnapshot(ctx, "sess_live", "ws_1", "user_1", "run_live_draft")
 	if err != nil {
-		t.Fatalf("expected persisted draft fallback, got err=%v", err)
+		t.Fatalf("expected persisted draft snapshot, got err=%v", err)
 	}
 	if snapshot == nil || snapshot.Title != "当前草稿" || !snapshot.NeedsFinalize {
 		t.Fatalf("expected persisted draft snapshot, got %#v", snapshot)

@@ -111,22 +111,24 @@ type ToolResultData struct {
 	Success  bool   `json:"success"`
 }
 
-// AskUserOption 确认协议的结构化选项
+// AskUserOption 是用户确认卡片中的可选项。
 type AskUserOption struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Hint  string `json:"hint,omitempty"`
 }
 
-// AskUserData 等待用户回答事件（结构化确认协议）
+// AskUserData 等待用户回答的事件。选项只是 UI affordance，用户仍可按配置自行描述。
 type AskUserData struct {
 	Question      string          `json:"question"`
-	Reason        string          `json:"reason,omitempty"`      // 确认原因：为什么需要用户确认
+	Reason        string          `json:"reason,omitempty"`      // 为什么需要用户确认
 	Scope         string          `json:"scope,omitempty"`       // 作用域: join_key | metric | time_grain | filter | general
 	ContextRef    string          `json:"context_ref,omitempty"` // 关联上下文（表名、列名等）
+	InputHint     string          `json:"input_hint,omitempty"`  // 可选的自定义描述提示
 	Required      bool            `json:"required"`
-	AllowMultiple bool            `json:"allow_multiple,omitempty"` // 是否允许多选
-	Options       []AskUserOption `json:"options,omitempty"`        // 结构化选项
+	AllowMultiple bool            `json:"allow_multiple,omitempty"`
+	AllowCustom   bool            `json:"allow_custom"`
+	Options       []AskUserOption `json:"options,omitempty"`
 }
 
 type MemoryUpdatedData struct {

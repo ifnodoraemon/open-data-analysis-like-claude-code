@@ -23,7 +23,7 @@ type Storage struct {
 func New(rootDir, baseURL string) *Storage {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
-		absRoot = rootDir // fallback
+		absRoot = rootDir
 	}
 	return &Storage{
 		rootDir: absRoot,

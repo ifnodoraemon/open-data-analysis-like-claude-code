@@ -54,28 +54,6 @@ data: [DONE]
 	}
 }
 
-func TestConvertResponsesResponseSupportsChatCompletionsShape(t *testing.T) {
-	t.Parallel()
-
-	client := &LLMClient{}
-	resp := client.convertResponsesResponse(&responsesAPIResponse{
-		Choices: []responsesChoice{
-			{Message: responsesMessage{Content: "done"}},
-		},
-		Usage: responsesAPIUsage{
-			PromptTokens:     10,
-			CompletionTokens: 3,
-		},
-	})
-
-	if resp.Choices[0].Message.Content != "done" {
-		t.Fatalf("expected chat-compatible content, got %q", resp.Choices[0].Message.Content)
-	}
-	if resp.Usage.TotalTokens != 13 {
-		t.Fatalf("expected normalized total tokens 13, got %d", resp.Usage.TotalTokens)
-	}
-}
-
 func TestParseResponsesBodyAllowsTextConfigObject(t *testing.T) {
 	t.Parallel()
 

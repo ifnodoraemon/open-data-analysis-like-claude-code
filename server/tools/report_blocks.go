@@ -161,7 +161,7 @@ func moveReportBlock(state *ReportState, editState *ReportEditState, params repo
 	}, nil
 }
 
-func buildBlockID(title string, fallbackIndex int) string {
+func buildBlockID(title string, defaultIndex int) string {
 	base := strings.ToLower(strings.TrimSpace(title))
 	base = strings.ReplaceAll(base, " ", "-")
 	base = strings.ReplaceAll(base, "_", "-")
@@ -169,20 +169,20 @@ func buildBlockID(title string, fallbackIndex int) string {
 	base = strings.ReplaceAll(base, "\\", "-")
 	base = strings.Trim(base, "-")
 	if base == "" {
-		base = fmt.Sprintf("section-%d", fallbackIndex)
+		base = fmt.Sprintf("section-%d", defaultIndex)
 	}
 	return base
 }
 
-func buildReportBlock(kind, blockID, title, content, chartID string, sources []EvidenceRef, fallbackIndex int) (ReportBlock, error) {
+func buildReportBlock(kind, blockID, title, content, chartID string, sources []EvidenceRef, defaultIndex int) (ReportBlock, error) {
 	if blockID == "" {
 		switch {
 		case title != "":
-			blockID = buildBlockID(title, fallbackIndex)
+			blockID = buildBlockID(title, defaultIndex)
 		case chartID != "":
-			blockID = buildBlockID(chartID, fallbackIndex)
+			blockID = buildBlockID(chartID, defaultIndex)
 		default:
-			blockID = fmt.Sprintf("block-%d", fallbackIndex)
+			blockID = fmt.Sprintf("block-%d", defaultIndex)
 		}
 	}
 	block := ReportBlock{

@@ -239,7 +239,7 @@ func (t *DelegateTaskTool) Name() string {
 }
 
 func (t *DelegateTaskTool) Description() string {
-	return "Create a constrained sub-agent and execute a specified task. Reads role_name, task_instruction, allowed_tools, and optional goal_id/policy_appendix; allowed_tools only describes the tool boundary visible to the sub-agent; user_request_input and report_finalize cannot be delegated. On success returns child_run_id, delegate_summary, trace_count, and child_run_status; detailed child trace is persisted for UI/debug instead of being returned to the parent context."
+	return "Create a constrained sub-agent and execute a specified task. Reads role_name, task_instruction, allowed_tools, and optional goal_id/policy_appendix; allowed_tools only describes the tool boundary visible to the sub-agent; user_request_input and report_finalize cannot be delegated. On success returns child_run_id, child_result, trace_count, and child_run_status; detailed child trace is persisted for UI/debug instead of being returned to the parent context."
 }
 
 func (t *DelegateTaskTool) Parameters() json.RawMessage {
@@ -416,7 +416,7 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			// 注意，这里的 compactWorkerBundle 逻辑与 engine.go 中的 compactMessagesLocked 不同。
 			// 主代理由于需要维护长期存在的 Session，会执行较激进的压缩（提炼 Digest、保留少数最近的对话）；
 			// 而子代理 (worker) 的生命周期较短，关注点更内聚。为了避免中间过程的细节事实在频繁提炼中丢失，
-			// 我们通常采取较温和的滑动窗口策略（例如仅截断旧轮次，而不强制使用大范围摘要压缩）。
+			// 我们通常采取较温和的滑动窗口策略（例如仅截断较早轮次，而不强制使用大范围摘要压缩）。
 			compactWorkerBundle(bundle, resp.Usage.PromptTokens)
 		}
 		if err != nil {
@@ -550,7 +550,7 @@ func delegateToolSuccess(childRunID, roleName, taskInstruction string, allowedTo
 		"delegate_role":    roleName,
 		"task_instruction": taskInstruction,
 		"allowed_tools":    allowedTools,
-		"delegate_summary": summary,
+		"child_result":     summary,
 		"child_run_status": string(domain.RunStatusCompleted),
 		"ui_summary":       fmt.Sprintf("Sub-agent %s completed: %s", roleName, summary),
 		"trace_count":      len(trace),

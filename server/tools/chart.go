@@ -328,13 +328,13 @@ func buildPieOption(params createChartParams) (json.RawMessage, error) {
 	return normalized, nil
 }
 
-func firstNonEmptySeriesType(series []chartSeriesInput, fallback string) string {
+func firstNonEmptySeriesType(series []chartSeriesInput, defaultType string) string {
 	for _, item := range series {
 		if value := strings.ToLower(strings.TrimSpace(item.Type)); value != "" {
 			return value
 		}
 	}
-	return fallback
+	return defaultType
 }
 
 func appendIfMissing(items []string, value string) []string {

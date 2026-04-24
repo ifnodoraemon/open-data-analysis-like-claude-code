@@ -234,7 +234,7 @@ func (s *SubgoalManager) collectActiveBranchLines(snapshot finalizeSnapshot) []s
 
 // CanFinalize 检查当前是否允许结束。
 // 判定只基于显式 blocking 的根目标是否闭环；scratchpad 目标不会阻塞交付。
-// 已闭环根目标下面遗留的旧子步骤不会继续阻塞结束。
+// 已闭环根目标下面遗留的历史子步骤不会继续阻塞结束。
 func (s *SubgoalManager) CanFinalize() (bool, []string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

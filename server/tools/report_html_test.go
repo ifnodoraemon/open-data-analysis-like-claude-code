@@ -46,7 +46,7 @@ func TestRenderReportHTMLUsesContentHeadingAsCanonicalSectionTitle(t *testing.T)
 	})
 
 	if strings.Contains(html, "<h2>销售分布与区域表现</h2>") {
-		t.Fatalf("expected markdown block not to render synthetic h2 heading, got: %s", html)
+		t.Fatalf("expected markdown block not to render generated h2 heading, got: %s", html)
 	}
 	if !strings.Contains(html, `<div class="report-block-wrapper" data-block-id="analysis-1" data-block-kind="markdown" data-block-title="2. 销售分布与区域表现">`) {
 		t.Fatalf("expected block title metadata to remain on wrapper, got: %s", html)
@@ -297,7 +297,7 @@ func TestRenderReportHTMLNormalizesPrefixedSectionTitles(t *testing.T) {
 	})
 
 	if !strings.Contains(html, `<h2>一、数据概览</h2>`) || !strings.Contains(html, `<h2>02 各维度分布</h2>`) || !strings.Contains(html, `<h2>第3章 趋势变化</h2>`) {
-		t.Fatalf("expected markdown blocks to render synthetic h2 headings when content lacks headings, got: %s", html)
+		t.Fatalf("expected markdown blocks to render generated h2 headings when content lacks headings, got: %s", html)
 	}
 }
 
@@ -425,23 +425,23 @@ func TestRenderReportHTMLAllowsRepeatedChartReferences(t *testing.T) {
 	}
 }
 
-func TestRenderReportHTMLHistoricalSnapshotFallbackTitle(t *testing.T) {
+func TestRenderReportHTMLUsesBlockTitleWhenContentLacksHeading(t *testing.T) {
 	t.Parallel()
 
-	// 模拟老版本遗留下的快照：Content 中没有 markdown heading，只有纯文本。
-	// 新版本的渲染必须兜底生成 <h2> 标题，否则 TOC 和正文中都找不到这块内容原来的名字。
+	// Markdown block content may intentionally omit a heading; block.Title still
+	// needs to appear in both the TOC and body.
 	html := RenderReportHTML("回归测试", "AI", &ReportState{
 		Blocks: []ReportBlock{
 			{
-				ID:      "old-block-1",
+				ID:      "analysis-block-1",
 				Kind:    "markdown",
-				Title:   "旧版分析模块",
-				Content: "这是一段没有内置 heading 的纯老版本快照文本。",
+				Title:   "分析模块",
+				Content: "这是一段没有内置 heading 的正文。",
 			},
 		},
 	})
 
-	if !strings.Contains(html, "<h2>旧版分析模块</h2>") {
-		t.Fatalf("expected historical snapshot rendering regression test to synthesize h2 title from block.Title when content lacks one, got: %s", html)
+	if !strings.Contains(html, "<h2>分析模块</h2>") {
+		t.Fatalf("expected renderer to use block.Title when content lacks a heading, got: %s", html)
 	}
 }

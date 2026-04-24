@@ -72,7 +72,7 @@ func TestCleanupOldTraces(t *testing.T) {
 
 	traceDir := t.TempDir()
 
-	// 创建一个旧目录和一个新目录
+	// 创建一个过期目录和一个未过期目录
 	oldDir := filepath.Join(traceDir, "2020-01-01")
 	newDir := filepath.Join(traceDir, "2099-12-31")
 	os.MkdirAll(oldDir, 0o755)
@@ -159,10 +159,10 @@ func TestRapidStartStopRestart_NoStateLeak(t *testing.T) {
 		t.Fatal("expected run 2 to be active")
 	}
 
-	// 确认旧 run 不影响新 run
-	sess.FinishRun(runID1, "cancelled") // 尝试 finish 旧 run
+	// 确认非活跃 run 不影响当前 run
+	sess.FinishRun(runID1, "cancelled")
 	if sess.ActiveRun == nil || sess.ActiveRun.RunID != runID2 {
-		t.Fatal("finishing old run should not affect current run")
+		t.Fatal("finishing inactive run should not affect current run")
 	}
 
 	sess.FinishRun(runID2, "completed")

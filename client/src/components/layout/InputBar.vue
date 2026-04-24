@@ -6,7 +6,7 @@
         <span class="source-meta" v-if="src.row_count">({{ src.row_count }} rows)</span>
       </span>
     </div>
-    <div v-if="reportQuote" class="quote-context">
+    <div v-if="reportQuote && !isWaitingUserInput" class="quote-context">
       <div class="quote-main">
         <span class="quote-kicker">引用报告选区</span>
         <span class="quote-title">{{ reportQuote.blockLabel || reportQuote.blockId || "报告片段" }}</span>
@@ -50,21 +50,22 @@
       <textarea
         v-model="input"
         class="input-field"
-        :placeholder="reportQuote ? '说明希望如何修改引用区域...' : '输入你的目标、问题或约束...'"
+        :placeholder="inputPlaceholder"
         aria-label="消息输入框"
         @keydown.enter.exact="handleSend"
         rows="1"
-        :disabled="isRunning"
+        :disabled="inputDisabled"
       ></textarea>
       <button
-        v-if="!isRunning"
+        v-if="!inputDisabled"
         class="send-btn"
         @click="handleSend"
         :disabled="!input.trim()"
       >
         发送 ⏎
       </button>
-      <button v-else class="stop-btn" @click="handleStop">■ 停止</button>
+      <button v-else-if="isRunning" class="stop-btn" @click="handleStop">■ 停止</button>
+      <button v-else class="send-btn" disabled>等待确认</button>
     </div>
     <DataSourceDrawer
       :open="showSourcesDrawer"
@@ -93,6 +94,14 @@ const isUploading = ref(false);
 const showSourcesDrawer = ref(false);
 const reportQuote = computed(() => store.reportQuote);
 const selectedRun = computed(() => store.getRun(store.selectedRunId) || null);
+const activeRun = computed(() => store.getRun(store.activeRunId) || null);
+const isWaitingUserInput = computed(() => activeRun.value?.status === "waiting_user_input");
+const inputDisabled = computed(() => isRunning.value || isWaitingUserInput.value);
+const inputPlaceholder = computed(() => {
+  if (isWaitingUserInput.value) return "请在上方确认卡片中回复...";
+  if (reportQuote.value) return "说明希望如何修改引用区域...";
+  return "输入你的目标、问题或约束...";
+});
 const quotePreview = computed(() => {
   const text = reportQuote.value?.selectionText || "";
   return text.length > 120 ? `${text.slice(0, 120)}...` : text;

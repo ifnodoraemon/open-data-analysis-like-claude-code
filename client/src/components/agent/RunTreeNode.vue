@@ -101,8 +101,6 @@ function previewType(item) {
   switch (item?.type) {
     case "assistant_status":
       return "状态";
-    case "thinking":
-      return "状态";
     case "tool_call":
       return "调用";
     case "tool_result":

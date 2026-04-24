@@ -58,7 +58,7 @@
           </template>
 
           <!-- 状态说明 -->
-          <template v-else-if="msg.type === 'assistant_status' || msg.type === 'thinking'">
+          <template v-else-if="msg.type === 'assistant_status'">
             <div class="msg-icon">●</div>
             <div class="msg-body">
               <div class="msg-label">状态</div>
@@ -85,38 +85,7 @@
           </template>
 
           <template v-else-if="msg.type === 'user_request_input'">
-            <div class="msg-icon">🙋</div>
-            <div class="msg-body">
-              <div class="msg-label ask-user-label">需要您确认</div>
-              <div
-                class="msg-content markdown-body ask-user-question"
-                v-html="renderMarkdown(msg.question)"
-              ></div>
-              <div
-                v-if="msg.options && msg.options.length > 0"
-                class="ask-options"
-                :class="{ 'multi-select': msg.allow_multiple }"
-              >
-                <button
-                  v-for="(opt, idx) in msg.options"
-                  :key="idx"
-                  class="ask-option-btn"
-                  :class="{
-                    selected:
-                      msg.allow_multiple &&
-                      multiSelectDrafts[msg.id]?.includes(opt.id || opt.label),
-                  }"
-                  @click="handleOptionClick(msg, opt.id || opt.label)"
-                >
-                  {{ opt.label || opt.id }}
-                </button>
-              </div>
-              <div v-if="msg.allow_multiple" class="ask-submit">
-                <button class="ask-submit-btn" @click="submitMultiSelect(msg)">
-                  确认选择
-                </button>
-              </div>
-            </div>
+            <UserRequestInput :msg="msg" :render-markdown="renderMarkdown" />
           </template>
 
           <!-- 工具结果 -->
@@ -200,15 +169,14 @@ import plaintext from "highlight.js/lib/languages/plaintext";
 import python from "highlight.js/lib/languages/python";
 import sql from "highlight.js/lib/languages/sql";
 import xml from "highlight.js/lib/languages/xml";
-import { useWebSocket } from "../../composables/useWebSocket.js";
 import { useAgentStore } from "../../stores/agent.js";
 import { sanitizeMarkdownHTML } from "../../utils/sanitize.js";
 import RunTree from "./RunTree.vue";
 import SubgoalTree from "./SubgoalTree.vue";
+import UserRequestInput from "./UserRequestInput.vue";
 import WorkingMemoryPanel from "./WorkingMemoryPanel.vue";
 
 const store = useAgentStore();
-const { openRun, sendMessage } = useWebSocket();
 const messages = computed(() => store.messages);
 const isRunning = computed(() => store.isRunning);
 const selectedRunId = computed(() => store.selectedRunId);
@@ -216,7 +184,6 @@ const activeRunId = computed(() => store.activeRunId);
 const selectedRun = computed(() => store.getRun(selectedRunId.value));
 const activeRun = computed(() => store.getRun(activeRunId.value));
 const messagesEl = ref(null);
-const multiSelectDrafts = ref({});
 
 hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("sh", bash);
@@ -289,7 +256,6 @@ function toolResultSummary(msg) {
   const payload = msg?.parsedResult;
   if (!payload || typeof payload !== "object") return "";
   if (typeof payload.ui_summary === "string" && payload.ui_summary.trim()) return payload.ui_summary;
-  if (typeof payload.delegate_summary === "string" && payload.delegate_summary.trim()) return payload.delegate_summary;
   if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
   return "";
 }
@@ -303,24 +269,6 @@ function editContextLabel(editContext) {
   );
 }
 
-function handleOptionClick(msg, optValue) {
-  if (msg.allow_multiple) {
-    if (!multiSelectDrafts.value[msg.id]) multiSelectDrafts.value[msg.id] = [];
-    const idx = multiSelectDrafts.value[msg.id].indexOf(optValue);
-    if (idx > -1) {
-      multiSelectDrafts.value[msg.id].splice(idx, 1);
-    } else {
-      multiSelectDrafts.value[msg.id].push(optValue);
-    }
-  } else {
-    sendMessage(optValue);
-  }
-}
-
-function submitMultiSelect(msg) {
-  const selected = multiSelectDrafts.value[msg.id] || [];
-  sendMessage(JSON.stringify(selected));
-}
 </script>
 
 <style scoped>
@@ -390,7 +338,7 @@ function submitMultiSelect(msg) {
 }
 
 .msg-icon {
-  font-size: 1rem;
+  font-size: 1.2rem;
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -515,7 +463,6 @@ function submitMultiSelect(msg) {
 }
 
 .msg-assistant_status,
-.msg-thinking,
 .msg-tool_call,
 .msg-tool_result,
 .msg-complete,
@@ -524,14 +471,7 @@ function submitMultiSelect(msg) {
   border-left: none;
 }
 
-.msg-icon {
-  font-size: 1.2rem;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.assistant-status,
-.thinking {
+.assistant-status {
   color: var(--text-muted);
   font-style: italic;
 }
@@ -573,62 +513,4 @@ function submitMultiSelect(msg) {
   border: 1px solid rgba(255, 152, 0, 0.3);
 }
 
-.ask-user-label {
-  color: var(--accent-orange);
-  font-weight: 600;
-}
-
-.ask-user-question {
-  margin-top: 4px;
-}
-
-.ask-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.ask-option-btn {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.ask-option-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent-blue);
-  color: var(--accent-blue);
-}
-
-.ask-option-btn.selected {
-  background: var(--accent-blue);
-  color: white;
-  border-color: var(--accent-blue);
-}
-
-.ask-submit {
-  margin-top: 12px;
-}
-
-.ask-submit-btn {
-  background: var(--accent-green);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 16px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s ease;
-}
-
-.ask-submit-btn:hover {
-  opacity: 0.9;
-}
 </style>

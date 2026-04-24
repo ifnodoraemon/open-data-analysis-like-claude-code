@@ -217,7 +217,7 @@ func TestIsExpectedWebSocketWriteCloseRecognizesClosedConnectionNoise(t *testing
 	}
 }
 
-func TestResolvePreparedUserMessageDoesNotCallHiddenPlanner(t *testing.T) {
+func TestResolvePreparedUserMessageDoesNotCallHiddenResolver(t *testing.T) {
 	prevCfg := config.Cfg
 	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
 	t.Cleanup(func() { config.Cfg = prevCfg })
@@ -238,10 +238,10 @@ func TestResolvePreparedUserMessageDoesNotCallHiddenPlanner(t *testing.T) {
 		t.Fatalf("resolve prepared user message: %v", err)
 	}
 	if prepared.EditContext != nil {
-		t.Fatalf("did not expect hidden planner to materialize edit context: %#v", prepared.EditContext)
+		t.Fatalf("did not expect hidden resolver to materialize edit context: %#v", prepared.EditContext)
 	}
 	if len(extra) != 0 {
-		t.Fatalf("did not expect hidden resolution runtime blocks, got %#v", extra)
+		t.Fatalf("did not expect hidden runtime blocks, got %#v", extra)
 	}
 }
 

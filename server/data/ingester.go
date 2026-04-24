@@ -563,7 +563,7 @@ func (ing *Ingester) insertBatchTyped(tableName string, columns []string, types 
 					if v, err := strconv.ParseInt(val, 10, 64); err == nil {
 						vals[i] = v
 					} else {
-						vals[i] = val // fallback 到文本
+						vals[i] = val // 保留原始文本
 					}
 				case TypeReal:
 					if v, err := strconv.ParseFloat(val, 64); err == nil {
@@ -649,7 +649,7 @@ func (ing *Ingester) ensureMetadataTable() {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
-	// 迁移旧表结构：如果旧表缺少新列则添加
+	// 补齐 metadata 表缺失的新列。
 	for _, col := range []struct{ name, def string }{
 		{"semantic_json", "TEXT"},
 		{"relations_json", "TEXT"},
@@ -690,8 +690,8 @@ func (ing *Ingester) GenerateSchemaMetadata(tableName string) error {
 		return fmt.Errorf("failed to extract schema: %w", err)
 	}
 
-	// 3. 持久化确定性 schema 到 metadata 表，同时清除旧的 semantic 状态
-	//    （schema 变了意味着旧的 LLM 分析已失效）
+	// 3. 持久化确定性 schema 到 metadata 表，同时清除已失效的 semantic 状态。
+	//    schema 变更意味着已有 LLM 分析不再可信。
 	ing.ensureMetadataTable()
 	schemaBytes, _ := json.Marshal(schema)
 	_, err = ing.db.Exec(
@@ -831,7 +831,7 @@ func (ing *Ingester) EnrichSemanticProfile(ctx context.Context, tableName string
 }
 
 // GetActiveTables 获取当前所有已导入的分析表名。
-// 合并 _oda_table_metadata（旧路径）和 sqlite_master（source-first 路径）的结果。
+// 合并 _oda_table_metadata 和 sqlite_master 的结果。
 func (ing *Ingester) GetActiveTables() []string {
 	if ing.db == nil {
 		return nil
