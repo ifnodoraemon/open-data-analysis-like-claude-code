@@ -96,6 +96,45 @@ func TestPrepareUserRunWithoutEditTargetDoesNotLoadSnapshot(t *testing.T) {
 	}
 }
 
+func TestPrepareUserRunLoadsSnapshotFromTurnContextTarget(t *testing.T) {
+	t.Parallel()
+
+	sess := &Session{
+		ID:          "sess_1",
+		WorkspaceID: "ws_1",
+		UserID:      "user_1",
+		ReportState: &tools.ReportState{},
+		EditState:   &tools.ReportEditState{},
+	}
+	loader := &stubSnapshotLoader{
+		snapshot: &domain.ReportSnapshot{
+			Title:         "历史报告",
+			Author:        "tester",
+			NeedsFinalize: true,
+			Blocks: []domain.ReportSnapshotBlock{
+				{ID: "b1", Kind: "markdown", Title: "结论"},
+			},
+		},
+	}
+
+	err := sess.PrepareUserRun(context.Background(), agent.UserMessage{
+		Content: "把这份历史报告整体整理一下",
+		TurnContext: &agent.TurnContext{
+			ReportTargetRunID: "run_history_1",
+			ReportTitle:       "历史报告",
+		},
+	}, loader)
+	if err != nil {
+		t.Fatalf("prepare user run: %v", err)
+	}
+	if loader.calls != 1 || loader.runID != "run_history_1" {
+		t.Fatalf("expected loader to be called for turn context run, calls=%d runID=%q", loader.calls, loader.runID)
+	}
+	if sess.ReportState.FinalTitle != "历史报告" || len(sess.ReportState.Blocks) != 1 {
+		t.Fatalf("expected turn-context snapshot to be loaded into report state: %#v", sess.ReportState)
+	}
+}
+
 func TestSessionRuntimeVars(t *testing.T) {
 	t.Parallel()
 

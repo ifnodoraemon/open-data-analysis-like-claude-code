@@ -637,7 +637,13 @@ export function useWebSocket() {
     }
     const payload = { content: value };
     if (options.editContext) payload.editContext = options.editContext;
-    store.addMessage({ type: "user", content: value, editContext: options.editContext || null });
+    if (options.turnContext) payload.turnContext = options.turnContext;
+    store.addMessage({
+      type: "user",
+      content: value,
+      editContext: options.editContext || null,
+      turnContext: options.turnContext || null,
+    });
     send("user_message", payload);
   }
 

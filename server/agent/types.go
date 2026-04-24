@@ -36,6 +36,7 @@ const (
 type UserMessage struct {
 	Content     string             `json:"content"`
 	EditContext *ReportEditContext `json:"editContext,omitempty"`
+	TurnContext *TurnContext       `json:"turnContext,omitempty"`
 }
 
 type ReportEditContext struct {
@@ -45,6 +46,11 @@ type ReportEditContext struct {
 	BlockLabel          string `json:"blockLabel,omitempty"`
 	SelectionText       string `json:"selectionText,omitempty"`
 	PreserveOtherBlocks bool   `json:"preserveOtherBlocks,omitempty"`
+}
+
+type TurnContext struct {
+	ReportTargetRunID string `json:"reportTargetRunId,omitempty"`
+	ReportTitle       string `json:"reportTitle,omitempty"`
 }
 
 type StopRunRequest struct {

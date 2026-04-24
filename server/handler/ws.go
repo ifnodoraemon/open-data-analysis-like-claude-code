@@ -425,13 +425,33 @@ func buildRunUserContent(sess *session.Session, userMsg agent.UserMessage) (stri
 	return strings.TrimSpace(userMsg.Content), nil
 }
 
+func turnContextRuntimeBlock(turnCtx *agent.TurnContext) *agent.RuntimeContextBlock {
+	if turnCtx == nil || strings.TrimSpace(turnCtx.ReportTargetRunID) == "" {
+		return nil
+	}
+	lines := []string{
+		fmt.Sprintf("ReportTargetRunID: %s", strings.TrimSpace(turnCtx.ReportTargetRunID)),
+	}
+	if title := strings.TrimSpace(turnCtx.ReportTitle); title != "" {
+		lines = append(lines, fmt.Sprintf("ReportTitle: %s", title))
+	}
+	return &agent.RuntimeContextBlock{
+		Name:    "current_turn_target",
+		Role:    "developer",
+		Content: strings.Join(lines, "\n"),
+	}
+}
+
 func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, userMsg agent.UserMessage) (agent.UserMessage, []agent.RuntimeContextBlock, error) {
 	if sess == nil || sess.Engine == nil || userMsg.EditContext != nil {
 		return userMsg, nil, nil
 	}
 
 	baseRuntime := sess.RuntimeVars()
-	if !hasRuntimeBlock(baseRuntime, "current_report_artifact") {
+	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
+		baseRuntime = append(baseRuntime, *targetBlock)
+	}
+	if !hasRuntimeBlock(baseRuntime, "current_report_artifact") && !hasRuntimeBlock(baseRuntime, "current_turn_target") {
 		return userMsg, nil, nil
 	}
 
@@ -441,10 +461,16 @@ func resolvePreparedUserMessage(ctx context.Context, sess *session.Session, user
 	}
 
 	var extra []agent.RuntimeContextBlock
+	if targetBlock := turnContextRuntimeBlock(userMsg.TurnContext); targetBlock != nil {
+		extra = append(extra, *targetBlock)
+	}
 	if block := resolution.RuntimeContextBlock(); block != nil {
 		extra = append(extra, *block)
 	}
 	if edit := resolution.MaterializeEditContext(); edit != nil {
+		if userMsg.TurnContext != nil && strings.TrimSpace(edit.TargetRunID) == "" {
+			edit.TargetRunID = strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID)
+		}
 		userMsg.EditContext = edit
 	}
 	return userMsg, extra, nil

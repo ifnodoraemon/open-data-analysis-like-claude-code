@@ -466,11 +466,17 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 
 func (s *Session) PrepareUserRun(ctx context.Context, userMsg agent.UserMessage, loader ReportSnapshotLoader) error {
 	var snapshot *domain.ReportSnapshot
+	targetRunID := ""
 	if userMsg.EditContext != nil && strings.TrimSpace(userMsg.EditContext.TargetRunID) != "" {
+		targetRunID = strings.TrimSpace(userMsg.EditContext.TargetRunID)
+	} else if userMsg.TurnContext != nil && strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID) != "" {
+		targetRunID = strings.TrimSpace(userMsg.TurnContext.ReportTargetRunID)
+	}
+	if targetRunID != "" {
 		if loader == nil {
 			return fmt.Errorf("missing report snapshot loader")
 		}
-		loaded, err := loader.LoadReportSnapshot(ctx, s.ID, s.WorkspaceID, s.UserID, strings.TrimSpace(userMsg.EditContext.TargetRunID))
+		loaded, err := loader.LoadReportSnapshot(ctx, s.ID, s.WorkspaceID, s.UserID, targetRunID)
 		if err != nil {
 			return err
 		}

@@ -256,6 +256,45 @@ func TestResolvePreparedUserMessageMaterializesWholeReportEditContext(t *testing
 	}
 }
 
+func TestResolvePreparedUserMessageCarriesTurnTargetIntoEditContext(t *testing.T) {
+	t.Parallel()
+
+	prevCfg := config.Cfg
+	config.Cfg = &config.Config{LLMProvider: "openai", LLMModel: "gpt-4o"}
+	t.Cleanup(func() { config.Cfg = prevCfg })
+
+	sess := &session.Session{
+		Engine:    agent.NewEngine(tools.NewRegistry(), ""),
+		EditState: &tools.ReportEditState{},
+	}
+	sess.Engine.SetTurnResolver(func(context.Context, *agent.PromptBundle) (agent.TurnResolution, error) {
+		return agent.TurnResolution{
+			Artifact:          agent.TurnArtifactReport,
+			Operation:         agent.TurnOperationRevise,
+			Scope:             agent.TurnScopeWholeReport,
+			MutationRequested: true,
+			Confidence:        0.94,
+		}, nil
+	})
+
+	prepared, extra, err := resolvePreparedUserMessage(context.Background(), sess, agent.UserMessage{
+		Content: "把这份历史报告整体整理一下",
+		TurnContext: &agent.TurnContext{
+			ReportTargetRunID: "run_history_1",
+			ReportTitle:       "历史报告",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve prepared user message: %v", err)
+	}
+	if prepared.EditContext == nil || prepared.EditContext.Mode != "revise_report" || prepared.EditContext.TargetRunID != "run_history_1" {
+		t.Fatalf("expected whole-report edit context with target run, got %#v", prepared.EditContext)
+	}
+	if len(extra) != 2 || extra[0].Name != "current_turn_target" || extra[1].Name != "current_turn_resolution" {
+		t.Fatalf("expected target and resolution runtime blocks, got %#v", extra)
+	}
+}
+
 func TestResolvePreparedUserMessageLeavesBlockScopeUnmaterialized(t *testing.T) {
 	t.Parallel()
 

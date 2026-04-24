@@ -74,6 +74,7 @@ Semantics:
 - "clarify" means the user intent is too ambiguous and a clarification should be requested.
 
 Rules:
+- If runtime context contains an explicit current turn report target, treat it as the report artifact identity for this turn.
 - Prefer artifact="report" only when the user is clearly operating on the current report artifact.
 - Prefer scope="whole_report" only when the user means the report as a whole.
 - Prefer scope="block" when the user names a section or part of the report.

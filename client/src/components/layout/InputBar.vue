@@ -92,6 +92,7 @@ const isRunning = computed(() => store.isRunning);
 const isUploading = ref(false);
 const showSourcesDrawer = ref(false);
 const reportQuote = computed(() => store.reportQuote);
+const selectedRun = computed(() => store.getRun(store.selectedRunId) || null);
 const quotePreview = computed(() => {
   const text = reportQuote.value?.selectionText || "";
   return text.length > 120 ? `${text.slice(0, 120)}...` : text;
@@ -170,6 +171,12 @@ async function handleFile(e) {
 async function handleSend() {
   if (!input.value.trim() || isRunning.value) return;
   const quote = reportQuote.value;
+  const turnContext = selectedRun.value?.id && selectedRun.value?.report
+    ? {
+        reportTargetRunId: selectedRun.value.id,
+        reportTitle: selectedRun.value.report?.title || "",
+      }
+    : null;
   const editContext = quote
     ? {
         mode: quote.mode || "regenerate_selection",
@@ -180,7 +187,10 @@ async function handleSend() {
         preserveOtherBlocks: quote.preserveOtherBlocks !== false,
       }
     : null;
-  await sendMessage(input.value.trim(), editContext ? { editContext } : {});
+  await sendMessage(input.value.trim(), {
+    ...(editContext ? { editContext } : {}),
+    ...(turnContext ? { turnContext } : {}),
+  });
   input.value = "";
   if (quote) store.clearReportQuote();
 }
