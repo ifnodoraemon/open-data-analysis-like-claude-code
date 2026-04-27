@@ -109,7 +109,7 @@ type ConfirmSourceProfileTool struct {
 
 func (t *ConfirmSourceProfileTool) Name() string { return "state_source_confirm_profile" }
 func (t *ConfirmSourceProfileTool) Description() string {
-	return "Confirm or resolve semantic ambiguities for a profile. Accepts a profile_id and a JSON object of overrides (e.g. primary_time_column, percentage_unit_columns). After calling this, the profile's ambiguity_count goes down, which can unblock report_finalize. Before calling this, inspect the profile with state_semantic_profile_inspect to see what ambiguities exist and what overrides are needed."
+	return "Resolve semantic ambiguities detected during data profiling. Accepts a profile_id and a JSON object of overrides specifying which interpretations to confirm (e.g. primary time column, percentage unit columns, metric definitions). After confirmation, the profile's ambiguity_count decreases. This tool does not create or modify data sources."
 }
 func (t *ConfirmSourceProfileTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{

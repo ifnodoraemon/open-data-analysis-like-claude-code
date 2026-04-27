@@ -191,22 +191,6 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 
-	t.ReportState.Lock()
-	t.ReportState.FinalizeAttempts++
-	const maxFinalizeRetries = 4
-	if t.ReportState.FinalizeAttempts > maxFinalizeRetries {
-		issues := t.ReportState.FinalizeAttempts
-		t.ReportState.Unlock()
-		return toolFailure("report_finalize", "finalize_loop_detected",
-			fmt.Sprintf("report_finalize has been called %d times without resolving semantic ambiguity. STOP retrying finalize. Instead, call state_semantic_profile_inspect to see what ambiguities exist on each source, then call state_source_confirm_profile with the appropriate overrides to resolve them. Then retry report_finalize.", issues),
-			map[string]interface{}{
-				"finalize_attempts": issues,
-				"max_retries":       maxFinalizeRetries,
-				"tip":               "use state_semantic_profile_inspect to find ambiguities, then state_source_confirm_profile to resolve them",
-			}), nil
-	}
-	t.ReportState.Unlock()
-
 	var semanticIssues []string
 	if t.SessionSourcesProvider != nil {
 		sources, sourceErr := t.SessionSourcesProvider()
@@ -218,6 +202,20 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.ReportState.Lock()
+	t.ReportState.FinalizeAttempts++
+	const maxFinalizeRetries = 4
+	if t.ReportState.FinalizeAttempts > maxFinalizeRetries {
+		attempts := t.ReportState.FinalizeAttempts
+		t.ReportState.Unlock()
+		return toolFailure("report_finalize", "finalize_loop_detected",
+			fmt.Sprintf("report_finalize has been called %d times without resolving semantic ambiguity. Unresolved ambiguities on data sources are preventing finalize. Source ambiguities can be resolved via state_source_confirm_profile.", attempts),
+			map[string]interface{}{
+				"finalize_attempts":          attempts,
+				"max_retries":                maxFinalizeRetries,
+				"unresolved_ambiguity_count": len(semanticIssues),
+			}), nil
+	}
+
 	result, err := finalizeReportState(t.ReportState, t.Subgoals, params, semanticIssues)
 	if err != nil {
 		var blockedErr reportFinalizeBlockedError

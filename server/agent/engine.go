@@ -941,11 +941,11 @@ func toolCallSucceeded(result string, execErr error) bool {
 }
 
 // ProvideAskUserResult 将用户回复作为 user_request_input 工具的结构化执行结果注入 LLM 对话上下文。
+// 如果同一轮有多个 user_request_input 调用，同一个用户回复会填充所有未答复的调用。
 func (e *Engine) ProvideAskUserResult(userResponse string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	var toolCallID string
 	var pendingIDs []string
 	for i := len(e.history) - 1; i >= 0; i-- {
 		msg := e.history[i]
@@ -965,6 +965,7 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 		return fmt.Errorf("no pending user_request_input tool call found")
 	}
 
+	appended := 0
 	for _, id := range pendingIDs {
 		hasResult := false
 		for j := len(e.history) - 1; j >= 0; j-- {
@@ -973,20 +974,19 @@ func (e *Engine) ProvideAskUserResult(userResponse string) error {
 				break
 			}
 		}
-		if !hasResult && toolCallID == "" {
-			toolCallID = id
+		if !hasResult {
+			e.history = append(e.history, ConversationItem{
+				Role:       LLMRoleTool,
+				Content:    buildAskUserToolResult(userResponse),
+				ToolCallID: id,
+			})
+			appended++
 		}
 	}
 
-	if toolCallID == "" {
+	if appended == 0 {
 		return fmt.Errorf("all user_request_input calls already have results")
 	}
-
-	e.history = append(e.history, ConversationItem{
-		Role:       LLMRoleTool,
-		Content:    buildAskUserToolResult(userResponse),
-		ToolCallID: toolCallID,
-	})
 
 	return nil
 }
