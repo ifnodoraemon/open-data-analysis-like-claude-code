@@ -10,6 +10,7 @@ import (
 type SessionSourcesProvider func() ([]service.SessionSourceSummary, error)
 type SessionProfilesProvider func() ([]service.SemanticProfileSummary, error)
 type ProfileDetailProvider func(profileID string) (profileJSON string, confirmationsJSON string, err error)
+type ProfileConfirmer func(profileID, confirmedBy, scope, overridesJSON string) error
 
 func init() {
 	RegisterGlobalTool(func(ctx ToolContext) Tool {
@@ -23,6 +24,17 @@ func init() {
 			return nil
 		}
 		return &InspectSemanticProfileTool{Provider: ctx.ProfileDetailProvider}
+	})
+	RegisterGlobalTool(func(ctx ToolContext) Tool {
+		if ctx.ProfileConfirmer == nil {
+			return nil
+		}
+		return &ConfirmSourceProfileTool{
+			Confirmer:    ctx.ProfileConfirmer,
+			Detail:       ctx.ProfileDetailProvider,
+			SessionID:    ctx.SessionID,
+			WorkspaceID:  ctx.WorkspaceID,
+		}
 	})
 }
 
@@ -86,4 +98,48 @@ func (t *InspectSemanticProfileTool) Execute(args json.RawMessage) (string, erro
 		"confirmations": json.RawMessage(confirmationsJSON),
 	}
 	return toolSuccess("state_semantic_profile_inspect", payload), nil
+}
+
+type ConfirmSourceProfileTool struct {
+	Confirmer   ProfileConfirmer
+	Detail      ProfileDetailProvider
+	SessionID   string
+	WorkspaceID string
+}
+
+func (t *ConfirmSourceProfileTool) Name() string { return "state_source_confirm_profile" }
+func (t *ConfirmSourceProfileTool) Description() string {
+	return "Confirm or resolve semantic ambiguities for a profile. Accepts a profile_id and a JSON object of overrides (e.g. primary_time_column, percentage_unit_columns). After calling this, the profile's ambiguity_count goes down, which can unblock report_finalize. Before calling this, inspect the profile with state_semantic_profile_inspect to see what ambiguities exist and what overrides are needed."
+}
+func (t *ConfirmSourceProfileTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"profile_id": {"type": "string", "description": "The semantic profile ID to confirm"},
+			"scope": {"type": "string", "enum": ["session", "workspace"], "description": "Scope of the confirmation. Use 'session' for session-level overrides."},
+			"overrides_json": {"type": "string", "description": "JSON object specifying overrides. For multiple_time_columns: {\"primary_time_column\":\"column_name\"}. For ambiguous_units: {\"percentage_columns\":[\"col1\",\"col2\"]}. For ambiguous_metrics: {\"metric_definitions\":{\"col1\":\"definition\",...}}."}
+		},
+		"required": ["profile_id", "scope", "overrides_json"]
+	}`)
+}
+
+func (t *ConfirmSourceProfileTool) Execute(args json.RawMessage) (string, error) {
+	var params struct {
+		ProfileID     string `json:"profile_id"`
+		Scope         string `json:"scope"`
+		OverridesJSON string `json:"overrides_json"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("failed to parse parameters: %w", err)
+	}
+	if t.Confirmer == nil {
+		return "", fmt.Errorf("profile confirmer is not initialized")
+	}
+	if err := t.Confirmer(params.ProfileID, "agent", params.Scope, params.OverridesJSON); err != nil {
+		return "", err
+	}
+	return toolSuccess("state_source_confirm_profile", map[string]interface{}{
+		"profile_id": params.ProfileID,
+		"ui_summary": fmt.Sprintf("Profile %s confirmed with scope=%s. Run state_session_sources_inspect to see updated ambiguity counts.", params.ProfileID, params.Scope),
+	}), nil
 }

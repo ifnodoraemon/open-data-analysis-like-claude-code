@@ -159,6 +159,13 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			return 0, false
 		},
 		QueryLocker: s,
+		ProfileConfirmer: func(profileID, confirmedBy, scope, overridesJSON string) error {
+			if sourceService == nil {
+				return fmt.Errorf("source service not available")
+			}
+			_, err := sourceService.ConfirmProfile(context.Background(), profileID, workspaceID, id, confirmedBy, scope, overridesJSON)
+			return err
+		},
 		Now:         time.Now,
 	}
 
@@ -182,6 +189,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 		"state_goal_inspect",
 		"state_report_inspect",
 		"state_report_edit_inspect",
+		"state_source_confirm_profile",
 		"goal_manage",
 		"user_request_input",
 		"task_delegate",

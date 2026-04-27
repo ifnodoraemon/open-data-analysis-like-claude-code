@@ -63,6 +63,7 @@ type ToolContext struct {
 	ConfirmedOverridesProvider ConfirmedOverridesProvider
 	KnownRowCount              KnownRowCountProvider
 	QueryLocker                QueryLocker
+	ProfileConfirmer           ProfileConfirmer
 	Now                        func() time.Time
 }
 

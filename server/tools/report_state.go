@@ -7,13 +7,14 @@ import (
 )
 
 type ReportState struct {
-	mu            sync.RWMutex  `json:"-"`
-	Blocks        []ReportBlock `json:"blocks"`
-	Charts        []ChartData   `json:"charts"`
-	FinalTitle    string        `json:"finalTitle,omitempty"`
-	FinalAuthor   string        `json:"finalAuthor,omitempty"`
-	Layout        ReportLayout  `json:"layout,omitempty"`
-	NeedsFinalize bool          `json:"needsFinalize,omitempty"`
+	mu              sync.RWMutex  `json:"-"`
+	Blocks          []ReportBlock `json:"blocks"`
+	Charts          []ChartData   `json:"charts"`
+	FinalTitle      string        `json:"finalTitle,omitempty"`
+	FinalAuthor     string        `json:"finalAuthor,omitempty"`
+	Layout          ReportLayout  `json:"layout,omitempty"`
+	NeedsFinalize   bool          `json:"needsFinalize,omitempty"`
+	FinalizeAttempts int          `json:"-"`
 }
 
 func (s *ReportState) Lock()    { s.mu.Lock() }

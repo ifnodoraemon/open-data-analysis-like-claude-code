@@ -18,6 +18,7 @@ func init() {
 			ReportState:            ctx.ReportState,
 			Subgoals:               ctx.Subgoals,
 			SessionSourcesProvider: ctx.SessionSourcesProvider,
+			ProfileDetailProvider:  ctx.ProfileDetailProvider,
 		}
 	})
 }
@@ -36,6 +37,7 @@ type FinalizeReportTool struct {
 	ReportState            *ReportState
 	Subgoals               SubgoalChecker
 	SessionSourcesProvider SessionSourcesProvider
+	ProfileDetailProvider  ProfileDetailProvider
 }
 
 func (t *ConfigureReportTool) Name() string { return "report_configure_layout" }
@@ -189,13 +191,29 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("failed to parse parameters: %w", err)
 	}
 
+	t.ReportState.Lock()
+	t.ReportState.FinalizeAttempts++
+	const maxFinalizeRetries = 4
+	if t.ReportState.FinalizeAttempts > maxFinalizeRetries {
+		issues := t.ReportState.FinalizeAttempts
+		t.ReportState.Unlock()
+		return toolFailure("report_finalize", "finalize_loop_detected",
+			fmt.Sprintf("report_finalize has been called %d times without resolving semantic ambiguity. STOP retrying finalize. Instead, call state_semantic_profile_inspect to see what ambiguities exist on each source, then call state_source_confirm_profile with the appropriate overrides to resolve them. Then retry report_finalize.", issues),
+			map[string]interface{}{
+				"finalize_attempts": issues,
+				"max_retries":       maxFinalizeRetries,
+				"tip":               "use state_semantic_profile_inspect to find ambiguities, then state_source_confirm_profile to resolve them",
+			}), nil
+	}
+	t.ReportState.Unlock()
+
 	var semanticIssues []string
 	if t.SessionSourcesProvider != nil {
 		sources, sourceErr := t.SessionSourcesProvider()
 		if sourceErr != nil {
 			semanticIssues = append(semanticIssues, "semantic_sources_unavailable")
 		} else {
-			semanticIssues = reportSemanticFinalizeIssues(t.ReportState, sources)
+			semanticIssues = reportSemanticFinalizeIssues(t.ReportState, sources, t.ProfileDetailProvider)
 		}
 	}
 
@@ -224,6 +242,7 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		return "", err
 	}
 
+	t.ReportState.FinalizeAttempts = 0
 	success := reportFinalizeSuccess(map[string]interface{}{
 		"report_title": result.ReportTitle,
 		"author":       result.Author,

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -169,7 +170,7 @@ func reportFinalizeIssues(state *ReportState) []string {
 	return issues
 }
 
-func reportSemanticFinalizeIssues(state *ReportState, sources []service.SessionSourceSummary) []string {
+func reportSemanticFinalizeIssues(state *ReportState, sources []service.SessionSourceSummary, profileDetail ProfileDetailProvider) []string {
 	if state == nil || len(sources) == 0 {
 		return nil
 	}
@@ -207,9 +208,49 @@ func reportSemanticFinalizeIssues(state *ReportState, sources []service.SessionS
 		if ref == "" {
 			ref = "unknown_source"
 		}
-		issues = append(issues, fmt.Sprintf("unresolved_semantic_ambiguity:%s(%d)", ref, source.AmbiguityCount))
+
+		var detail strings.Builder
+		detail.WriteString(source.DisplayName)
+		detail.WriteString(fmt.Sprintf(" (profile=%s", source.ProfileID))
+
+		if profileDetail != nil && source.ProfileID != "" {
+			profileJSON, _, err := profileDetail(source.ProfileID)
+			if err == nil && profileJSON != "" {
+				var profile map[string]interface{}
+				if json.Unmarshal([]byte(profileJSON), &profile) == nil {
+					if amb, ok := profile["ambiguities"].([]interface{}); ok && len(amb) > 0 {
+						detail.WriteString(", ambiguities=[")
+						for i, a := range amb {
+							if am, ok := a.(map[string]interface{}); ok {
+								if i > 0 {
+									detail.WriteString("; ")
+								}
+								if kind, _ := am["kind"].(string); kind != "" {
+									detail.WriteString(kind)
+									detail.WriteString(": ")
+								}
+								if cands, ok := am["candidates"].([]interface{}); ok {
+									names := make([]string, 0, len(cands))
+									for _, c := range cands {
+										if s, ok := c.(string); ok {
+											names = append(names, s)
+										}
+									}
+									detail.WriteString(strings.Join(names, ", "))
+								}
+							}
+						}
+						detail.WriteString("]")
+					}
+				}
+			}
+		}
+		detail.WriteString(")")
+		detail.WriteString(fmt.Sprintf(", unresolved_ambiguities=%d", source.AmbiguityCount))
+
+		issues = append(issues, "unresolved_semantic_ambiguity:"+ref+":"+(detail.String()))
 	}
-	sort.Strings(issues)
+
 	return issues
 }
 
