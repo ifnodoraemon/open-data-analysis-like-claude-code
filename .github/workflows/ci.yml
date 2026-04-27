@@ -70,6 +70,34 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Build Docker Compose
         run: docker compose build
+      - name: Login to nvcr.io
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: nvcr.io
+          username: $oauthtoken
+          password: ${{ secrets.NVCR_API_KEY }}
+      - name: Tag and push server image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag data-analysis-server:latest nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-server:${{ github.sha }}
+          docker tag data-analysis-server:latest nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-server:latest
+          docker push nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-server:${{ github.sha }}
+          docker push nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-server:latest
+      - name: Tag and push python-executor image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag data-analysis-python-executor:latest nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-python:${{ github.sha }}
+          docker tag data-analysis-python-executor:latest nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-python:latest
+          docker push nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-python:${{ github.sha }}
+          docker push nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-python:latest
+      - name: Tag and push client image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag data-analysis-client:latest nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-client:${{ github.sha }}
+          docker tag data-analysis-client:latest nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-client:latest
+          docker push nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-client:${{ github.sha }}
+          docker push nvcr.io/${{ secrets.NVCR_NAMESPACE }}/data-analysis-client:latest
 
   scenario-smoke:
     runs-on: ubuntu-latest
@@ -91,12 +119,29 @@ jobs:
         run: go test -v ./...
       - name: Start services
         run: |
-          cp server/.env.example server/.env
-          PROXY_TOKEN=ci-smoke-token \
-          AUTH_SECRET=ci-smoke-test-auth-secret-value \
-          DEFAULT_USER_ID=testuser \
-          DEFAULT_USER_EMAIL=test@example.com \
-          DEFAULT_USER_PASSWORD=ci-smoke-test-password \
+          cat > server/.env <<'CIEOF'
+          LLM_PROVIDER=openai
+          LLM_BASE_URL=https://api.openai.com
+          LLM_API_ENDPOINT=https://api.openai.com/v1/responses
+          LLM_API_KEY=ci-smoke-skip
+          LLM_MODEL=gpt-4o
+          LLM_DEBUG=true
+          LLM_DEBUG_DIR=./data/llm-debug
+          SERVER_PORT=8080
+          PYTHON_MCP_URL=http://python-executor:8081
+          PROXY_TOKEN=ci-smoke-token
+          AUTH_SECRET=ci-smoke-test-auth-secret-value
+          DEFAULT_USER_ID=testuser
+          DEFAULT_USER_EMAIL=test@example.com
+          DEFAULT_USER_NAME=SmokeTest
+          DEFAULT_USER_PASSWORD=ci-smoke-test-password
+          DEFAULT_WORKSPACE_ID=workspace_default
+          DEFAULT_WORKSPACE_NAME=Default Workspace
+          STORAGE_ROOT=./data/storage
+          CACHE_ROOT=./data/cache
+          METADATA_DB_PATH=./data/metadata/app.db
+          TEMP_DIR=./data/tmp
+          CIEOF
           docker compose up -d --build
           sleep 10
       - name: Run smoke scenarios
