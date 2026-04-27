@@ -84,20 +84,19 @@ jobs:
       - name: Push images to ghcr.io
         if: github.ref == 'refs/heads/main'
         run: |
-          for service in server python-executor client; do
-            IMG=ghcr.io/${{ github.repository_owner }}/data-analysis-${service}
-            if [ "$service" = "python-executor" ]; then
-              SRC=data-analysis-python-executor:latest
-              TAG=data-analysis-python
-            else
-              SRC=data-analysis-${service}:latest
-              TAG=data-analysis-${service}
-            fi
-            docker tag $SRC $IMG:${{ github.sha }}
-            docker tag $SRC $IMG:latest
-            docker push $IMG:${{ github.sha }}
-            docker push $IMG:latest
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          for svc in server client; do
+            IMG="ghcr.io/${OWNER}/data-analysis-${svc}"
+            docker tag "opendataanalysis-${svc}:latest" "${IMG}:${{ github.sha }}"
+            docker tag "opendataanalysis-${svc}:latest" "${IMG}:latest"
+            docker push "${IMG}:${{ github.sha }}"
+            docker push "${IMG}:latest"
           done
+          IMG="ghcr.io/${OWNER}/data-analysis-python"
+          docker tag opendataanalysis-python-executor:latest "${IMG}:${{ github.sha }}"
+          docker tag opendataanalysis-python-executor:latest "${IMG}:latest"
+          docker push "${IMG}:${{ github.sha }}"
+          docker push "${IMG}:latest"
 
   scenario-smoke:
     runs-on: ubuntu-latest
@@ -122,7 +121,7 @@ jobs:
           cat > server/.env <<'CIEOF'
           LLM_PROVIDER=openai
           LLM_BASE_URL=https://integrate.api.nvidia.com
-          LLM_API_ENDPOINT=https://integrate.api.nvidia.com/v1
+          LLM_API_ENDPOINT=https://integrate.api.nvidia.com/v1/chat/completions
           LLM_API_KEY=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
           LLM_MODEL=deepseek-ai/deepseek-v4-pro
           LLM_DEBUG=true
