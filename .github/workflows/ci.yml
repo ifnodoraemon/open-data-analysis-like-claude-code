@@ -124,7 +124,8 @@ jobs:
             echo "NVIDIA_API_KEY secret is required for scenario-smoke"
             exit 1
           fi
-          cat > /tmp/nvidia-smoke-preflight.json <<CIEOF
+          mkdir -p tmp
+          cat > tmp/nvidia-smoke-preflight.json <<CIEOF
           {
             "model": "${NVIDIA_SMOKE_MODEL}",
             "messages": [{"role": "user", "content": "Reply with ok."}],
@@ -133,13 +134,22 @@ jobs:
             "stream": false
           }
           CIEOF
-          curl --fail-with-body --max-time 45 -sS \
+          set +e
+          curl --fail-with-body --max-time 90 -sS \
             -H "Authorization: Bearer ${NVIDIA_API_KEY}" \
             -H "Content-Type: application/json" \
             https://integrate.api.nvidia.com/v1/chat/completions \
-            -d @/tmp/nvidia-smoke-preflight.json \
-            -o /tmp/nvidia-smoke-preflight-response.json
-          python3 -c "import json, sys; p=json.load(open('/tmp/nvidia-smoke-preflight-response.json')); n=len(p.get('choices', [])); print('NVIDIA preflight model=%s choices=%s' % (p.get('model', '${NVIDIA_SMOKE_MODEL}'), n)); sys.exit(0 if n else 1)"
+            -d @tmp/nvidia-smoke-preflight.json \
+            -o tmp/nvidia-smoke-preflight-response.json \
+            2>tmp/nvidia-smoke-preflight.stderr
+          curl_code=$?
+          set -e
+          if [ "$curl_code" -ne 0 ]; then
+            echo "NVIDIA preflight failed curl_exit=${curl_code}"
+            cat tmp/nvidia-smoke-preflight.stderr
+            exit "$curl_code"
+          fi
+          python3 -c "import json, sys; p=json.load(open('tmp/nvidia-smoke-preflight-response.json')); n=len(p.get('choices', [])); print('NVIDIA preflight model=%s choices=%s' % (p.get('model', '${NVIDIA_SMOKE_MODEL}'), n)); sys.exit(0 if n else 1)" | tee tmp/nvidia-smoke-preflight-summary.txt
           cat > server/.env <<CIEOF
           LLM_PROVIDER=openai
           LLM_BASE_URL=https://integrate.api.nvidia.com
@@ -188,8 +198,12 @@ jobs:
       - name: Dump smoke diagnostics
         if: failure()
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=200 server python-executor
+          if [ -f docker-compose.ci.yml ]; then
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml ps || true
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=200 server python-executor || true
+          else
+            echo "docker compose was not started"
+          fi
           find data/llm-debug -maxdepth 5 -type f | sort || true
           find data/llm-debug -name events.jsonl -print -exec tail -n 80 {} \; || true
       - name: Upload smoke results
@@ -199,6 +213,9 @@ jobs:
           name: smoke-test-results
           path: |
             tmp/smoke-test-summary.json
+            tmp/nvidia-smoke-preflight*.json
+            tmp/nvidia-smoke-preflight*.stderr
+            tmp/nvidia-smoke-preflight*.txt
             tmp/scenario-runs
             tmp/eval-report.json
             data/llm-debug
