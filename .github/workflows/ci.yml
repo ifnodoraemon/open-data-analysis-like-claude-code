@@ -73,9 +73,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build images
-        run: |
-          docker compose build
-          docker images | grep data-analysis
+        run: docker compose build
       - name: Login to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -144,8 +142,9 @@ jobs:
           METADATA_DB_PATH=./data/metadata/app.db
           TEMP_DIR=./data/tmp
           CIEOF
-          # Ensure host-side data directories exist for bind mount
+          # Ensure host-side data directories exist for bind mount with write perms
           mkdir -p data/metadata data/cache data/storage data/tmp
+          chmod -R 777 data/
           docker compose build
           docker compose up -d
           sleep 10
