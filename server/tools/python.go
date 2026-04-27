@@ -15,6 +15,11 @@ import (
 // RunPythonTool 通过 MCP 服务执行 Python 代码
 type RunPythonTool struct {
 	MCPEndpoint string // Python MCP 服务地址，如 http://python-executor:8081
+	childCtx    context.Context
+}
+
+func (t *RunPythonTool) SetExecutionContext(ctx context.Context) {
+	t.childCtx = ctx
 }
 
 func init() {
@@ -100,7 +105,11 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 		Timeout: params.Timeout,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(params.Timeout+5)*time.Second)
+	execCtx := t.childCtx
+	if execCtx == nil {
+		execCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(execCtx, time.Duration(params.Timeout+5)*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/execute", bytes.NewReader(reqBody))

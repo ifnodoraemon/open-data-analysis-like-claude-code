@@ -14,6 +14,7 @@ type MCPSyncedTool struct {
 	Schema     ToolSchema
 	ServerName string
 	Client     *Client
+	parentCtx  context.Context
 }
 
 func (t *MCPSyncedTool) Name() string { return t.Schema.Name }
@@ -31,8 +32,16 @@ func (t *MCPSyncedTool) Parameters() json.RawMessage {
 	return raw
 }
 
+func (t *MCPSyncedTool) SetExecutionContext(ctx context.Context) {
+	t.parentCtx = ctx
+}
+
 func (t *MCPSyncedTool) Execute(args json.RawMessage) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	execCtx := t.parentCtx
+	if execCtx == nil {
+		execCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(execCtx, 120*time.Second)
 	defer cancel()
 
 	result, err := t.Client.ExecuteTool(ctx, t.ServerName, t.Schema.Name, args)
@@ -122,6 +131,10 @@ func (s *RegistrySync) cachedToolsFor(serverName string) []ToolSchema {
 func (s *RegistrySync) RemoveOrphaned(ctx context.Context) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.Target == nil {
+		return 0
+	}
 
 	removed := 0
 	for name := range s.synced {
