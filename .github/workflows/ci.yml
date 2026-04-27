@@ -149,12 +149,9 @@ jobs:
           sleep 10
       - name: Run smoke scenarios
         env:
-          SMOKE_SCENARIOS: "01_sales_complete 12_ambiguous_metrics"
+          SMOKE_SCENARIOS: "sales_complete ambiguous_metrics"
           SKIP_INFRA_FAILURES: "1"
-        run: |
-          ls samples/coverage_scenarios/01_sales_complete/
-          node scripts/run_scenario.js --id 01_sales_complete --base-url http://127.0.0.1 --timeout 120
-        continue-on-error: true
+        run: bash scripts/smoke_test.sh http://127.0.0.1 120
       - name: Run eval report
         if: always()
         run: node scripts/eval_report.js --results-dir tmp/scenario-runs
