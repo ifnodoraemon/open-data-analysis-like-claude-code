@@ -37,6 +37,16 @@ failed=0
 infra_blocked=0
 results=()
 
+print_failure_output() {
+    local raw="$1"
+    if [ -z "$raw" ]; then
+        return
+    fi
+    echo "  --- output tail ---"
+    printf '%s\n' "$raw" | tail -n 40 | sed 's/^/  /'
+    echo "  --- end output ---"
+}
+
 for scenario_id in "${SCENARIOS[@]}"; do
     total=$((total + 1))
     echo "--- [$total] Running: $scenario_id ---"
@@ -58,15 +68,18 @@ for scenario_id in "${SCENARIOS[@]}"; do
         error_cat=$(echo "$output" | grep -o '"error_category":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
         if [ -n "$error_cat" ] && [ "$error_cat" != "runtime_error" ] && [ "$SKIP_INFRA" = "1" ]; then
             echo "  ⚠️  INFRA BLOCKED ($error_cat)"
+            print_failure_output "$output"
             infra_blocked=$((infra_blocked + 1))
             results+=("{\"id\":\"$scenario_id\",\"status\":\"infra_blocked\",\"category\":\"$error_cat\"}")
         else
             echo "  ❌ FAIL"
+            print_failure_output "$output"
             failed=$((failed + 1))
             results+=("{\"id\":\"$scenario_id\",\"status\":\"fail\"}")
         fi
     else
         echo "  ❌ ERROR (exit=$exit_code)"
+        print_failure_output "$output"
         failed=$((failed + 1))
         results+=("{\"id\":\"$scenario_id\",\"status\":\"error\",\"exit_code\":$exit_code}")
     fi
