@@ -133,7 +133,7 @@ jobs:
           SERVER_PORT=8080
           PYTHON_MCP_URL=http://python-executor:8081
           PROXY_TOKEN=ci-smoke-token
-          AUTH_SECRET=ci-smoke-test-auth-secret-value
+          AUTH_SECRET=this-is-a-ci-smoke-test-auth-secret-val
           DEFAULT_USER_ID=testuser
           DEFAULT_USER_EMAIL=test@example.com
           DEFAULT_USER_NAME=SmokeTest
@@ -145,6 +145,8 @@ jobs:
           METADATA_DB_PATH=./data/metadata/app.db
           TEMP_DIR=./data/tmp
           CIEOF
+          # Ensure host-side data directories exist for bind mount
+          mkdir -p data/metadata data/cache data/storage data/tmp
           # Build first, then start
           docker compose build
           docker compose up -d || true
