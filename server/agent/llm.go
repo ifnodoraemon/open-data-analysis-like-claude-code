@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -185,17 +186,28 @@ func countHistoryChars(hist []ConversationItem) int {
 	return total
 }
 
-// chatOpenAI OpenAI Responses provider 调用
+type openAIAPIKind string
+
+const (
+	openAIAPIResponses       openAIAPIKind = "responses"
+	openAIAPIChatCompletions openAIAPIKind = "chat_completions"
+)
+
+// chatOpenAI 调用 OpenAI-compatible provider，按 endpoint 选择 Responses 或 Chat Completions。
 func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*LLMResponse, error) {
+	endpoint, apiKind, err := l.resolveOpenAIEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	if apiKind == openAIAPIChatCompletions {
+		return l.chatOpenAIChatCompletions(ctx, endpoint, bundle, toolSpecs)
+	}
+
 	reqBody, err := l.buildResponsesRequest(bundle, toolSpecs)
 	if err != nil {
 		return nil, err
 	}
 
-	endpoint := strings.TrimSpace(config.Cfg.LLMAPIEndpoint)
-	if endpoint == "" {
-		return nil, fmt.Errorf("LLM_API_ENDPOINT not configured")
-	}
 	reqBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize Responses request: %w", err)
@@ -287,6 +299,93 @@ func (l *LLMClient) chatOpenAI(ctx context.Context, bundle *PromptBundle, toolSp
 	return l.convertResponsesResponse(apiResp), nil
 }
 
+func (l *LLMClient) resolveOpenAIEndpoint() (string, openAIAPIKind, error) {
+	endpoint := strings.TrimSpace(config.Cfg.LLMAPIEndpoint)
+	baseURL := strings.TrimSpace(config.Cfg.LLMBaseURL)
+	if endpoint == "" {
+		if baseURL == "" {
+			return "", "", fmt.Errorf("LLM_API_ENDPOINT not configured")
+		}
+		endpoint = defaultOpenAIEndpointForBase(baseURL)
+	}
+
+	if isDeepSeekEndpoint(endpoint) || isDeepSeekEndpoint(baseURL) {
+		chatEndpoint := endpoint
+		if isDeepSeekEndpoint(baseURL) && !isDeepSeekEndpoint(endpoint) {
+			chatEndpoint = defaultOpenAIEndpointForBase(baseURL)
+		}
+		return normalizeChatCompletionsEndpoint(chatEndpoint), openAIAPIChatCompletions, nil
+	}
+	lowered := strings.ToLower(endpoint)
+	if strings.Contains(lowered, "/chat/completions") {
+		return endpoint, openAIAPIChatCompletions, nil
+	}
+	if strings.Contains(lowered, "/responses") {
+		return endpoint, openAIAPIResponses, nil
+	}
+	if isBaseLikeEndpoint(endpoint) {
+		return defaultOpenAIEndpointForBase(endpoint), openAIAPIChatCompletions, nil
+	}
+	return endpoint, openAIAPIResponses, nil
+}
+
+func defaultOpenAIEndpointForBase(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && strings.EqualFold(parsed.Hostname(), "api.openai.com") {
+		return trimmed + "/v1/responses"
+	}
+	if isDeepSeekEndpoint(trimmed) {
+		return trimmed + "/chat/completions"
+	}
+	if strings.HasSuffix(strings.ToLower(trimmed), "/v1") {
+		return trimmed + "/chat/completions"
+	}
+	return trimmed + "/v1/chat/completions"
+}
+
+func isDeepSeekEndpoint(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
+}
+
+func isBaseLikeEndpoint(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	path := strings.Trim(strings.TrimSpace(parsed.Path), "/")
+	return path == "" || path == "v1"
+}
+
+func normalizeChatCompletionsEndpoint(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return trimmed
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	switch {
+	case strings.HasSuffix(strings.ToLower(path), "/chat/completions"):
+		return parsed.String()
+	case path == "" || path == "/":
+		parsed.Path = "/chat/completions"
+	case strings.EqualFold(path, "/v1"):
+		parsed.Path = "/v1/chat/completions"
+	case strings.HasSuffix(strings.ToLower(path), "/responses"):
+		parsed.Path = path[:len(path)-len("/responses")] + "/chat/completions"
+	default:
+		parsed.Path = path + "/chat/completions"
+	}
+	return parsed.String()
+}
+
 type responsesAPIRequest struct {
 	Model        string              `json:"model"`
 	Instructions string              `json:"instructions,omitempty"`
@@ -298,6 +397,68 @@ type responsesAPIRequest struct {
 }
 
 type responsesInput map[string]interface{}
+
+type chatCompletionsRequest struct {
+	Model           string                  `json:"model"`
+	Messages        []chatCompletionMessage `json:"messages"`
+	Tools           []chatCompletionTool    `json:"tools,omitempty"`
+	ToolChoice      string                  `json:"tool_choice,omitempty"`
+	Stream          bool                    `json:"stream"`
+	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
+}
+
+type chatCompletionMessage struct {
+	Role             string                   `json:"role"`
+	Content          string                   `json:"content,omitempty"`
+	ReasoningContent string                   `json:"reasoning_content,omitempty"`
+	ToolCalls        []chatCompletionToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string                   `json:"tool_call_id,omitempty"`
+}
+
+type chatCompletionToolCall struct {
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
+	Function chatCompletionFunction `json:"function"`
+}
+
+type chatCompletionFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type chatCompletionTool struct {
+	Type     string                     `json:"type"`
+	Function chatCompletionToolFunction `json:"function"`
+}
+
+type chatCompletionToolFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Parameters  interface{} `json:"parameters,omitempty"`
+	Strict      bool        `json:"strict,omitempty"`
+}
+
+type chatCompletionsResponse struct {
+	ID      string                 `json:"id"`
+	Object  string                 `json:"object"`
+	Created int64                  `json:"created"`
+	Model   string                 `json:"model"`
+	Choices []chatCompletionChoice `json:"choices"`
+	Usage   chatCompletionUsage    `json:"usage"`
+	Error   *responsesAPIError     `json:"error"`
+}
+
+type chatCompletionChoice struct {
+	Index        int                   `json:"index"`
+	Message      chatCompletionMessage `json:"message"`
+	FinishReason string                `json:"finish_reason"`
+}
+
+type chatCompletionUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
 
 type responsesReasoning struct {
 	Effort string `json:"effort,omitempty"`
@@ -593,6 +754,189 @@ func (l *LLMClient) buildResponsesRequest(bundle *PromptBundle, toolSpecs []tool
 	return req, nil
 }
 
+func (l *LLMClient) chatOpenAIChatCompletions(ctx context.Context, endpoint string, bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*LLMResponse, error) {
+	reqBody, err := l.buildChatCompletionsRequest(bundle, toolSpecs)
+	if err != nil {
+		return nil, err
+	}
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize Chat Completions request: %w", err)
+	}
+
+	start := time.Now()
+	span := llmDebugWriter.StartSpan(TraceMetadataFromContext(ctx), "llm", l.provider, "", "")
+	requestPath := llmDebugWriter.WriteBlob(span, "request.json", reqBytes)
+	l.debugLog(span, "llm.request", map[string]interface{}{
+		"provider":              l.provider,
+		"model":                 l.model,
+		"endpoint":              endpoint,
+		"api_kind":              string(openAIAPIChatCompletions),
+		"message_count":         len(bundle.History),
+		"tool_count":            len(toolSpecs),
+		"tools":                 summarizeTools(toolSpecs),
+		"user_preview":          clipText(lastUserMessage(bundle.History), 240),
+		"instruction_chars":     len([]rune(buildChatSystemPrompt(bundle))),
+		"policy_chars":          len([]rune(bundle.Policy)),
+		"task_chars":            len([]rune(bundle.Task)),
+		"runtime_context_chars": countRuntimeContextChars(bundle.RuntimeContext),
+		"history_chars":         countHistoryChars(bundle.History),
+		"request_bytes":         len(reqBytes),
+		"request_sha256":        blobSHA256(reqBytes),
+		"request_path":          requestPath,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Chat Completions request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+config.Cfg.LLMAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := l.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("OpenAI Chat Completions API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		responsePath := llmDebugWriter.WriteBlob(span, "response.error.txt", body)
+		l.debugLog(span, "llm.error", map[string]interface{}{
+			"status":          resp.StatusCode,
+			"duration_ms":     time.Since(start).Milliseconds(),
+			"error_preview":   clipText(string(body), 500),
+			"response_bytes":  len(body),
+			"response_sha256": blobSHA256(body),
+			"response_path":   responsePath,
+		})
+		return nil, fmt.Errorf("OpenAI Chat Completions API call failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Chat Completions body: %w", err)
+	}
+	responsePath := llmDebugWriter.WriteBlob(span, "response.json", respBytes)
+
+	var apiResp chatCompletionsResponse
+	if err := json.Unmarshal(respBytes, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse Chat Completions body: %w", err)
+	}
+	if apiResp.Error != nil {
+		return nil, fmt.Errorf("OpenAI Chat Completions API call failed: code=%s message=%s", apiResp.Error.Code, apiResp.Error.Message)
+	}
+	converted := l.convertChatCompletionsResponse(&apiResp)
+	outputPreview := ""
+	if len(converted.Choices) > 0 {
+		outputPreview = converted.Choices[0].Message.Content
+	}
+	l.debugLog(span, "llm.response", map[string]interface{}{
+		"duration_ms":         time.Since(start).Milliseconds(),
+		"output_preview":      clipText(outputPreview, 300),
+		"output_chars":        len([]rune(outputPreview)),
+		"item_count":          len(apiResp.Choices),
+		"tool_call_count":     countChatCompletionToolCalls(apiResp.Choices),
+		"tool_calls":          chatCompletionToolNames(apiResp.Choices),
+		"usage_input_tokens":  apiResp.Usage.PromptTokens,
+		"usage_output_tokens": apiResp.Usage.CompletionTokens,
+		"usage_total_tokens":  apiResp.Usage.TotalTokens,
+		"response_bytes":      len(respBytes),
+		"response_sha256":     blobSHA256(respBytes),
+		"response_path":       responsePath,
+	})
+	return converted, nil
+}
+
+func buildChatSystemPrompt(bundle *PromptBundle) string {
+	systemPrompt := bundle.Policy
+	if bundle.PolicyAppendix != "" {
+		systemPrompt += "\n\n## Delegate Additional Constraints\n" + bundle.PolicyAppendix
+	}
+	return systemPrompt
+}
+
+func (l *LLMClient) buildChatCompletionsRequest(bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*chatCompletionsRequest, error) {
+	req := &chatCompletionsRequest{
+		Model:  l.model,
+		Stream: false,
+	}
+	if config.Cfg != nil {
+		if effort := strings.TrimSpace(config.Cfg.LLMReasoningEffort); effort != "" {
+			req.ReasoningEffort = effort
+		}
+	}
+
+	if systemPrompt := buildChatSystemPrompt(bundle); systemPrompt != "" {
+		req.Messages = append(req.Messages, chatCompletionMessage{
+			Role:    LLMRoleSystem,
+			Content: systemPrompt,
+		})
+	}
+	for _, block := range bundle.RuntimeContext {
+		req.Messages = append(req.Messages, chatCompletionMessage{
+			Role:    LLMRoleUser,
+			Content: fmt.Sprintf("[runtime_context role=%s name=%s]\n%s", runtimeContextTransportRole(block), block.Name, block.Content),
+		})
+	}
+	for _, msg := range bundle.History {
+		switch msg.Role {
+		case LLMRoleUser:
+			req.Messages = append(req.Messages, chatCompletionMessage{
+				Role:    LLMRoleUser,
+				Content: msg.Content,
+			})
+		case LLMRoleAssistant:
+			assistantMsg := chatCompletionMessage{
+				Role:             LLMRoleAssistant,
+				Content:          msg.Content,
+				ReasoningContent: msg.ReasoningContent,
+			}
+			for _, tc := range msg.ToolCalls {
+				assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, chatCompletionToolCall{
+					ID:   tc.ID,
+					Type: LLMToolTypeFunction,
+					Function: chatCompletionFunction{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				})
+			}
+			if strings.TrimSpace(assistantMsg.Content) != "" || len(assistantMsg.ToolCalls) > 0 {
+				req.Messages = append(req.Messages, assistantMsg)
+			}
+		case LLMRoleTool:
+			req.Messages = append(req.Messages, chatCompletionMessage{
+				Role:       LLMRoleTool,
+				ToolCallID: msg.ToolCallID,
+				Content:    msg.Content,
+			})
+		}
+	}
+	if bundle.Task != "" {
+		req.Messages = append(req.Messages, chatCompletionMessage{
+			Role:    LLMRoleUser,
+			Content: bundle.Task,
+		})
+	}
+
+	for _, tool := range toolSpecs {
+		req.Tools = append(req.Tools, chatCompletionTool{
+			Type: tool.Type,
+			Function: chatCompletionToolFunction{
+				Name:        tool.Function.Name,
+				Description: tool.Function.Description,
+				Parameters:  tool.Function.Parameters,
+				Strict:      tool.Function.Strict,
+			},
+		})
+	}
+	if len(req.Tools) > 0 {
+		req.ToolChoice = "auto"
+	}
+	return req, nil
+}
+
 func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *LLMResponse {
 	resp.normalize()
 	choice := LLMChoice{
@@ -657,6 +1001,58 @@ func (l *LLMClient) convertResponsesResponse(resp *responsesAPIResponse) *LLMRes
 	}
 }
 
+func (l *LLMClient) convertChatCompletionsResponse(resp *chatCompletionsResponse) *LLMResponse {
+	out := &LLMResponse{
+		Usage: LLMUsage{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		},
+	}
+	for _, choice := range resp.Choices {
+		finishReason := choice.FinishReason
+		if finishReason == "" {
+			finishReason = LLMFinishReasonStop
+		}
+		msg := LLMMessage{
+			Role:             choice.Message.Role,
+			Content:          strings.TrimSpace(choice.Message.Content),
+			ReasoningContent: strings.TrimSpace(choice.Message.ReasoningContent),
+		}
+		if msg.Role == "" {
+			msg.Role = LLMRoleAssistant
+		}
+		for _, tc := range choice.Message.ToolCalls {
+			msg.ToolCalls = append(msg.ToolCalls, LLMToolCall{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: LLMFunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			})
+		}
+		if len(msg.ToolCalls) > 0 {
+			finishReason = LLMFinishReasonToolCalls
+		}
+		out.Choices = append(out.Choices, LLMChoice{
+			Index:        choice.Index,
+			Message:      msg,
+			FinishReason: finishReason,
+		})
+	}
+	if len(out.Choices) == 0 {
+		out.Choices = append(out.Choices, LLMChoice{
+			Index: 0,
+			Message: LLMMessage{
+				Role: LLMRoleAssistant,
+			},
+			FinishReason: LLMFinishReasonStop,
+		})
+	}
+	return out
+}
+
 func (l *LLMClient) debugLog(span SpanInfo, event string, payload map[string]interface{}) {
 	llmDebugWriter.WriteEvent(span, event, payload)
 }
@@ -704,6 +1100,26 @@ func responseToolNames(items []responsesOutputItem) []string {
 	for _, item := range items {
 		if item.Type == "function_call" && strings.TrimSpace(item.Name) != "" {
 			names = append(names, item.Name)
+		}
+	}
+	return names
+}
+
+func countChatCompletionToolCalls(choices []chatCompletionChoice) int {
+	count := 0
+	for _, choice := range choices {
+		count += len(choice.Message.ToolCalls)
+	}
+	return count
+}
+
+func chatCompletionToolNames(choices []chatCompletionChoice) []string {
+	names := make([]string, 0)
+	for _, choice := range choices {
+		for _, tc := range choice.Message.ToolCalls {
+			if strings.TrimSpace(tc.Function.Name) != "" {
+				names = append(names, tc.Function.Name)
+			}
 		}
 	}
 	return names

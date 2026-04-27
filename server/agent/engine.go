@@ -490,8 +490,9 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 				// 有文本 + 无工具调用 → 最终回复
 				e.mu.Lock()
 				e.history = append(e.history, ConversationItem{
-					Role:    LLMRoleAssistant,
-					Content: choice.Message.Content,
+					Role:             LLMRoleAssistant,
+					Content:          choice.Message.Content,
+					ReasoningContent: choice.Message.ReasoningContent,
 				})
 				e.mu.Unlock()
 				emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
@@ -510,8 +511,9 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 			}
 			e.mu.Lock()
 			e.history = append(e.history, ConversationItem{
-				Role:    LLMRoleAssistant,
-				Content: choice.Message.Content,
+				Role:             LLMRoleAssistant,
+				Content:          choice.Message.Content,
+				ReasoningContent: choice.Message.ReasoningContent,
 			})
 			e.mu.Unlock()
 			emit(WSEvent{Type: EventRunCompleted, Data: CompleteData{Summary: choice.Message.Content}})
@@ -696,8 +698,9 @@ func (e *Engine) finalResponseAfterFinalize(ctx context.Context, getRuntimeVars 
 	}
 	e.mu.Lock()
 	e.history = append(e.history, ConversationItem{
-		Role:    LLMRoleAssistant,
-		Content: summary,
+		Role:             LLMRoleAssistant,
+		Content:          summary,
+		ReasoningContent: resp.Choices[0].Message.ReasoningContent,
 	})
 	e.compactMessagesLocked(resp.Usage.PromptTokens)
 	e.mu.Unlock()
@@ -713,8 +716,9 @@ func errorString(err error) string {
 
 func compactAssistantMessage(message LLMMessage) ConversationItem {
 	item := ConversationItem{
-		Role:    message.Role,
-		Content: message.Content,
+		Role:             message.Role,
+		Content:          message.Content,
+		ReasoningContent: message.ReasoningContent,
 	}
 	if len(message.ToolCalls) > 0 {
 		for _, toolCall := range message.ToolCalls {

@@ -58,17 +58,17 @@ func Load() {
 
 	// 根据 Provider 设置默认值
 	defaultBaseURL := "https://api.openai.com"
-	defaultAPIEndpoint := "https://api.openai.com/v1/responses"
 	defaultModel := "gpt-4o"
 	if provider == "anthropic" {
 		defaultBaseURL = "https://api.anthropic.com"
-		defaultAPIEndpoint = "https://api.anthropic.com/v1/messages"
 		defaultModel = "claude-sonnet-4-20250514"
 	}
+	baseURL := getEnv("LLM_BASE_URL", defaultBaseURL)
+	defaultAPIEndpoint := defaultLLMAPIEndpoint(provider, baseURL)
 
 	Cfg = &Config{
 		LLMProvider:          provider,
-		LLMBaseURL:           getEnv("LLM_BASE_URL", defaultBaseURL),
+		LLMBaseURL:           baseURL,
 		LLMAPIEndpoint:       getEnv("LLM_API_ENDPOINT", defaultAPIEndpoint),
 		LLMAPIKey:            getEnv("LLM_API_KEY", ""),
 		LLMModel:             getEnv("LLM_MODEL", defaultModel),
@@ -114,6 +114,30 @@ func Load() {
 	}
 
 	log.Printf("config loaded llm_provider=%s llm_model=%s llm_endpoint=%s", Cfg.LLMProvider, Cfg.LLMModel, Cfg.LLMAPIEndpoint)
+}
+
+func defaultLLMAPIEndpoint(provider, baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		return ""
+	}
+	if provider == "anthropic" {
+		return trimmed + "/v1/messages"
+	}
+	host := ""
+	if parsed, err := url.Parse(trimmed); err == nil {
+		host = strings.ToLower(parsed.Hostname())
+	}
+	if host == "api.openai.com" {
+		return trimmed + "/v1/responses"
+	}
+	if host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com") {
+		return trimmed + "/chat/completions"
+	}
+	if strings.HasSuffix(strings.ToLower(trimmed), "/v1") {
+		return trimmed + "/chat/completions"
+	}
+	return trimmed + "/v1/chat/completions"
 }
 
 func trustedReportScriptURL(raw string) bool {

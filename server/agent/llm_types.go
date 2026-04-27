@@ -28,9 +28,10 @@ type LLMToolCall struct {
 }
 
 type LLMMessage struct {
-	Role      string
-	Content   string
-	ToolCalls []LLMToolCall
+	Role             string
+	Content          string
+	ReasoningContent string
+	ToolCalls        []LLMToolCall
 }
 
 type LLMChoice struct {

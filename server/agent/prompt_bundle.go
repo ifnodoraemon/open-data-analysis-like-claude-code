@@ -12,10 +12,11 @@ const (
 
 // ConversationItem 表示历史通讯的单轮记录
 type ConversationItem struct {
-	Role       string // "user", "assistant", "system" (for tool)
-	Content    string
-	ToolCalls  []LLMToolCall
-	ToolCallID string
+	Role             string // "user", "assistant", "system" (for tool)
+	Content          string
+	ReasoningContent string
+	ToolCalls        []LLMToolCall
+	ToolCallID       string
 }
 
 // RuntimeContextBlock 表示在会话过程中因为摘要、事实等被动态注入的上下文

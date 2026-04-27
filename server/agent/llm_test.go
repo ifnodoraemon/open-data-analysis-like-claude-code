@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
 	anthropic "github.com/liushuangls/go-anthropic/v2"
 )
@@ -180,6 +181,122 @@ func TestBuildResponsesRequestIncludesStrictToolSpecs(t *testing.T) {
 	}
 	if req.Tools[0].Name != "report_create_chart" {
 		t.Fatalf("unexpected tool name: %#v", req.Tools[0])
+	}
+}
+
+func TestResolveOpenAIEndpointUsesDeepSeekChatCompletions(t *testing.T) {
+	previous := config.Cfg
+	defer func() { config.Cfg = previous }()
+	config.Cfg = &config.Config{
+		LLMBaseURL:     "https://api.deepseek.com",
+		LLMAPIEndpoint: "https://api.openai.com/v1/responses",
+	}
+
+	client := &LLMClient{}
+	endpoint, apiKind, err := client.resolveOpenAIEndpoint()
+	if err != nil {
+		t.Fatalf("resolveOpenAIEndpoint: %v", err)
+	}
+	if apiKind != openAIAPIChatCompletions {
+		t.Fatalf("expected chat completions kind, got %s", apiKind)
+	}
+	if endpoint != "https://api.deepseek.com/chat/completions" {
+		t.Fatalf("unexpected endpoint: %s", endpoint)
+	}
+}
+
+func TestNormalizeDeepSeekResponsesEndpointToChatCompletions(t *testing.T) {
+	previous := config.Cfg
+	defer func() { config.Cfg = previous }()
+	config.Cfg = &config.Config{
+		LLMBaseURL:     "https://api.deepseek.com",
+		LLMAPIEndpoint: "https://api.deepseek.com/v1/responses",
+	}
+
+	client := &LLMClient{}
+	endpoint, apiKind, err := client.resolveOpenAIEndpoint()
+	if err != nil {
+		t.Fatalf("resolveOpenAIEndpoint: %v", err)
+	}
+	if apiKind != openAIAPIChatCompletions {
+		t.Fatalf("expected chat completions kind, got %s", apiKind)
+	}
+	if endpoint != "https://api.deepseek.com/v1/chat/completions" {
+		t.Fatalf("unexpected endpoint: %s", endpoint)
+	}
+}
+
+func TestBuildChatCompletionsRequestKeepsRuntimeContextInUserMessages(t *testing.T) {
+	previous := config.Cfg
+	defer func() { config.Cfg = previous }()
+	config.Cfg = &config.Config{LLMReasoningEffort: "high"}
+
+	client := &LLMClient{model: "deepseek-v4-pro"}
+	req, err := client.buildChatCompletionsRequest(&PromptBundle{
+		Policy: "policy",
+		RuntimeContext: []RuntimeContextBlock{
+			{Name: "active_subgoals", Role: "developer", Content: "[g1] inspect data"},
+		},
+		Task: "finish analysis",
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildChatCompletionsRequest: %v", err)
+	}
+	if req.ReasoningEffort != "high" {
+		t.Fatalf("expected reasoning_effort high, got %q", req.ReasoningEffort)
+	}
+	if len(req.Messages) != 3 {
+		t.Fatalf("expected system, runtime context, and task messages, got %#v", req.Messages)
+	}
+	if req.Messages[0].Role != "system" {
+		t.Fatalf("expected policy as system message, got %q", req.Messages[0].Role)
+	}
+	if req.Messages[1].Role != "user" {
+		t.Fatalf("expected runtime context as user message for chat completions compatibility, got %q", req.Messages[1].Role)
+	}
+	if !strings.Contains(req.Messages[1].Content, "[runtime_context role=developer name=active_subgoals]") {
+		t.Fatalf("expected runtime context prefix, got %q", req.Messages[1].Content)
+	}
+}
+
+func TestConvertChatCompletionsResponseMapsToolCallsAndUsage(t *testing.T) {
+	t.Parallel()
+
+	client := &LLMClient{}
+	resp := client.convertChatCompletionsResponse(&chatCompletionsResponse{
+		Choices: []chatCompletionChoice{
+			{
+				Index: 0,
+				Message: chatCompletionMessage{
+					Role: LLMRoleAssistant,
+					ToolCalls: []chatCompletionToolCall{
+						{
+							ID:   "call_1",
+							Type: LLMToolTypeFunction,
+							Function: chatCompletionFunction{
+								Name:      "data_list_tables",
+								Arguments: `{}`,
+							},
+						},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+		Usage: chatCompletionUsage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
+		},
+	})
+	if resp.Choices[0].FinishReason != LLMFinishReasonToolCalls {
+		t.Fatalf("expected tool call finish reason, got %s", resp.Choices[0].FinishReason)
+	}
+	if len(resp.Choices[0].Message.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %#v", resp.Choices[0].Message.ToolCalls)
+	}
+	if resp.Usage.TotalTokens != 15 {
+		t.Fatalf("expected total tokens 15, got %d", resp.Usage.TotalTokens)
 	}
 }
 

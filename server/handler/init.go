@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/auth"
@@ -152,8 +153,20 @@ func ensureRequiredConfig() {
 		"DEFAULT_WORKSPACE_NAME": config.Cfg.DefaultWorkspaceName,
 	}
 	for key, value := range required {
-		if value == "" {
+		if strings.TrimSpace(value) == "" {
 			panic("missing required config: " + key)
 		}
+		if isPlaceholderSecret(value) {
+			panic("insecure placeholder config: " + key)
+		}
 	}
+}
+
+func isPlaceholderSecret(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(normalized, "change_me") ||
+		normalized == "replace-with-a-long-random-secret" ||
+		normalized == "password" ||
+		normalized == "admin" ||
+		normalized == "changeme"
 }
