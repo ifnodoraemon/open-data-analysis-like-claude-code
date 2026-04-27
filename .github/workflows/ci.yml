@@ -68,8 +68,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build Docker Compose
-        run: docker compose build
+      - name: Build images
+        run: |
+          docker compose build
+          docker images | grep data-analysis
       - name: Login to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -77,30 +79,23 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Tag and push server image
+      - name: Push images to ghcr.io
         if: github.ref == 'refs/heads/main'
         run: |
-          IMG=ghcr.io/${{ github.repository_owner }}/data-analysis-server
-          docker tag data-analysis-server:latest $IMG:${{ github.sha }}
-          docker tag data-analysis-server:latest $IMG:latest
-          docker push $IMG:${{ github.sha }}
-          docker push $IMG:latest
-      - name: Tag and push python-executor image
-        if: github.ref == 'refs/heads/main'
-        run: |
-          IMG=ghcr.io/${{ github.repository_owner }}/data-analysis-python
-          docker tag data-analysis-python-executor:latest $IMG:${{ github.sha }}
-          docker tag data-analysis-python-executor:latest $IMG:latest
-          docker push $IMG:${{ github.sha }}
-          docker push $IMG:latest
-      - name: Tag and push client image
-        if: github.ref == 'refs/heads/main'
-        run: |
-          IMG=ghcr.io/${{ github.repository_owner }}/data-analysis-client
-          docker tag data-analysis-client:latest $IMG:${{ github.sha }}
-          docker tag data-analysis-client:latest $IMG:latest
-          docker push $IMG:${{ github.sha }}
-          docker push $IMG:latest
+          for service in server python-executor client; do
+            IMG=ghcr.io/${{ github.repository_owner }}/data-analysis-${service}
+            if [ "$service" = "python-executor" ]; then
+              SRC=data-analysis-python-executor:latest
+              TAG=data-analysis-python
+            else
+              SRC=data-analysis-${service}:latest
+              TAG=data-analysis-${service}
+            fi
+            docker tag $SRC $IMG:${{ github.sha }}
+            docker tag $SRC $IMG:latest
+            docker push $IMG:${{ github.sha }}
+            docker push $IMG:latest
+          done
 
   scenario-smoke:
     runs-on: ubuntu-latest
@@ -147,15 +142,11 @@ jobs:
           CIEOF
           # Ensure host-side data directories exist for bind mount
           mkdir -p data/metadata data/cache data/storage data/tmp
-          # Build first, then start
           docker compose build
-          docker compose up -d || true
-          sleep 5
-          docker ps -a
-          docker logs data-analysis-server || true
-          docker compose down
+          docker compose up -d
+          sleep 10
       - name: Run smoke scenarios
-        if: false
+        env:
         env:
           SMOKE_SCENARIOS: "01_sales_complete 12_ambiguous_metrics"
           SKIP_INFRA_FAILURES: "1"
