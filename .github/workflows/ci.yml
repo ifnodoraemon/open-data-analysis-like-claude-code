@@ -159,10 +159,11 @@ jobs:
           SMOKE_SCENARIOS: "sales_complete"
           SKIP_INFRA_FAILURES: "1"
         run: |
-          echo "=== Loading .env ==="
-          grep -E "DEFAULT_USER|AUTH_SECRET" server/.env
-          echo "=== Direct scenario ==="
+          set +e
+          curl -s http://127.0.0.1:8080/api/health || echo "8080: not reachable"
+          curl -s http://127.0.0.1/api/health || echo "80: not reachable"
           node scripts/run_scenario.js --id sales_complete --base-url http://127.0.0.1 --timeout 60 2>&1
+          echo "EXIT=$?"
         continue-on-error: true
       - name: Run eval report
         if: always()
