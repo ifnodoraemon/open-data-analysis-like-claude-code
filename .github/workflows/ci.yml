@@ -151,10 +151,8 @@ jobs:
         env:
           SMOKE_SCENARIOS: "sales_complete ambiguous_metrics"
           SKIP_INFRA_FAILURES: "1"
-        run: |
-          curl -v http://127.0.0.1/api/health 2>&1 || true
-          sleep 5
-          bash scripts/smoke_test.sh http://127.0.0.1 120 2>&1 || true
+          NODE_OPTIONS: "--dns-result-order=ipv4first"
+        run: bash scripts/smoke_test.sh http://localhost 120
       - name: Run eval report
         if: always()
         run: node scripts/eval_report.js --results-dir tmp/scenario-runs
