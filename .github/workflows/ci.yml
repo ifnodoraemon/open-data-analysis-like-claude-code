@@ -92,7 +92,12 @@ jobs:
       - name: Start services
         run: |
           cp server/.env.example server/.env
-          PROXY_TOKEN=ci-smoke-token docker compose up -d --build
+          PROXY_TOKEN=ci-smoke-token \
+          AUTH_SECRET=ci-smoke-test-auth-secret-value \
+          DEFAULT_USER_ID=testuser \
+          DEFAULT_USER_EMAIL=test@example.com \
+          DEFAULT_USER_PASSWORD=ci-smoke-test-password \
+          docker compose up -d --build
           sleep 10
       - name: Run smoke scenarios
         env:
