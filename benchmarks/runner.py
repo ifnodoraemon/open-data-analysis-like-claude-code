@@ -7,7 +7,6 @@ import glob
 from pathlib import Path
 
 # A minimal benchmark runner that aggregates prompt metrics from llm-trace logs.
-# This script fulfills the llm-trace-audit.md benchmark requirements.
 
 LLM_DEBUG_DIR = Path("data/llm-debug")
 

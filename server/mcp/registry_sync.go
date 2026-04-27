@@ -106,7 +106,9 @@ func (s *RegistrySync) cachedToolsFor(serverName string) []ToolSchema {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	s.Client.mu.RLock()
 	srv, ok := s.Client.configs[serverName]
+	s.Client.mu.RUnlock()
 	if !ok {
 		return nil
 	}

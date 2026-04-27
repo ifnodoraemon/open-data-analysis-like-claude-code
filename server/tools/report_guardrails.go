@@ -19,6 +19,8 @@ func (s *ReportEditState) RefreshFromReportState(state *ReportState) {
 	if s == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.AllowedChartIDs = collectEditableChartIDs(state, s.TargetBlockID, s.TargetChartID)
 }
 
@@ -43,6 +45,8 @@ func (s *ReportEditState) ChartMutationAllowed(chartID string) bool {
 	if !s.Active() || !s.PreserveOtherBlocks {
 		return true
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	_, ok := s.AllowedChartIDs[strings.TrimSpace(chartID)]
 	return ok
 }

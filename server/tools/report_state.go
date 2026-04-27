@@ -46,6 +46,7 @@ type ReportLayout struct {
 }
 
 type ReportEditState struct {
+	mu                  sync.RWMutex        `json:"-"`
 	Mode                string              `json:"mode,omitempty"`
 	TargetRunID         string              `json:"targetRunId,omitempty"`
 	TargetBlockID       string              `json:"targetBlockId,omitempty"`
@@ -73,6 +74,8 @@ func (s *ReportEditState) Reset() {
 	if s == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Mode = ""
 	s.TargetRunID = ""
 	s.TargetBlockID = ""
@@ -93,6 +96,17 @@ func (s *ReportEditState) ScopeKind() string {
 	if !s.Active() {
 		return "inactive"
 	}
+	return s.scopeKindLocked()
+}
+
+func (s *ReportEditState) ScopeKindLocked() string {
+	if !s.Active() {
+		return "inactive"
+	}
+	return s.scopeKindLocked()
+}
+
+func (s *ReportEditState) scopeKindLocked() string {
 	mode := strings.ToLower(strings.TrimSpace(s.Mode))
 	if mode == "configure_layout" || mode == "revise_layout" {
 		return "layout"
@@ -116,6 +130,8 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 	if s == nil {
 		return map[string]interface{}{}
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	charts := make([]string, 0, len(s.AllowedChartIDs))
 	for chartID := range s.AllowedChartIDs {
 		charts = append(charts, chartID)
@@ -132,7 +148,7 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"selection_end":         s.SelectionEnd,
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,
-		"scope_kind":            s.ScopeKind(),
+		"scope_kind":            s.ScopeKindLocked(),
 		"active":                s.Active(),
 	}
 }

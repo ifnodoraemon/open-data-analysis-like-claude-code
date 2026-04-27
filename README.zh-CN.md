@@ -87,6 +87,8 @@
 - `state_memory_inspect`
 - `state_goal_inspect`
 - `state_report_inspect`
+- `state_report_edit_inspect`
+- `state_time_context_inspect`
 - `goal_manage`
 - `task_delegate`
 - `user_request_input`
