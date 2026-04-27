@@ -229,7 +229,7 @@ func TestNormalizeDeepSeekResponsesEndpointToChatCompletions(t *testing.T) {
 func TestBuildChatCompletionsRequestKeepsRuntimeContextInUserMessages(t *testing.T) {
 	previous := config.Cfg
 	defer func() { config.Cfg = previous }()
-	config.Cfg = &config.Config{LLMReasoningEffort: "high"}
+	config.Cfg = &config.Config{LLMReasoningEffort: "none", LLMMaxTokens: 4096}
 
 	client := &LLMClient{model: "deepseek-v4-pro"}
 	req, err := client.buildChatCompletionsRequest(&PromptBundle{
@@ -242,8 +242,11 @@ func TestBuildChatCompletionsRequestKeepsRuntimeContextInUserMessages(t *testing
 	if err != nil {
 		t.Fatalf("buildChatCompletionsRequest: %v", err)
 	}
-	if req.ReasoningEffort != "high" {
-		t.Fatalf("expected reasoning_effort high, got %q", req.ReasoningEffort)
+	if req.ReasoningEffort != "none" {
+		t.Fatalf("expected reasoning_effort none, got %q", req.ReasoningEffort)
+	}
+	if req.MaxTokens != 4096 {
+		t.Fatalf("expected max_tokens 4096, got %d", req.MaxTokens)
 	}
 	if len(req.Messages) != 3 {
 		t.Fatalf("expected system, runtime context, and task messages, got %#v", req.Messages)

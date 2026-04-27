@@ -129,6 +129,8 @@ jobs:
           LLM_API_ENDPOINT=https://integrate.api.nvidia.com/v1/chat/completions
           LLM_API_KEY=${NVIDIA_API_KEY}
           LLM_MODEL=deepseek-ai/deepseek-v4-pro
+          LLM_REASONING_EFFORT=none
+          LLM_MAX_TOKENS=4096
           LLM_DEBUG=true
           LLM_DEBUG_DIR=./data/llm-debug
           SERVER_PORT=8080
@@ -166,10 +168,19 @@ jobs:
       - name: Run eval report
         if: always()
         run: node scripts/eval_report.js --results-dir tmp/scenario-runs
+      - name: Dump smoke diagnostics
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=200 server python-executor
       - name: Upload smoke results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-test-results
-          path: tmp/smoke-test-summary.json
+          path: |
+            tmp/smoke-test-summary.json
+            tmp/scenario-runs
+            tmp/eval-report.json
+            server/data/llm-debug
           retention-days: 14

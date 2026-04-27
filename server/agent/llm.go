@@ -125,9 +125,9 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, too
 
 		switch l.provider {
 		case "anthropic":
-			resp, err = l.chatAnthropic(ctx, bundle, toolSpecs)
+			resp, err = l.chatAnthropic(retryCtx, bundle, toolSpecs)
 		default:
-			resp, err = l.chatOpenAI(ctx, bundle, toolSpecs)
+			resp, err = l.chatOpenAI(retryCtx, bundle, toolSpecs)
 		}
 
 		if err == nil {
@@ -142,8 +142,8 @@ func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, too
 		if attempt < len(retryDelays) {
 			log.Printf("LLM transient error (attempt %d, retry in %.0fs): %v", attempt+1, retryDelays[attempt].Seconds(), err)
 			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
+			case <-retryCtx.Done():
+				return nil, fmt.Errorf("LLM retry budget exceeded: %w", retryCtx.Err())
 			case <-time.After(retryDelays[attempt]):
 			}
 		}
@@ -405,6 +405,7 @@ type chatCompletionsRequest struct {
 	ToolChoice      string                  `json:"tool_choice,omitempty"`
 	Stream          bool                    `json:"stream"`
 	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
+	MaxTokens       int                     `json:"max_tokens,omitempty"`
 }
 
 type chatCompletionMessage struct {
@@ -864,6 +865,9 @@ func (l *LLMClient) buildChatCompletionsRequest(bundle *PromptBundle, toolSpecs 
 	if config.Cfg != nil {
 		if effort := strings.TrimSpace(config.Cfg.LLMReasoningEffort); effort != "" {
 			req.ReasoningEffort = effort
+		}
+		if config.Cfg.LLMMaxTokens > 0 {
+			req.MaxTokens = config.Cfg.LLMMaxTokens
 		}
 	}
 
