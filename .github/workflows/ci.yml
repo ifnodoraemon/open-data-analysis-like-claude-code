@@ -102,7 +102,6 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [test-backend, build-frontend]
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
@@ -112,17 +111,23 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Run Go tests
         working-directory: ./server
         run: go test -v ./...
       - name: Start services
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
-          cat > server/.env <<'CIEOF'
+          if [ -z "$NVIDIA_API_KEY" ]; then
+            echo "NVIDIA_API_KEY secret is required for scenario-smoke"
+            exit 1
+          fi
+          cat > server/.env <<CIEOF
           LLM_PROVIDER=openai
           LLM_BASE_URL=https://integrate.api.nvidia.com
           LLM_API_ENDPOINT=https://integrate.api.nvidia.com/v1/chat/completions
-          LLM_API_KEY=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
+          LLM_API_KEY=${NVIDIA_API_KEY}
           LLM_MODEL=deepseek-ai/deepseek-v4-pro
           LLM_DEBUG=true
           LLM_DEBUG_DIR=./data/llm-debug
@@ -156,15 +161,9 @@ jobs:
           sleep 10
       - name: Run smoke scenarios
         env:
-          SMOKE_SCENARIOS: "sales_complete"
+          SMOKE_SCENARIOS: "sales_complete ambiguous_metrics"
           SKIP_INFRA_FAILURES: "1"
-        run: |
-          set +e
-          curl -s http://127.0.0.1:8080/api/health || echo "8080: not reachable"
-          curl -s http://127.0.0.1/api/health || echo "80: not reachable"
-          node scripts/run_scenario.js --id sales_complete --base-url http://127.0.0.1 --timeout 60 2>&1
-          echo "EXIT=$?"
-        continue-on-error: true
+        run: bash scripts/smoke_test.sh http://127.0.0.1 120
       - name: Run eval report
         if: always()
         run: node scripts/eval_report.js --results-dir tmp/scenario-runs
