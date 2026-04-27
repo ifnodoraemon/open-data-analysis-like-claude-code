@@ -1,0 +1,49 @@
+month,capex_category,project_name,budget_approved,expenditure_actual,remaining_budget,completion_pct,status
+2025-01,Infrastructure,Data Center Expansion Phase2,3200000,285000,2915000,8.9,on_track
+2025-01,Infrastructure,Network Upgrade East Region,1200000,180000,1020000,15.0,on_track
+2025-01,Infrastructure,Disaster Recovery Site,800000,45000,755000,5.6,on_track
+2025-01,Software,SaaS Platform Migration,650000,62000,588000,9.5,on_track
+2025-01,Software,Security Compliance System,480000,78000,402000,16.3,on_track
+2025-01,Equipment,Server Refresh Cycle 2025,1500000,290000,1210000,19.3,on_track
+2025-01,Equipment,Lab Equipment Upgrade,520000,85000,435000,16.3,on_track
+2025-01,Equipment,Office Renovation Floor 3,380000,0,380000,0.0,delayed
+2025-02,Infrastructure,Data Center Expansion Phase2,3200000,620000,2595000,19.4,on_track
+2025-02,Infrastructure,Network Upgrade East Region,1200000,380000,640000,46.7,on_track
+2025-02,Infrastructure,Disaster Recovery Site,800000,120000,635000,20.6,on_track
+2025-02,Software,SaaS Platform Migration,650000,148000,440000,32.3,on_track
+2025-02,Software,Security Compliance System,480000,165000,237000,50.6,on_track
+2025-02,Equipment,Server Refresh Cycle 2025,1500000,610000,600000,60.0,on_track
+2025-02,Equipment,Lab Equipment Upgrade,520000,195000,240000,53.8,on_track
+2025-02,Equipment,Office Renovation Floor 3,380000,42000,338000,11.1,at_risk
+2025-03,Infrastructure,Data Center Expansion Phase2,3200000,1020000,2160000,32.5,on_track
+2025-03,Infrastructure,Network Upgrade East Region,1200000,620000,400000,66.7,on_track
+2025-03,Infrastructure,Disaster Recovery Site,800000,220000,460000,42.5,on_track
+2025-03,Software,SaaS Platform Migration,650000,260000,242000,62.8,on_track
+2025-03,Software,Security Compliance System,480000,260000,55000,88.5,on_track
+2025-03,Equipment,Server Refresh Cycle 2025,1500000,950000,260000,82.7,on_track
+2025-03,Equipment,Lab Equipment Upgrade,520000,310000,100000,80.8,on_track
+2025-03,Equipment,Office Renovation Floor 3,380000,110000,270000,28.9,at_risk
+2025-04,Infrastructure,Data Center Expansion Phase2,3200000,1450000,1740000,45.5,on_track
+2025-04,Infrastructure,Network Upgrade East Region,1200000,860000,180000,85.0,on_track
+2025-04,Infrastructure,Disaster Recovery Site,800000,340000,340000,57.5,on_track
+2025-04,Software,SaaS Platform Migration,650000,385000,16000,97.5,on_track
+2025-04,Software,Security Compliance System,480000,350000,-30000,107.3,over_budget
+2025-04,Equipment,Server Refresh Cycle 2025,1500000,1280000,-70000,104.7,over_budget
+2025-04,Equipment,Lab Equipment Upgrade,520000,420000,0,100.0,completed
+2025-04,Equipment,Office Renovation Floor 3,380000,180000,200000,47.4,at_risk
+2025-05,Infrastructure,Data Center Expansion Phase2,3200000,1880000,1310000,58.9,on_track
+2025-05,Infrastructure,Network Upgrade East Region,1200000,1050000,30000,97.5,on_track
+2025-05,Infrastructure,Disaster Recovery Site,800000,480000,200000,75.0,on_track
+2025-05,Software,SaaS Platform Migration,650000,460000,-45000,106.9,over_budget
+2025-05,Software,Security Compliance System,480000,480000,-50000,110.4,over_budget
+2025-05,Equipment,Server Refresh Cycle 2025,1500000,1500000,-100000,106.7,over_budget
+2025-05,Equipment,Lab Equipment Upgrade,520000,420000,0,100.0,completed
+2025-05,Equipment,Office Renovation Floor 3,380000,250000,130000,65.8,at_risk
+2025-06,Infrastructure,Data Center Expansion Phase2,3200000,2320000,880000,72.5,on_track
+2025-06,Infrastructure,Network Upgrade East Region,1200000,1200000,0,100.0,completed
+2025-06,Infrastructure,Disaster Recovery Site,800000,620000,60000,92.5,on_track
+2025-06,Software,SaaS Platform Migration,650000,550000,-45000,106.9,over_budget
+2025-06,Software,Security Compliance System,480000,480000,-50000,110.4,over_budget
+2025-06,Equipment,Server Refresh Cycle 2025,1500000,1500000,-100000,106.7,over_budget
+2025-06,Equipment,Lab Equipment Upgrade,520000,420000,0,100.0,completed
+2025-06,Equipment,Office Renovation Floor 3,380000,320000,60000,84.2,at_risk
