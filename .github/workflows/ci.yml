@@ -144,15 +144,21 @@ jobs:
           # Ensure host-side data directories exist for bind mount with write perms
           mkdir -p data/metadata data/cache data/storage data/tmp
           chmod -R 777 data/
-          docker compose build
-          docker compose up -d
+          # Create CI override to expose server port for smoke test
+          cat > docker-compose.ci.yml <<'OVEOF'
+          services:
+            server:
+              ports:
+                - "8080:8080"
+          OVEOF
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml build
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
           sleep 10
       - name: Run smoke scenarios
         env:
           SMOKE_SCENARIOS: "sales_complete ambiguous_metrics"
           SKIP_INFRA_FAILURES: "1"
-          NODE_OPTIONS: "--dns-result-order=ipv4first"
-        run: bash scripts/smoke_test.sh http://localhost 120
+        run: bash scripts/smoke_test.sh http://127.0.0.1 120
       - name: Run eval report
         if: always()
         run: node scripts/eval_report.js --results-dir tmp/scenario-runs
