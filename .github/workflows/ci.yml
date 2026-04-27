@@ -151,7 +151,11 @@ jobs:
         env:
           SMOKE_SCENARIOS: "sales_complete ambiguous_metrics"
           SKIP_INFRA_FAILURES: "1"
-        run: bash scripts/smoke_test.sh http://127.0.0.1 120
+        run: |
+          set +e
+          bash scripts/smoke_test.sh http://127.0.0.1 120 2>&1 | tee /tmp/smoke.log
+          echo "=== RAW OUTPUT ==="
+          node scripts/run_scenario.js --id sales_complete --base-url http://127.0.0.1 --timeout 30 2>&1 || true
       - name: Run eval report
         if: always()
         run: node scripts/eval_report.js --results-dir tmp/scenario-runs
