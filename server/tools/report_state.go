@@ -89,21 +89,45 @@ func (s *ReportEditState) Reset() {
 }
 
 func (s *ReportEditState) Active() bool {
-	return s != nil && strings.TrimSpace(s.Mode) != ""
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.modeLocked() != ""
+}
+
+func (s *ReportEditState) ActiveLocked() bool {
+	if s == nil {
+		return false
+	}
+	return s.modeLocked() != ""
 }
 
 func (s *ReportEditState) ScopeKind() string {
-	if !s.Active() {
+	if s == nil {
+		return "inactive"
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.modeLocked() == "" {
 		return "inactive"
 	}
 	return s.scopeKindLocked()
 }
 
 func (s *ReportEditState) ScopeKindLocked() string {
-	if !s.Active() {
+	if s == nil {
+		return "inactive"
+	}
+	if s.modeLocked() == "" {
 		return "inactive"
 	}
 	return s.scopeKindLocked()
+}
+
+func (s *ReportEditState) modeLocked() string {
+	return strings.TrimSpace(s.Mode)
 }
 
 func (s *ReportEditState) scopeKindLocked() string {
@@ -149,7 +173,7 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,
 		"scope_kind":            s.ScopeKindLocked(),
-		"active":                s.Active(),
+		"active":                s.ActiveLocked(),
 	}
 }
 

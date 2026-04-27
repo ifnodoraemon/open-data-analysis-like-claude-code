@@ -1,6 +1,9 @@
 package tools
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestReportEditStateRefreshFromReportStateCollectsEditableCharts(t *testing.T) {
 	t.Parallel()
@@ -101,4 +104,124 @@ func TestNormalizeSectionTitleStripsCommonOrdinalPrefixes(t *testing.T) {
 			t.Fatalf("normalizeSectionTitle(%q) = %q, want %q", input, got, want)
 		}
 	}
+}
+
+func TestReportEditStateConcurrentRefreshAndSnapshot(t *testing.T) {
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "b1", Kind: "markdown", ChartID: "c1", Content: "{{chart:c2}}"},
+		},
+	}
+	edit := &ReportEditState{
+		Mode:                "regenerate_block",
+		TargetBlockID:       "b1",
+		PreserveOtherBlocks: true,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			edit.RefreshFromReportState(state)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = edit.Snapshot()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestReportEditStateConcurrentChartMutationReadAndRefresh(t *testing.T) {
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "b1", Kind: "markdown", ChartID: "c1", Content: "{{chart:c2}}"},
+		},
+	}
+	edit := &ReportEditState{
+		Mode:                "regenerate_block",
+		TargetBlockID:       "b1",
+		PreserveOtherBlocks: true,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			edit.RefreshFromReportState(state)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = edit.ChartMutationAllowed("c1")
+		}()
+	}
+	wg.Wait()
+}
+
+func TestReportEditStateConcurrentResetAndSnapshot(t *testing.T) {
+	edit := &ReportEditState{
+		Mode:          "revise_block",
+		TargetBlockID: "b1",
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			edit.Reset()
+		}()
+		go func() {
+			defer wg.Done()
+			_ = edit.Snapshot()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestReportEditStateConcurrentScopeKindAndReset(t *testing.T) {
+	edit := &ReportEditState{
+		Mode:                "regenerate_block",
+		TargetBlockID:       "b1",
+		TargetChartID:       "c1",
+		PreserveOtherBlocks: true,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = edit.ScopeKind()
+		}()
+		go func() {
+			defer wg.Done()
+			edit.Reset()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestReportEditStateConcurrentBlockMutationAndReset(t *testing.T) {
+	edit := &ReportEditState{
+		Mode:                "regenerate_block",
+		TargetBlockID:       "b1",
+		PreserveOtherBlocks: true,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = edit.BlockMutationAllowed("upsert", "b1")
+		}()
+		go func() {
+			defer wg.Done()
+			edit.Reset()
+		}()
+	}
+	wg.Wait()
 }

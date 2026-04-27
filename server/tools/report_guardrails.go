@@ -25,7 +25,12 @@ func (s *ReportEditState) RefreshFromReportState(state *ReportState) {
 }
 
 func (s *ReportEditState) BlockMutationAllowed(action, blockID string) bool {
-	if !s.Active() || !s.PreserveOtherBlocks {
+	if s == nil {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.modeLocked() == "" || !s.PreserveOtherBlocks {
 		return true
 	}
 	if strings.TrimSpace(s.TargetChartID) != "" && strings.TrimSpace(s.TargetBlockID) == "" {
@@ -42,11 +47,14 @@ func (s *ReportEditState) BlockMutationAllowed(action, blockID string) bool {
 }
 
 func (s *ReportEditState) ChartMutationAllowed(chartID string) bool {
-	if !s.Active() || !s.PreserveOtherBlocks {
+	if s == nil {
 		return true
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.modeLocked() == "" || !s.PreserveOtherBlocks {
+		return true
+	}
 	_, ok := s.AllowedChartIDs[strings.TrimSpace(chartID)]
 	return ok
 }
