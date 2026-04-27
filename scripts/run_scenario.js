@@ -4,6 +4,7 @@ const path = require('path');
 const ROOT = process.cwd();
 const SCENARIO_ROOT = path.join(ROOT, 'samples', 'coverage_scenarios');
 const OUTPUT_ROOT = path.join(ROOT, 'tmp', 'scenario-runs');
+let activeTimelinePath = '';
 
 function parseArgs(argv) {
   const args = { baseUrl: 'http://127.0.0.1', scenarioId: '', timeoutSec: 180 };
@@ -217,6 +218,81 @@ function pushText(target, value) {
   if (typeof value !== 'string') return;
   const trimmed = value.trim();
   if (trimmed) target.push(trimmed);
+}
+
+function clip(value, max = 240) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function extractResultPreview(raw) {
+  const parsed = safeJsonParse(raw);
+  if (!parsed || typeof parsed !== 'object') return clip(raw);
+  return clip(
+    parsed.ui_summary ||
+    parsed.message ||
+    parsed.error ||
+    parsed.result ||
+    parsed.delegate_summary ||
+    raw,
+  );
+}
+
+function formatTimelineLine(record) {
+  const event = record.event || {};
+  const data = event.data || {};
+  const elapsed = `${String(record.elapsed_ms).padStart(7, ' ')}ms`;
+  switch (event.type) {
+    case 'run_started':
+      return `${elapsed} run_started run_id=${data.runId || ''}`;
+    case 'assistant_status':
+      return `${elapsed} assistant_status ${clip(data.content)}`;
+    case 'tool_call':
+      return `${elapsed} tool_call ${data.name || ''} args=${clip(JSON.stringify(data.arguments || data.args || {}), 180)}`;
+    case 'tool_result':
+      return `${elapsed} tool_result ${data.name || ''} success=${data.success} duration_ms=${data.duration ?? ''} ${extractResultPreview(data.result)}`;
+    case 'user_request_input':
+      return `${elapsed} user_request_input ${clip(data.question || data.content || '')}`;
+    case 'report_final':
+      return `${elapsed} report_final title=${clip(data.title || '')}`;
+    case 'run_completed':
+      return `${elapsed} run_completed ${clip(data.summary)}`;
+    case 'run_cancelled':
+      return `${elapsed} run_cancelled ${clip(data.message || '')}`;
+    case 'error':
+      return `${elapsed} error ${clip(data.message || data.error || '')}`;
+    default:
+      return `${elapsed} ${event.type || 'event'} ${clip(JSON.stringify(data), 220)}`;
+  }
+}
+
+function appendTrace(outDir, record) {
+  fs.appendFileSync(path.join(outDir, 'events.ndjson'), `${JSON.stringify(record)}\n`);
+  fs.appendFileSync(path.join(outDir, 'timeline.log'), `${formatTimelineLine(record)}\n`);
+}
+
+function appendTimelineNote(outDir, startedAt, label, message) {
+  const record = {
+    at: new Date().toISOString(),
+    elapsed_ms: Date.now() - startedAt,
+    event: { type: label, data: { message } },
+  };
+  appendTrace(outDir, record);
+}
+
+function readTail(filePath, lineCount = 80) {
+  if (!filePath || !fs.existsSync(filePath)) return '';
+  const lines = fs.readFileSync(filePath, 'utf8').trimEnd().split(/\r?\n/);
+  return lines.slice(-lineCount).join('\n');
+}
+
+function printTimelineTail(filePath, lineCount = 80) {
+  const tail = readTail(filePath, lineCount);
+  if (!tail) return;
+  console.error('--- scenario timeline tail ---');
+  console.error(tail);
+  console.error('--- end scenario timeline ---');
 }
 
 function collectEvidence(events, runData, reportHtml) {
@@ -598,6 +674,9 @@ async function main() {
   const scenario = loadScenarioById(args.scenarioId);
   const outDir = path.join(OUTPUT_ROOT, `${nowStamp()}-${scenario.data.id}`);
   fs.mkdirSync(outDir, { recursive: true });
+  activeTimelinePath = path.join(outDir, 'timeline.log');
+  const startedAt = Date.now();
+  appendTimelineNote(outDir, startedAt, 'scenario_started', `id=${scenario.data.id}`);
 
   const login = await httpJson(`${apiOrigin}/api/auth/login`, {
     method: 'POST',
@@ -606,6 +685,7 @@ async function main() {
   });
   const token = login.token;
   if (!token) throw new Error('login returned no token');
+  appendTimelineNote(outDir, startedAt, 'login_completed', `email=${loginEmail}`);
 
   const created = await httpJson(`${apiOrigin}/api/sessions`, {
     method: 'POST',
@@ -613,11 +693,13 @@ async function main() {
   });
   const sessionId = created?.session?.id;
   if (!sessionId) throw new Error('session creation failed');
+  appendTimelineNote(outDir, startedAt, 'session_created', `session_id=${sessionId}`);
 
   const uploads = [];
   for (const rel of scenario.data.files || []) {
     const fullPath = path.join(scenario.dir, rel);
     uploads.push(await uploadFile(args.baseUrl, token, sessionId, fullPath));
+    appendTimelineNote(outDir, startedAt, 'file_uploaded', path.basename(fullPath));
   }
 
   const wsUrl = `${wsOrigin}/ws?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(sessionId)}`;
@@ -627,7 +709,10 @@ async function main() {
   let doneResolve;
   let doneReject;
   const done = new Promise((resolve, reject) => { doneResolve = resolve; doneReject = reject; });
-  const timer = setTimeout(() => doneReject(new Error(`scenario timeout after ${args.timeoutSec}s`)), args.timeoutSec * 1000);
+  const timer = setTimeout(() => {
+    appendTimelineNote(outDir, startedAt, 'scenario_timeout', `after ${args.timeoutSec}s`);
+    doneReject(new Error(`scenario timeout after ${args.timeoutSec}s`));
+  }, args.timeoutSec * 1000);
 
   ws.addEventListener('open', () => {
     ws.send(JSON.stringify({
@@ -641,6 +726,14 @@ async function main() {
   ws.addEventListener('message', (msg) => {
     const event = JSON.parse(msg.data.toString());
     events.push(event);
+    appendTrace(outDir, {
+      at: new Date().toISOString(),
+      elapsed_ms: Date.now() - startedAt,
+      event,
+    });
+    if (process.env.SCENARIO_TRACE === '1') {
+      console.error(formatTimelineLine({ elapsed_ms: Date.now() - startedAt, event }));
+    }
     if (event.type === 'run_started' && event.data?.runId) {
       runId = event.data.runId;
     }
@@ -650,6 +743,7 @@ async function main() {
   });
 
   ws.addEventListener('error', (err) => {
+    appendTimelineNote(outDir, startedAt, 'websocket_error', err.message || 'unknown');
     doneReject(new Error(`websocket error: ${err.message || 'unknown'}`));
   });
 
@@ -700,6 +794,7 @@ async function main() {
 
   console.log(JSON.stringify({
     out_dir: path.relative(ROOT, outDir),
+    timeline: path.relative(ROOT, activeTimelinePath),
     ...summary,
     run_id: runId,
     evaluation: {
@@ -710,11 +805,13 @@ async function main() {
   }, null, 2));
 
   if (!evaluation.pass) {
+    printTimelineTail(activeTimelinePath);
     process.exit(2);
   }
 }
 
 main().catch((err) => {
+  printTimelineTail(activeTimelinePath);
   console.error(err.stack || String(err));
   process.exit(1);
 });

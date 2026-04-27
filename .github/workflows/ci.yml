@@ -118,17 +118,34 @@ jobs:
       - name: Start services
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_SMOKE_MODEL: deepseek-ai/deepseek-v4-flash
         run: |
           if [ -z "$NVIDIA_API_KEY" ]; then
             echo "NVIDIA_API_KEY secret is required for scenario-smoke"
             exit 1
           fi
+          cat > /tmp/nvidia-smoke-preflight.json <<CIEOF
+          {
+            "model": "${NVIDIA_SMOKE_MODEL}",
+            "messages": [{"role": "user", "content": "Reply with ok."}],
+            "reasoning_effort": "none",
+            "max_tokens": 32,
+            "stream": false
+          }
+          CIEOF
+          curl --fail-with-body --max-time 45 -sS \
+            -H "Authorization: Bearer ${NVIDIA_API_KEY}" \
+            -H "Content-Type: application/json" \
+            https://integrate.api.nvidia.com/v1/chat/completions \
+            -d @/tmp/nvidia-smoke-preflight.json \
+            -o /tmp/nvidia-smoke-preflight-response.json
+          python3 -c "import json, sys; p=json.load(open('/tmp/nvidia-smoke-preflight-response.json')); n=len(p.get('choices', [])); print('NVIDIA preflight model=%s choices=%s' % (p.get('model', '${NVIDIA_SMOKE_MODEL}'), n)); sys.exit(0 if n else 1)"
           cat > server/.env <<CIEOF
           LLM_PROVIDER=openai
           LLM_BASE_URL=https://integrate.api.nvidia.com
           LLM_API_ENDPOINT=https://integrate.api.nvidia.com/v1/chat/completions
           LLM_API_KEY=${NVIDIA_API_KEY}
-          LLM_MODEL=deepseek-ai/deepseek-v4-pro
+          LLM_MODEL=${NVIDIA_SMOKE_MODEL}
           LLM_REASONING_EFFORT=none
           LLM_MAX_TOKENS=4096
           LLM_DEBUG=true
@@ -173,6 +190,8 @@ jobs:
         run: |
           docker compose -f docker-compose.yml -f docker-compose.ci.yml ps
           docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=200 server python-executor
+          find data/llm-debug -maxdepth 5 -type f | sort || true
+          find data/llm-debug -name events.jsonl -print -exec tail -n 80 {} \; || true
       - name: Upload smoke results
         if: always()
         uses: actions/upload-artifact@v4
@@ -182,5 +201,5 @@ jobs:
             tmp/smoke-test-summary.json
             tmp/scenario-runs
             tmp/eval-report.json
-            server/data/llm-debug
+            data/llm-debug
           retention-days: 14

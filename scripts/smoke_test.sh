@@ -43,7 +43,7 @@ print_failure_output() {
         return
     fi
     echo "  --- output tail ---"
-    printf '%s\n' "$raw" | tail -n 40 | sed 's/^/  /'
+    printf '%s\n' "$raw" | tail -n 100 | sed 's/^/  /'
     echo "  --- end output ---"
 }
 
