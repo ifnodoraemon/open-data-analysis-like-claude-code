@@ -70,6 +70,9 @@ func TestListTablesToolReturnsStructuredTableList(t *testing.T) {
 	if _, err := ing.GetDB().Exec(`CREATE TABLE sales (id INTEGER)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
+	if _, err := ing.GetDB().Exec(`CREATE TABLE _oda_table_metadata (table_name TEXT)`); err != nil {
+		t.Fatalf("create internal metadata table: %v", err)
+	}
 
 	tool := &ListTablesTool{Ingester: ing}
 	result, err := tool.Execute(nil)
@@ -467,6 +470,44 @@ func TestFinalizeReportRejectsUnresolvedSemanticAmbiguity(t *testing.T) {
 		ReportState: &ReportState{
 			Blocks: []ReportBlock{
 				{ID: "analysis", Kind: "markdown", Content: "收入增长 20%，净收入增长 12%。"},
+			},
+		},
+		SessionSourcesProvider: func() ([]service.SessionSourceSummary, error) {
+			return []service.SessionSourceSummary{
+				{
+					SourceID:          "src_1",
+					AnalysisTableName: "revenue_metrics",
+					SemanticStatus:    "profiled",
+					AmbiguityCount:    1,
+				},
+			}, nil
+		},
+	}
+
+	result, err := tool.Execute(json.RawMessage(`{"report_title":"销售分析"}`))
+	if err != nil {
+		t.Fatalf("expected structured tool failure instead of error, got %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("expected finalize failure json payload: %v", err)
+	}
+	if payload["ok"] != false || payload["error_code"] != "report_state_invalid" {
+		t.Fatalf("unexpected finalize failure payload: %#v", payload)
+	}
+	issues, ok := payload["finalize_issues"].([]interface{})
+	if !ok || len(issues) != 1 || !strings.Contains(issues[0].(string), "unresolved_semantic_ambiguity:revenue_metrics") {
+		t.Fatalf("expected unresolved semantic ambiguity issue, got %#v", payload["finalize_issues"])
+	}
+}
+
+func TestFinalizeReportRejectsSemanticAmbiguityWithOnlyDefinitionMarker(t *testing.T) {
+	t.Parallel()
+
+	tool := &FinalizeReportTool{
+		ReportState: &ReportState{
+			Blocks: []ReportBlock{
+				{ID: "analysis", Kind: "markdown", Content: "收入 definition：按业务字段展示。口径说明：收入增长 12%。"},
 			},
 		},
 		SessionSourcesProvider: func() ([]service.SessionSourceSummary, error) {

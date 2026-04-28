@@ -430,8 +430,9 @@ func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
 	types := make([]ColumnType, colCount)
 
 	for i := range types {
-		types[i] = TypeText
+		types[i] = TypeInteger
 	}
+	seenNonEmpty := make([]bool, colCount)
 
 	sampleSize := 100
 	if len(rows) < sampleSize {
@@ -446,6 +447,7 @@ func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
 			if val == "" || val == "-" || val == "N/A" || val == "null" || val == "NULL" {
 				continue
 			}
+			seenNonEmpty[i] = true
 
 			switch types[i] {
 			case TypeInteger:
@@ -466,6 +468,11 @@ func inferColumnTypes(rows [][]string, colCount int) []ColumnType {
 			case TypeText:
 				// 已确定为文本，不再变化
 			}
+		}
+	}
+	for i, seen := range seenNonEmpty {
+		if !seen {
+			types[i] = TypeText
 		}
 	}
 

@@ -6,9 +6,13 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ifnodoraemon/openDataAnalysis/auth"
+	"github.com/ifnodoraemon/openDataAnalysis/config"
+	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
 var safeFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
@@ -21,6 +25,10 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if !safeFilenamePattern.MatchString(filename) {
 		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	if !authorizePythonFileAccess(r, filename) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -62,4 +70,37 @@ func ProxyPythonFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	io.Copy(w, resp.Body)
+}
+
+func authorizePythonFileAccess(r *http.Request, filename string) bool {
+	identity, ok := auth.FromContext(r.Context())
+	if !ok || strings.TrimSpace(identity.UserID) == "" || strings.TrimSpace(identity.WorkspaceID) == "" {
+		return false
+	}
+	if runRepo == nil || config.Cfg == nil || strings.TrimSpace(config.Cfg.AuthSecret) == "" {
+		return false
+	}
+
+	query := r.URL.Query()
+	sessionID := strings.TrimSpace(query.Get("session_id"))
+	runID := strings.TrimSpace(query.Get("run_id"))
+	sig := strings.TrimSpace(query.Get("sig"))
+	if sessionID == "" || runID == "" || sig == "" {
+		return false
+	}
+
+	run, err := runRepo.GetByID(r.Context(), runID)
+	if err != nil || run == nil {
+		return false
+	}
+	if run.SessionID != sessionID || run.WorkspaceID != identity.WorkspaceID || run.UserID != identity.UserID {
+		return false
+	}
+
+	meta := tools.ExecutionMetadata{
+		WorkspaceID: identity.WorkspaceID,
+		SessionID:   sessionID,
+		RunID:       runID,
+	}
+	return tools.VerifyPythonFileAccessSignature(filename, meta, config.Cfg.AuthSecret, sig)
 }

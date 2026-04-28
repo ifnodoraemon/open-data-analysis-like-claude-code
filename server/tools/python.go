@@ -3,13 +3,19 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ifnodoraemon/openDataAnalysis/config"
 )
 
 // RunPythonTool 通过 MCP 服务执行 Python 代码
@@ -138,11 +144,52 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 	if apiBaseURL == "" {
 		apiBaseURL = "http://localhost:8080"
 	}
+	meta := ExecutionMetadataFromContext(execCtx)
 	for i, f := range result.Files {
-		result.Files[i] = fmt.Sprintf("%s/api/python-files/%s", apiBaseURL, f)
+		result.Files[i] = buildPythonFileURL(apiBaseURL, f, meta)
 	}
 
 	return formatPythonResult(result), nil
+}
+
+func buildPythonFileURL(apiBaseURL, filename string, meta ExecutionMetadata) string {
+	base := fmt.Sprintf("%s/api/python-files/%s", strings.TrimRight(apiBaseURL, "/"), url.PathEscape(filename))
+	secret := ""
+	if config.Cfg != nil {
+		secret = strings.TrimSpace(config.Cfg.AuthSecret)
+	}
+	if secret == "" || strings.TrimSpace(meta.WorkspaceID) == "" || strings.TrimSpace(meta.SessionID) == "" || strings.TrimSpace(meta.RunID) == "" {
+		return base
+	}
+
+	values := url.Values{}
+	values.Set("session_id", meta.SessionID)
+	values.Set("run_id", meta.RunID)
+	values.Set("sig", SignPythonFileAccess(filename, meta, secret))
+	return base + "?" + values.Encode()
+}
+
+func SignPythonFileAccess(filename string, meta ExecutionMetadata, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(pythonFileAccessMessage(filename, meta)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func VerifyPythonFileAccessSignature(filename string, meta ExecutionMetadata, secret, sig string) bool {
+	secret = strings.TrimSpace(secret)
+	sig = strings.TrimSpace(sig)
+	if secret == "" || sig == "" || strings.TrimSpace(filename) == "" ||
+		strings.TrimSpace(meta.WorkspaceID) == "" ||
+		strings.TrimSpace(meta.SessionID) == "" ||
+		strings.TrimSpace(meta.RunID) == "" {
+		return false
+	}
+	want := SignPythonFileAccess(filename, meta, secret)
+	return hmac.Equal([]byte(want), []byte(sig))
+}
+
+func pythonFileAccessMessage(filename string, meta ExecutionMetadata) string {
+	return filename + "\n" + meta.WorkspaceID + "\n" + meta.SessionID + "\n" + meta.RunID
 }
 
 func formatPythonResult(result pyExecResponse) string {

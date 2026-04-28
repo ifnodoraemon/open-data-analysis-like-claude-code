@@ -260,15 +260,11 @@ func reportContainsSemanticAssumptionLocked(state *ReportState) bool {
 	}
 	markers := []string{
 		"假设",
-		"口径",
-		"歧义",
 		"未确认",
 		"待确认",
 		"assumption",
 		"assumed",
-		"ambiguous",
 		"unconfirmed",
-		"definition",
 	}
 	for _, block := range state.Blocks {
 		text := strings.ToLower(strings.TrimSpace(block.Content + " " + block.Title))

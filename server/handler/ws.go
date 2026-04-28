@@ -622,6 +622,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 					SessionID:   sess.ID,
 					RunID:       activeRunID,
 				})
+				resumeCtx = tools.WithExecutionMetadata(resumeCtx, tools.ExecutionMetadata{
+					WorkspaceID: sess.WorkspaceID,
+					SessionID:   sess.ID,
+					RunID:       activeRunID,
+				})
 				resumeCtx = agent.WithDelegateRunPersistence(resumeCtx, delegateRunPersistence{
 					workspaceID: sess.WorkspaceID,
 					sessionID:   sess.ID,
@@ -742,6 +747,11 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			ctx = agent.WithTraceMetadata(ctx, agent.TraceMetadata{
+				WorkspaceID: sess.WorkspaceID,
+				SessionID:   sess.ID,
+				RunID:       runID,
+			})
+			ctx = tools.WithExecutionMetadata(ctx, tools.ExecutionMetadata{
 				WorkspaceID: sess.WorkspaceID,
 				SessionID:   sess.ID,
 				RunID:       runID,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -437,6 +438,21 @@ func TestEnrichSemanticProfile_StripsUnverifiedRelations(t *testing.T) {
 	// relations_json 也应为空数组或 null
 	if meta.RelationsJSON != "" && meta.RelationsJSON != "null" && meta.RelationsJSON != "[]" {
 		t.Fatalf("expected empty relations_json, got: %s", meta.RelationsJSON)
+	}
+}
+
+func TestInferColumnTypesDetectsIntegerRealTextAndEmpty(t *testing.T) {
+	t.Parallel()
+
+	rows := [][]string{
+		{"1", "1.5", "abc", ""},
+		{"2", "2.75", "def", ""},
+		{"3", "", "ghi", "N/A"},
+	}
+	got := inferColumnTypes(rows, 4)
+	want := []ColumnType{TypeInteger, TypeReal, TypeText, TypeText}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("inferColumnTypes() = %#v, want %#v", got, want)
 	}
 }
 

@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	QueryTimeoutQuick    = 5 * time.Second
-	QueryTimeoutLarge    = 30 * time.Second
+	QueryTimeoutQuick       = 5 * time.Second
+	QueryTimeoutLarge       = 30 * time.Second
 	queryTimeout            = QueryTimeoutQuick
 	queryTimeoutLarge       = QueryTimeoutLarge
 	largeTableThreshold     = 100000
@@ -187,8 +187,8 @@ func extractSchemaInternal(db *sql.DB, tableName string, sampled bool) (*SchemaI
 		// 尝试数值统计
 		var minVal, maxVal, avgVal sql.NullFloat64
 		err = db.QueryRow(fmt.Sprintf(
-			"SELECT MIN(CAST(\"%s\" AS REAL)), MAX(CAST(\"%s\" AS REAL)), AVG(CAST(\"%s\" AS REAL)) FROM \"%s\" WHERE \"%s\" GLOB '[0-9]*'",
-			col, col, col, queryTable, col)).Scan(&minVal, &maxVal, &avgVal)
+			"SELECT MIN(CAST(\"%s\" AS REAL)), MAX(CAST(\"%s\" AS REAL)), AVG(CAST(\"%s\" AS REAL)) FROM \"%s\" WHERE TRIM(CAST(\"%s\" AS TEXT)) GLOB '-[0-9]*' OR TRIM(CAST(\"%s\" AS TEXT)) GLOB '[0-9]*'",
+			col, col, col, queryTable, col, col)).Scan(&minVal, &maxVal, &avgVal)
 		if err == nil && minVal.Valid {
 			colInfo.Type = "NUMERIC"
 			min := minVal.Float64
@@ -553,7 +553,12 @@ func ExecuteQueryWithTimeout(db *sql.DB, query string, timeout time.Duration) ([
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		resetCtx, resetCancel := context.WithTimeout(context.Background(), time.Second)
+		defer resetCancel()
+		_, _ = conn.ExecContext(resetCtx, "PRAGMA query_only = OFF")
+		_ = conn.Close()
+	}()
 
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
 		return nil, fmt.Errorf("failed to enable read-only query mode: %w", err)

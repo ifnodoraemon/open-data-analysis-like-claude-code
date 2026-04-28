@@ -50,7 +50,7 @@ func (t *ListTablesTool) Execute(args json.RawMessage) (string, error) {
 	if t.QueryLocker != nil {
 		t.QueryLocker.RLockQuery()
 	}
-	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_oda_%' ORDER BY name")
 	if t.QueryLocker != nil {
 		t.QueryLocker.RUnlockQuery()
 	}

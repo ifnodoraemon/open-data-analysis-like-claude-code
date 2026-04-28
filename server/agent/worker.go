@@ -348,6 +348,11 @@ func (t *DelegateTaskTool) Execute(args json.RawMessage) (string, error) {
 			TraceID:     childRunID,
 		}
 		childCtx = WithTraceMetadata(ctx, childMeta)
+		childCtx = tools.WithExecutionMetadata(childCtx, tools.ExecutionMetadata{
+			WorkspaceID: parentMeta.WorkspaceID,
+			SessionID:   parentMeta.SessionID,
+			RunID:       childRunID,
+		})
 	}
 	childEmit := func(ev WSEvent) {
 		if strings.TrimSpace(childRunID) != "" && strings.TrimSpace(ev.RunID) == "" {

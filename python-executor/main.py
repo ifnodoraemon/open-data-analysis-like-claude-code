@@ -31,6 +31,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+for _thread_env in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, "1")
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
@@ -51,6 +59,7 @@ MAX_TIMEOUT = int(os.environ.get("MAX_TIMEOUT", "120"))
 MAX_CODE_SIZE = int(os.environ.get("MAX_CODE_SIZE", "65536"))
 MEMORY_LIMIT_MB = int(os.environ.get("MEMORY_LIMIT_MB", "512"))
 FILE_SIZE_LIMIT_MB = int(os.environ.get("FILE_SIZE_LIMIT_MB", "50"))
+PROCESS_LIMIT = int(os.environ.get("PROCESS_LIMIT", "0"))
 STDOUT_LIMIT = int(os.environ.get("STDOUT_LIMIT", "10000"))
 STDERR_LIMIT = int(os.environ.get("STDERR_LIMIT", "5000"))
 
@@ -425,10 +434,43 @@ def _apply_resource_limits() -> None:
         mem = MEMORY_LIMIT_MB * 1024 * 1024
         fsize = FILE_SIZE_LIMIT_MB * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
-        resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+        if PROCESS_LIMIT > 0:
+            nproc = max(PROCESS_LIMIT, _current_user_task_count() + 32)
+            _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+            if hard != resource.RLIM_INFINITY:
+                nproc = min(nproc, hard)
+            resource.setrlimit(resource.RLIMIT_NPROC, (nproc, nproc))
         resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
     except (ValueError, OSError):
         pass
+
+
+def _current_user_task_count() -> int:
+    proc = Path("/proc")
+    if not proc.exists():
+        return 0
+    uid = os.getuid()
+    count = 0
+    for status_path in proc.glob("[0-9]*/status"):
+        try:
+            lines = status_path.read_text(errors="ignore").splitlines()
+        except OSError:
+            continue
+        owner_uid = None
+        for line in lines:
+            if line.startswith("Uid:"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    owner_uid = int(parts[1])
+                break
+        if owner_uid != uid:
+            continue
+        task_dir = status_path.parent / "task"
+        try:
+            count += sum(1 for _ in task_dir.iterdir())
+        except OSError:
+            count += 1
+    return count
 
 
 def _build_safe_builtins(req_dir: Path) -> dict:

@@ -79,6 +79,26 @@ func TestExecuteQueryReturnsRowsWithinLimit(t *testing.T) {
 	}
 }
 
+func TestExecuteQueryRestoresWritableConnection(t *testing.T) {
+	t.Parallel()
+
+	db := openTestSQLiteDB(t)
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`CREATE TABLE sales (id INTEGER PRIMARY KEY, name TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO sales (name) VALUES ('row-1')`); err != nil {
+		t.Fatalf("insert initial row: %v", err)
+	}
+
+	if _, err := ExecuteQuery(db, `SELECT id, name FROM sales ORDER BY id LIMIT 1`); err != nil {
+		t.Fatalf("ExecuteQuery returned error: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO sales (name) VALUES ('row-2')`); err != nil {
+		t.Fatalf("expected database connection to be writable after ExecuteQuery, got %v", err)
+	}
+}
+
 func TestIngesterInitDBConfiguresSQLite(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +191,36 @@ func TestExtractSchemaDetectsTimeCoverage(t *testing.T) {
 	if !found {
 		t.Fatalf("dt column not found in schema columns: %#v", schema.Columns)
 	}
+}
+
+func TestExtractSchemaDetectsNegativeNumericStats(t *testing.T) {
+	t.Parallel()
+
+	db := openTestSQLiteDB(t)
+	if _, err := db.Exec(`CREATE TABLE margins (delta TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO margins (delta) VALUES ('-5'), ('-2'), ('')`); err != nil {
+		t.Fatalf("insert rows: %v", err)
+	}
+
+	schema, err := ExtractSchema(db, "margins")
+	if err != nil {
+		t.Fatalf("ExtractSchema returned error: %v", err)
+	}
+	for _, column := range schema.Columns {
+		if column.Name != "delta" {
+			continue
+		}
+		if column.Type != "NUMERIC" {
+			t.Fatalf("expected negative-only text column to be numeric, got %#v", column)
+		}
+		if column.Min == nil || column.Max == nil || *column.Min != -5 || *column.Max != -2 {
+			t.Fatalf("unexpected numeric stats: min=%v max=%v", column.Min, column.Max)
+		}
+		return
+	}
+	t.Fatalf("delta column not found in schema columns: %#v", schema.Columns)
 }
 
 func openTestSQLiteDB(t *testing.T) *sql.DB {
