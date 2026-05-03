@@ -195,6 +195,7 @@ async function handleSend() {
         selectionText: quote.selectionText || "",
         selectionStart: Number.isInteger(quote.selectionStart) ? quote.selectionStart : undefined,
         selectionEnd: Number.isInteger(quote.selectionEnd) ? quote.selectionEnd : undefined,
+        selectionRangeSet: quote.selectionRangeSet === true,
         preserveOtherBlocks: quote.preserveOtherBlocks !== false,
       }
     : null;

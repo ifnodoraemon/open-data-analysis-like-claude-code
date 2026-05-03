@@ -89,6 +89,189 @@ func TestReportEditStateChartScopeRestrictsToTargetChart(t *testing.T) {
 	}
 }
 
+func TestReportEditStateSelectionScopePreservesOutsideText(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "analysis", Kind: "markdown", Content: "前文。需要改写的句子。后文。"},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "analysis",
+		SelectionText:       "需要改写的句子",
+		SelectionStart:      3,
+		SelectionEnd:        10,
+		SelectionRangeSet:   true,
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	if !editState.SelectionMutationAllowed("analysis", "前文。新的句子。后文。") {
+		t.Fatal("expected replacement inside selection to be allowed")
+	}
+	if editState.SelectionMutationAllowed("analysis", "前文也改了。新的句子。后文。") {
+		t.Fatal("expected prefix mutation outside selection to be blocked")
+	}
+	if editState.SelectionMutationAllowed("analysis", "前文。新的句子。后文也改了。") {
+		t.Fatal("expected suffix mutation outside selection to be blocked")
+	}
+}
+
+func TestReportEditStateSelectionScopeUsesRenderedTextProjection(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "analysis", Kind: "markdown", Content: "# 概览\n\n指标 **收入** [详情](https://example.com)"},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "analysis",
+		SelectionText:       "收入",
+		SelectionStart:      8,
+		SelectionEnd:        10,
+		SelectionRangeSet:   true,
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	if !editState.SelectionMutationAllowed("analysis", "# 概览\n\n指标 **利润** [详情](https://example.com)") {
+		t.Fatal("expected replacement inside rendered markdown selection to be allowed")
+	}
+	if editState.SelectionMutationAllowed("analysis", "# 概览\n\n指标 **利润** [详情](https://changed.example.com)") {
+		t.Fatal("expected link target outside selected text to remain protected")
+	}
+}
+
+func TestReportEditStateSelectionScopePreservesBlockMetadata(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "analysis",
+				Kind:    "markdown",
+				Title:   "分析",
+				Content: "前文。需要改写的句子。后文。",
+				Sources: []EvidenceRef{{Kind: "sql", SQL: "select 1"}},
+			},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "analysis",
+		SelectionText:       "需要改写的句子",
+		SelectionStart:      3,
+		SelectionEnd:        10,
+		SelectionRangeSet:   true,
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	if !editState.SelectionBlockMutationAllowed(ReportBlock{
+		ID:      "analysis",
+		Kind:    "markdown",
+		Title:   "分析",
+		Content: "前文。新的句子。后文。",
+		Sources: []EvidenceRef{{Kind: "sql", SQL: "select 1"}},
+	}) {
+		t.Fatal("expected content-only replacement to be allowed")
+	}
+	if editState.SelectionBlockMutationAllowed(ReportBlock{
+		ID:      "analysis",
+		Kind:    "markdown",
+		Title:   "改名",
+		Content: "前文。新的句子。后文。",
+		Sources: []EvidenceRef{{Kind: "sql", SQL: "select 1"}},
+	}) {
+		t.Fatal("expected title mutation outside selected text to be blocked")
+	}
+	if editState.SelectionBlockMutationAllowed(ReportBlock{
+		ID:      "analysis",
+		Kind:    "markdown",
+		Title:   "分析",
+		Content: "前文。新的句子。后文。",
+		Sources: []EvidenceRef{{Kind: "sql", SQL: "select 2"}},
+	}) {
+		t.Fatal("expected source mutation outside selected text to be blocked")
+	}
+}
+
+func TestReportEditStateSelectionScopeRejectsMissingRange(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "analysis", Kind: "markdown", Content: "收入上涨。成本下降。收入贡献最大。"},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "analysis",
+		SelectionText:       "收入",
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	if editState.SelectionMutationAllowed("analysis", "营收上涨。成本下降。收入贡献最大。") {
+		t.Fatal("expected missing selection range to be rejected instead of guessing first repeated text")
+	}
+}
+
+func TestReportEditStateSelectionScopeDecodesHTMLEntities(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "analysis", Kind: "html", Content: "<p>A &amp; B improved.</p>"},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "analysis",
+		SelectionText:       "A & B",
+		SelectionStart:      0,
+		SelectionEnd:        5,
+		SelectionRangeSet:   true,
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	if !editState.SelectionMutationAllowed("analysis", "<p>C &amp; D improved.</p>") {
+		t.Fatal("expected replacement inside decoded HTML entity selection to be allowed")
+	}
+	if editState.SelectionMutationAllowed("analysis", "<p>C &amp; D regressed.</p>") {
+		t.Fatal("expected suffix outside decoded HTML entity selection to stay protected")
+	}
+}
+
+func TestReportEditStateSelectionScopeNormalizesDecodedWhitespace(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{ID: "analysis", Kind: "html", Content: "<p>A&nbsp;B improved.</p>"},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "analysis",
+		SelectionText:       "A B",
+		SelectionStart:      0,
+		SelectionEnd:        3,
+		SelectionRangeSet:   true,
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	if !editState.SelectionMutationAllowed("analysis", "<p>C&nbsp;D improved.</p>") {
+		t.Fatal("expected selection containing decoded non-breaking space to be allowed")
+	}
+}
+
 func TestNormalizeSectionTitleStripsCommonOrdinalPrefixes(t *testing.T) {
 	t.Parallel()
 

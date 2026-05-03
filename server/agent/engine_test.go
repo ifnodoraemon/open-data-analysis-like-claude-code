@@ -371,6 +371,7 @@ func TestInspectReportEditStateToolSelectionScope(t *testing.T) {
 			SelectionText:       "其中这句需要重写",
 			SelectionStart:      12,
 			SelectionEnd:        20,
+			SelectionRangeSet:   true,
 			PreserveOtherBlocks: true,
 		},
 		ReportState: &tools.ReportState{

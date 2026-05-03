@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
@@ -23,6 +24,16 @@ type RunPythonTool struct {
 	MCPEndpoint string // Python MCP 服务地址，如 http://python-executor:8081
 	childCtx    context.Context
 }
+
+var pythonHealthCache = struct {
+	sync.Mutex
+	key       string
+	checkedAt time.Time
+	err       error
+}{}
+
+const pythonHealthCacheTTL = 30 * time.Second
+const pythonHealthFailureCacheTTL = 2 * time.Second
 
 func (t *RunPythonTool) SetExecutionContext(ctx context.Context) {
 	t.childCtx = ctx
@@ -75,11 +86,42 @@ func (t *RunPythonTool) Endpoint() string {
 }
 
 func (t *RunPythonTool) HealthCheck(ctx context.Context) error {
+	proxyToken := os.Getenv("PROXY_TOKEN")
+	if strings.TrimSpace(proxyToken) == "" {
+		return fmt.Errorf("PROXY_TOKEN is not configured")
+	}
+	cacheKey := t.Endpoint() + "\x00" + proxyToken
+	pythonHealthCache.Lock()
+	cacheAge := time.Since(pythonHealthCache.checkedAt)
+	cacheTTL := pythonHealthCacheTTL
+	if pythonHealthCache.err != nil {
+		cacheTTL = pythonHealthFailureCacheTTL
+	}
+	if pythonHealthCache.key == cacheKey && cacheAge < cacheTTL {
+		err := pythonHealthCache.err
+		pythonHealthCache.Unlock()
+		return err
+	}
+	pythonHealthCache.Unlock()
+
+	healthCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+
+	err := t.runHealthCheck(healthCtx, client, proxyToken)
+	pythonHealthCache.Lock()
+	pythonHealthCache.key = cacheKey
+	pythonHealthCache.checkedAt = time.Now()
+	pythonHealthCache.err = err
+	pythonHealthCache.Unlock()
+	return err
+}
+
+func (t *RunPythonTool) runHealthCheck(ctx context.Context, client *http.Client, proxyToken string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Endpoint()+"/health", nil)
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -88,6 +130,34 @@ func (t *RunPythonTool) HealthCheck(ctx context.Context) error {
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	body, _ := json.Marshal(pyExecRequest{Code: "print('ok')", Timeout: 5})
+	execReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Endpoint()+"/execute", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	execReq.Header.Set("Content-Type", "application/json")
+	execReq.Header.Set("X-Proxy-Token", proxyToken)
+	execResp, err := client.Do(execReq)
+	if err != nil {
+		return err
+	}
+	defer execResp.Body.Close()
+	execBody, _ := io.ReadAll(io.LimitReader(execResp.Body, 4096))
+	if execResp.StatusCode >= 300 {
+		return fmt.Errorf("execute status=%d body=%s", execResp.StatusCode, strings.TrimSpace(string(execBody)))
+	}
+	var result pyExecResponse
+	if err := json.Unmarshal(execBody, &result); err != nil {
+		return fmt.Errorf("failed to parse execute health response: %w", err)
+	}
+	if !result.Success {
+		detail := strings.TrimSpace(result.Stderr)
+		if result.Error != nil && strings.TrimSpace(*result.Error) != "" {
+			detail = strings.TrimSpace(*result.Error)
+		}
+		return fmt.Errorf("execute health failed: %s", detail)
 	}
 	return nil
 }
@@ -135,6 +205,9 @@ func (t *RunPythonTool) Execute(args json.RawMessage) (string, error) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Python MCP service returned status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	var result pyExecResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("failed to parse Python execution result: %w", err)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -185,18 +186,20 @@ func extractSchemaInternal(db *sql.DB, tableName string, sampled bool) (*SchemaI
 		}
 
 		// 尝试数值统计
-		var minVal, maxVal, avgVal sql.NullFloat64
-		err = db.QueryRow(fmt.Sprintf(
-			"SELECT MIN(CAST(\"%s\" AS REAL)), MAX(CAST(\"%s\" AS REAL)), AVG(CAST(\"%s\" AS REAL)) FROM \"%s\" WHERE TRIM(CAST(\"%s\" AS TEXT)) GLOB '-[0-9]*' OR TRIM(CAST(\"%s\" AS TEXT)) GLOB '[0-9]*'",
-			col, col, col, queryTable, col, col)).Scan(&minVal, &maxVal, &avgVal)
-		if err == nil && minVal.Valid {
-			colInfo.Type = "NUMERIC"
-			min := minVal.Float64
-			max := maxVal.Float64
-			avg := avgVal.Float64
-			colInfo.Min = &min
-			colInfo.Max = &max
-			colInfo.Avg = &avg
+		if columnValuesLookNumeric(db, queryTable, col) {
+			var minVal, maxVal, avgVal sql.NullFloat64
+			err = db.QueryRow(fmt.Sprintf(
+				"SELECT MIN(CAST(\"%s\" AS REAL)), MAX(CAST(\"%s\" AS REAL)), AVG(CAST(\"%s\" AS REAL)) FROM \"%s\" WHERE TRIM(CAST(\"%s\" AS TEXT)) != ''",
+				col, col, col, queryTable, col)).Scan(&minVal, &maxVal, &avgVal)
+			if err == nil && minVal.Valid {
+				colInfo.Type = "NUMERIC"
+				min := minVal.Float64
+				max := maxVal.Float64
+				avg := avgVal.Float64
+				colInfo.Min = &min
+				colInfo.Max = &max
+				colInfo.Avg = &avg
+			}
 		}
 
 		schema.Columns = append(schema.Columns, colInfo)
@@ -228,6 +231,32 @@ func collectDistinctColumnValues(db *sql.DB, tableName, column string, limit int
 		}
 	}
 	return values, rows.Err()
+}
+
+func columnValuesLookNumeric(db *sql.DB, tableName, column string) bool {
+	rows, err := db.Query(fmt.Sprintf(
+		"SELECT DISTINCT CAST(\"%s\" AS TEXT) FROM \"%s\" WHERE \"%s\" IS NOT NULL AND TRIM(CAST(\"%s\" AS TEXT)) != ''",
+		column, tableName, column, column,
+	))
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	nonEmpty := 0
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return false
+		}
+		value := strings.TrimSpace(raw)
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return false
+		}
+		nonEmpty++
+	}
+	return rows.Err() == nil && nonEmpty > 0
 }
 
 func detectTimeColumnInfo(columnName string, observedValues []string, uniqueCount int) *TimeColumnInfo {

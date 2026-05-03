@@ -8,11 +8,21 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
 )
+
+func resetPythonHealthCacheForTest(t *testing.T) {
+	t.Helper()
+	pythonHealthCache.Lock()
+	pythonHealthCache.key = ""
+	pythonHealthCache.checkedAt = time.Time{}
+	pythonHealthCache.err = nil
+	pythonHealthCache.Unlock()
+}
 
 func TestFormatPythonResultReturnsStructuredSuccess(t *testing.T) {
 	t.Parallel()
@@ -153,5 +163,82 @@ func TestRunPythonToolExecutionTimeout(t *testing.T) {
 	}
 	if dur > 8*time.Second {
 		t.Fatalf("expected tool to time out at around 6s, but it took %v", dur)
+	}
+}
+
+func TestRunPythonToolHealthCheckCachesProbe(t *testing.T) {
+	resetPythonHealthCacheForTest(t)
+	t.Setenv("PROXY_TOKEN", "proxy-token")
+
+	var executeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/execute":
+			executeCalls.Add(1)
+			if r.Header.Get("X-Proxy-Token") != "proxy-token" {
+				t.Fatalf("missing proxy token header")
+			}
+			_ = json.NewEncoder(w).Encode(pyExecResponse{Success: true, DurationMs: 1})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	tool := &RunPythonTool{MCPEndpoint: server.URL}
+	if err := tool.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("first HealthCheck returned error: %v", err)
+	}
+	if err := tool.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("second HealthCheck returned error: %v", err)
+	}
+	if executeCalls.Load() != 1 {
+		t.Fatalf("expected execute probe to be cached, got %d calls", executeCalls.Load())
+	}
+}
+
+func TestRunPythonToolHealthCheckFailureCacheExpiresQuickly(t *testing.T) {
+	resetPythonHealthCacheForTest(t)
+	t.Setenv("PROXY_TOKEN", "proxy-token")
+
+	var executeCalls atomic.Int32
+	failExecute := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/execute":
+			executeCalls.Add(1)
+			if failExecute {
+				http.Error(w, "cold start", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(pyExecResponse{Success: true, DurationMs: 1})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	tool := &RunPythonTool{MCPEndpoint: server.URL}
+	if err := tool.HealthCheck(context.Background()); err == nil {
+		t.Fatal("expected first HealthCheck to fail")
+	}
+	if err := tool.HealthCheck(context.Background()); err == nil {
+		t.Fatal("expected cached failed HealthCheck to fail")
+	}
+	if executeCalls.Load() != 1 {
+		t.Fatalf("expected immediate retry to use failure cache, got %d execute calls", executeCalls.Load())
+	}
+
+	time.Sleep(pythonHealthFailureCacheTTL + 100*time.Millisecond)
+	failExecute = false
+	if err := tool.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("expected HealthCheck to retry after short failure cache and succeed: %v", err)
+	}
+	if executeCalls.Load() != 2 {
+		t.Fatalf("expected retry after failure cache expiry, got %d execute calls", executeCalls.Load())
 	}
 }

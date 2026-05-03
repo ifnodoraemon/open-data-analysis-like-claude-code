@@ -437,7 +437,7 @@ func turnContextRuntimeBlock(turnCtx *agent.TurnContext) *agent.RuntimeContextBl
 	}
 	return &agent.RuntimeContextBlock{
 		Name:    "current_turn_target",
-		Role:    "developer",
+		Role:    "user",
 		Content: strings.Join(lines, "\n"),
 	}
 }

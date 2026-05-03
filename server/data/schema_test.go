@@ -223,6 +223,65 @@ func TestExtractSchemaDetectsNegativeNumericStats(t *testing.T) {
 	t.Fatalf("delta column not found in schema columns: %#v", schema.Columns)
 }
 
+func TestExtractSchemaRejectsMixedNumericTextBeyondProbePrefix(t *testing.T) {
+	t.Parallel()
+
+	db := openTestSQLiteDB(t)
+	if _, err := db.Exec(`CREATE TABLE metrics (value TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	for i := 0; i < schemaDistinctProbeRows+5; i++ {
+		if _, err := db.Exec(`INSERT INTO metrics (value) VALUES (?)`, fmt.Sprintf("%d", i)); err != nil {
+			t.Fatalf("insert numeric row %d: %v", i, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO metrics (value) VALUES ('N/A')`); err != nil {
+		t.Fatalf("insert text row: %v", err)
+	}
+
+	schema, err := ExtractSchema(db, "metrics")
+	if err != nil {
+		t.Fatalf("ExtractSchema returned error: %v", err)
+	}
+	for _, column := range schema.Columns {
+		if column.Name != "value" {
+			continue
+		}
+		if column.Type == "NUMERIC" {
+			t.Fatalf("expected mixed text column to remain non-numeric, got %#v", column)
+		}
+		return
+	}
+	t.Fatalf("value column not found in schema columns: %#v", schema.Columns)
+}
+
+func TestExtractSchemaRejectsNonFiniteNumericText(t *testing.T) {
+	t.Parallel()
+
+	db := openTestSQLiteDB(t)
+	if _, err := db.Exec(`CREATE TABLE metrics (value TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO metrics (value) VALUES ('1'), ('NaN')`); err != nil {
+		t.Fatalf("insert rows: %v", err)
+	}
+
+	schema, err := ExtractSchema(db, "metrics")
+	if err != nil {
+		t.Fatalf("ExtractSchema returned error: %v", err)
+	}
+	for _, column := range schema.Columns {
+		if column.Name != "value" {
+			continue
+		}
+		if column.Type == "NUMERIC" {
+			t.Fatalf("expected non-finite text column to remain non-numeric, got %#v", column)
+		}
+		return
+	}
+	t.Fatalf("value column not found in schema columns: %#v", schema.Columns)
+}
+
 func openTestSQLiteDB(t *testing.T) *sql.DB {
 	t.Helper()
 

@@ -330,6 +330,7 @@ func TestResolvePreparedUserMessageDoesNotInferActiveSelectionScope(t *testing.T
 			SelectionText:       "这句需要改短",
 			SelectionStart:      4,
 			SelectionEnd:        10,
+			SelectionRangeSet:   true,
 			PreserveOtherBlocks: true,
 		},
 	}

@@ -539,7 +539,7 @@ func TestFinalizeReportRejectsSemanticAmbiguityWithOnlyDefinitionMarker(t *testi
 	}
 }
 
-func TestFinalizeReportAllowsDocumentedSemanticAssumption(t *testing.T) {
+func TestFinalizeReportRejectsDocumentedSemanticAssumptionWithoutConfirmation(t *testing.T) {
 	t.Parallel()
 
 	state := &ReportState{
@@ -569,8 +569,12 @@ func TestFinalizeReportAllowsDocumentedSemanticAssumption(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
 		t.Fatalf("expected finalize json payload: %v", err)
 	}
-	if payload["ok"] != true || payload["delivery_state"] != "finalized" {
+	if payload["ok"] != false || payload["error_code"] != "report_state_invalid" {
 		t.Fatalf("unexpected finalize payload: %#v", payload)
+	}
+	issues, ok := payload["finalize_issues"].([]interface{})
+	if !ok || len(issues) != 1 || !strings.Contains(issues[0].(string), "unresolved_semantic_ambiguity:revenue_metrics") {
+		t.Fatalf("expected unresolved semantic ambiguity issue, got %#v", payload["finalize_issues"])
 	}
 }
 

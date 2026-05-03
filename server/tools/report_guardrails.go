@@ -3,9 +3,11 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/ifnodoraemon/openDataAnalysis/service"
 )
@@ -23,6 +25,21 @@ func (s *ReportEditState) RefreshFromReportState(state *ReportState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.AllowedChartIDs = collectEditableChartIDs(state, s.TargetBlockID, s.TargetChartID)
+	s.TargetBlockContent = ""
+	s.TargetBlockKind = ""
+	s.TargetBlockTitle = ""
+	s.TargetBlockChartID = ""
+	s.TargetBlockSources = nil
+	if state != nil && strings.TrimSpace(s.TargetBlockID) != "" {
+		if index := findReportBlockIndex(state.Blocks, strings.TrimSpace(s.TargetBlockID)); index >= 0 {
+			block := state.Blocks[index]
+			s.TargetBlockContent = block.Content
+			s.TargetBlockKind = block.Kind
+			s.TargetBlockTitle = block.Title
+			s.TargetBlockChartID = block.ChartID
+			s.TargetBlockSources = append([]EvidenceRef(nil), block.Sources...)
+		}
+	}
 }
 
 func (s *ReportEditState) BlockMutationAllowed(action, blockID string) bool {
@@ -58,6 +75,245 @@ func (s *ReportEditState) ChartMutationAllowed(chartID string) bool {
 	}
 	_, ok := s.AllowedChartIDs[strings.TrimSpace(chartID)]
 	return ok
+}
+
+func (s *ReportEditState) SelectionMutationAllowed(blockID, newContent string) bool {
+	if s == nil {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.modeLocked() == "" || s.scopeKindLocked() != "partial_selection" {
+		return true
+	}
+	if strings.TrimSpace(blockID) == "" || strings.TrimSpace(blockID) != strings.TrimSpace(s.TargetBlockID) {
+		return false
+	}
+	original := s.TargetBlockContent
+	if original == "" {
+		return false
+	}
+	start, end, ok := selectionBoundsLocked(s, original)
+	if !ok {
+		return false
+	}
+	prefix := string([]rune(original)[:start])
+	suffix := string([]rune(original)[end:])
+	return strings.HasPrefix(newContent, prefix) && strings.HasSuffix(newContent, suffix)
+}
+
+func (s *ReportEditState) SelectionBlockMutationAllowed(block ReportBlock) bool {
+	if s == nil {
+		return true
+	}
+	if !s.SelectionMutationAllowed(block.ID, block.Content) {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.modeLocked() == "" || s.scopeKindLocked() != "partial_selection" {
+		return true
+	}
+	kindUnchanged := strings.TrimSpace(s.TargetBlockKind) == "" || strings.TrimSpace(block.Kind) == strings.TrimSpace(s.TargetBlockKind)
+	return kindUnchanged &&
+		block.Title == s.TargetBlockTitle &&
+		strings.TrimSpace(block.ChartID) == strings.TrimSpace(s.TargetBlockChartID) &&
+		evidenceRefsEqual(block.Sources, s.TargetBlockSources)
+}
+
+func evidenceRefsEqual(a, b []EvidenceRef) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func selectionBoundsLocked(s *ReportEditState, original string) (int, int, bool) {
+	return selectionBoundsFromProjectedText(s, original)
+}
+
+type projectedRune struct {
+	value    rune
+	rawStart int
+	rawEnd   int
+}
+
+func selectionBoundsFromProjectedText(s *ReportEditState, original string) (int, int, bool) {
+	projected := projectReportContentText(original)
+	if len(projected) == 0 {
+		return 0, 0, false
+	}
+	needle := normalizeSelectionCompareText(s.SelectionText)
+	if needle == "" {
+		return 0, 0, false
+	}
+	if !s.SelectionRangeSet || s.SelectionEnd <= s.SelectionStart || s.SelectionStart < 0 || s.SelectionEnd > len(projected) {
+		return 0, 0, false
+	}
+	selected := projectedText(projected[s.SelectionStart:s.SelectionEnd])
+	if normalizeSelectionCompareText(selected) != needle {
+		return 0, 0, false
+	}
+	return projectedRawBounds(projected, s.SelectionStart, s.SelectionEnd)
+}
+
+func projectReportContentText(content string) []projectedRune {
+	runes := []rune(content)
+	projected := make([]projectedRune, 0, len(runes))
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+		if ch == '&' {
+			if decoded, rawEnd, ok := decodeHTMLEntityAt(runes, i); ok {
+				for _, decodedRune := range decoded {
+					projected = append(projected, projectedRune{value: decodedRune, rawStart: i, rawEnd: rawEnd})
+				}
+				i = rawEnd - 1
+				continue
+			}
+		}
+		if ch == '<' {
+			if end := findRuneForward(runes, i+1, '>'); end >= 0 {
+				i = end
+				continue
+			}
+		}
+		if ch == '!' && i+1 < len(runes) && runes[i+1] == '[' {
+			if textEnd := findRuneForward(runes, i+2, ']'); textEnd >= 0 && textEnd+1 < len(runes) && runes[textEnd+1] == '(' {
+				if linkEnd := findRuneForward(runes, textEnd+2, ')'); linkEnd >= 0 {
+					projected = appendProjectedRuneRange(projected, runes, i+2, textEnd)
+					i = linkEnd
+					continue
+				}
+			}
+		}
+		if ch == '[' {
+			if textEnd := findRuneForward(runes, i+1, ']'); textEnd >= 0 && textEnd+1 < len(runes) && runes[textEnd+1] == '(' {
+				if linkEnd := findRuneForward(runes, textEnd+2, ')'); linkEnd >= 0 {
+					projected = appendProjectedRuneRange(projected, runes, i+1, textEnd)
+					i = linkEnd
+					continue
+				}
+			}
+		}
+		if isMarkdownSyntaxRune(runes, i) {
+			continue
+		}
+		projected = appendProjectedRune(projected, runes, i)
+	}
+	return projected
+}
+
+func appendProjectedRuneRange(projected []projectedRune, runes []rune, start, end int) []projectedRune {
+	for i := start; i < end; i++ {
+		if decoded, rawEnd, ok := decodeHTMLEntityAt(runes, i); ok && rawEnd <= end {
+			for _, decodedRune := range decoded {
+				projected = append(projected, projectedRune{value: decodedRune, rawStart: i, rawEnd: rawEnd})
+			}
+			i = rawEnd - 1
+			continue
+		}
+		projected = append(projected, projectedRune{value: runes[i], rawStart: i, rawEnd: i + 1})
+	}
+	return projected
+}
+
+func appendProjectedRune(projected []projectedRune, runes []rune, index int) []projectedRune {
+	if decoded, rawEnd, ok := decodeHTMLEntityAt(runes, index); ok {
+		for _, decodedRune := range decoded {
+			projected = append(projected, projectedRune{value: decodedRune, rawStart: index, rawEnd: rawEnd})
+		}
+		return projected
+	}
+	return append(projected, projectedRune{value: runes[index], rawStart: index, rawEnd: index + 1})
+}
+
+func decodeHTMLEntityAt(runes []rune, start int) ([]rune, int, bool) {
+	if start < 0 || start >= len(runes) || runes[start] != '&' {
+		return nil, 0, false
+	}
+	end := findRuneForward(runes, start+1, ';')
+	if end < 0 || end-start > 32 {
+		return nil, 0, false
+	}
+	raw := string(runes[start : end+1])
+	decoded := html.UnescapeString(raw)
+	if decoded == raw {
+		return nil, 0, false
+	}
+	return []rune(decoded), end + 1, true
+}
+
+func findRuneForward(runes []rune, start int, target rune) int {
+	for i := start; i < len(runes); i++ {
+		if runes[i] == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func isMarkdownSyntaxRune(runes []rune, index int) bool {
+	ch := runes[index]
+	if ch == '*' || ch == '`' {
+		return true
+	}
+	if ch == '#' {
+		atLineStart := index == 0 || runes[index-1] == '\n'
+		nextIsSpace := index+1 < len(runes) && (runes[index+1] == ' ' || runes[index+1] == '#')
+		return atLineStart && nextIsSpace
+	}
+	return false
+}
+
+func projectedText(projected []projectedRune) string {
+	var b strings.Builder
+	for _, item := range projected {
+		b.WriteRune(item.value)
+	}
+	return b.String()
+}
+
+func projectedRawBounds(projected []projectedRune, start, end int) (int, int, bool) {
+	if start < 0 || end > len(projected) || start >= end {
+		return 0, 0, false
+	}
+	rawStart := projected[start].rawStart
+	rawEnd := projected[end-1].rawEnd
+	return rawStart, rawEnd, true
+}
+
+func normalizeSelectionCompareText(value string) string {
+	normalized, _ := normalizeSelectionCompareTextWithMap(value)
+	return normalized
+}
+
+func normalizeSelectionCompareTextWithMap(value string) (string, []int) {
+	runes := []rune(value)
+	var b strings.Builder
+	indexMap := make([]int, 0, len(runes))
+	inSpace := false
+	for i, ch := range runes {
+		if unicode.IsSpace(ch) {
+			inSpace = true
+			continue
+		}
+		if inSpace && b.Len() > 0 {
+			b.WriteRune(' ')
+			indexMap = append(indexMap, i)
+		}
+		inSpace = false
+		b.WriteRune(ch)
+		indexMap = append(indexMap, i)
+	}
+	return strings.TrimSpace(b.String()), indexMap
 }
 
 func collectEditableChartIDs(state *ReportState, blockID, chartID string) map[string]struct{} {
@@ -190,12 +446,6 @@ func reportSemanticFinalizeIssues(state *ReportState, sources []service.SessionS
 		return nil
 	}
 
-	state.RLock()
-	defer state.RUnlock()
-	if reportContainsSemanticAssumptionLocked(state) {
-		return nil
-	}
-
 	issues := make([]string, 0, len(unresolved))
 	for _, source := range unresolved {
 		ref := strings.TrimSpace(source.AnalysisTableName)
@@ -252,32 +502,6 @@ func reportSemanticFinalizeIssues(state *ReportState, sources []service.SessionS
 	}
 
 	return issues
-}
-
-func reportContainsSemanticAssumptionLocked(state *ReportState) bool {
-	if state == nil {
-		return false
-	}
-	markers := []string{
-		"假设",
-		"未确认",
-		"待确认",
-		"assumption",
-		"assumed",
-		"unconfirmed",
-	}
-	for _, block := range state.Blocks {
-		text := strings.ToLower(strings.TrimSpace(block.Content + " " + block.Title))
-		for _, source := range block.Sources {
-			text += " " + strings.ToLower(source.Summary+" "+source.SQL+" "+source.TableName+" "+source.ToolName)
-		}
-		for _, marker := range markers {
-			if strings.Contains(text, marker) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func hasDuplicateLeadingHeading(block ReportBlock) bool {

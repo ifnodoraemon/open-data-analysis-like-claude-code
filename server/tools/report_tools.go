@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 func init() {
@@ -202,19 +204,6 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.ReportState.Lock()
-	t.ReportState.FinalizeAttempts++
-	const maxFinalizeRetries = 4
-	if t.ReportState.FinalizeAttempts > maxFinalizeRetries {
-		attempts := t.ReportState.FinalizeAttempts
-		t.ReportState.Unlock()
-		return toolFailure("report_finalize", "finalize_loop_detected",
-			fmt.Sprintf("report_finalize has been called %d times without resolving semantic ambiguity. Unresolved ambiguities on data sources are preventing finalize. Source ambiguities can be resolved via state_source_confirm_profile.", attempts),
-			map[string]interface{}{
-				"finalize_attempts":          attempts,
-				"max_retries":                maxFinalizeRetries,
-				"unresolved_ambiguity_count": len(semanticIssues),
-			}), nil
-	}
 
 	result, err := finalizeReportState(t.ReportState, t.Subgoals, params, semanticIssues)
 	if err != nil {
@@ -226,6 +215,29 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 		}
 		var issuesErr reportFinalizeIssuesError
 		if errors.As(err, &issuesErr) {
+			if signature := semanticFinalizeIssueSignature(issuesErr.Issues); signature != "" {
+				if t.ReportState.LastFinalizeIssueSignature == signature {
+					t.ReportState.FinalizeAttempts++
+				} else {
+					t.ReportState.LastFinalizeIssueSignature = signature
+					t.ReportState.FinalizeAttempts = 1
+				}
+				const maxFinalizeRetries = 4
+				if t.ReportState.FinalizeAttempts > maxFinalizeRetries {
+					attempts := t.ReportState.FinalizeAttempts
+					t.ReportState.Unlock()
+					return toolFailure("report_finalize", "finalize_loop_detected",
+						fmt.Sprintf("report_finalize has been called %d times with the same unresolved semantic ambiguity. User confirmation or explicit user authorization is required before delivery.", attempts),
+						map[string]interface{}{
+							"finalize_attempts":          attempts,
+							"max_retries":                maxFinalizeRetries,
+							"unresolved_ambiguity_count": len(semanticIssues),
+						}), nil
+				}
+			} else {
+				t.ReportState.FinalizeAttempts = 0
+				t.ReportState.LastFinalizeIssueSignature = ""
+			}
 			failure := reportFinalizeIssuesFailure(t.ReportState, issuesErr.Issues)
 			t.ReportState.Unlock()
 			return failure, nil
@@ -241,6 +253,7 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	}
 
 	t.ReportState.FinalizeAttempts = 0
+	t.ReportState.LastFinalizeIssueSignature = ""
 	success := reportFinalizeSuccess(map[string]interface{}{
 		"report_title": result.ReportTitle,
 		"author":       result.Author,
@@ -250,4 +263,19 @@ func (t *FinalizeReportTool) Execute(args json.RawMessage) (string, error) {
 	})
 	t.ReportState.Unlock()
 	return success, nil
+}
+
+func semanticFinalizeIssueSignature(issues []string) string {
+	var semantic []string
+	for _, issue := range issues {
+		trimmed := strings.TrimSpace(issue)
+		if strings.HasPrefix(trimmed, "unresolved_semantic_ambiguity:") {
+			semantic = append(semantic, trimmed)
+		}
+	}
+	if len(semantic) == 0 {
+		return ""
+	}
+	sort.Strings(semantic)
+	return strings.Join(semantic, "\n")
 }

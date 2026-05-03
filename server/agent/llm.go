@@ -161,21 +161,11 @@ func countRuntimeContextChars(ctxs []RuntimeContextBlock) int {
 }
 
 func runtimeContextTransportRole(block RuntimeContextBlock) string {
-	role := strings.TrimSpace(block.Role)
-	if role == "" {
-		return "developer"
-	}
-	return role
+	return LLMRoleUser
 }
 
 func responsesRuntimeContextRole(block RuntimeContextBlock) string {
-	role := strings.TrimSpace(runtimeContextTransportRole(block))
-	switch role {
-	case LLMRoleAssistant, LLMRoleUser, LLMRoleSystem, "developer":
-		return role
-	default:
-		return "developer"
-	}
+	return LLMRoleUser
 }
 
 func countHistoryChars(hist []ConversationItem) int {
@@ -1171,18 +1161,11 @@ func buildAnthropicMessages(bundle *PromptBundle) []anthropic.Message {
 		}
 	}
 
-	appendRuntimeContextByRole := func(targetRole string) {
-		for _, block := range bundle.RuntimeContext {
-			if runtimeContextTransportRole(block) != targetRole {
-				continue
-			}
-			currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(
-				fmt.Sprintf("[runtime_context role=%s name=%s]\n%s", targetRole, block.Name, block.Content),
-			))
-		}
+	for _, block := range bundle.RuntimeContext {
+		currentUserContent = append(currentUserContent, anthropic.NewTextMessageContent(
+			fmt.Sprintf("[runtime_context role=%s name=%s]\n%s", LLMRoleUser, block.Name, block.Content),
+		))
 	}
-	appendRuntimeContextByRole("developer")
-	appendRuntimeContextByRole("user")
 
 	for _, msg := range bundle.History {
 		switch msg.Role {

@@ -207,7 +207,7 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 		SessionID:   "sess_1",
 		WorkspaceID: "ws_1",
 		Type:        string(agent.EventStateReportEditUpdated),
-		Content:     `{"active":true,"scopeKind":"partial_selection","editContext":{"mode":"regenerate_selection","targetRunId":"run_child","blockId":"blk_1","blockLabel":"概览","selectionText":"共享草稿已持久化","selectionStart":0,"selectionEnd":8,"preserveOtherBlocks":true}}`,
+		Content:     `{"active":true,"scopeKind":"partial_selection","editContext":{"mode":"regenerate_selection","targetRunId":"run_child","blockId":"blk_1","blockLabel":"概览","selectionText":"共享草稿已持久化","selectionStart":0,"selectionEnd":8,"selectionRangeSet":true,"preserveOtherBlocks":true}}`,
 		CreatedAt:   now.Add(7 * time.Second),
 	}); err != nil {
 		t.Fatalf("create report edit update: %v", err)
@@ -340,7 +340,7 @@ func TestHydrateSessionFromPersistenceRestoresStructuredReportState(t *testing.T
 		SessionID:   "sess_1",
 		WorkspaceID: "ws_1",
 		Type:        string(agent.EventStateReportEditUpdated),
-		Content:     `{"active":true,"scopeKind":"partial_selection","editContext":{"mode":"regenerate_selection","targetRunId":"run_report_root","blockId":"blk_1","blockLabel":"概览","selectionText":"draft body","selectionStart":0,"selectionEnd":10,"preserveOtherBlocks":true}}`,
+		Content:     `{"active":true,"scopeKind":"partial_selection","editContext":{"mode":"regenerate_selection","targetRunId":"run_report_root","blockId":"blk_1","blockLabel":"概览","selectionText":"draft body","selectionStart":0,"selectionEnd":10,"selectionRangeSet":true,"preserveOtherBlocks":true}}`,
 		CreatedAt:   now.Add(4 * time.Second),
 	})
 

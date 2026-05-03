@@ -1,6 +1,10 @@
 package agent
 
-import "github.com/ifnodoraemon/openDataAnalysis/domain"
+import (
+	"encoding/json"
+
+	"github.com/ifnodoraemon/openDataAnalysis/domain"
+)
 
 // WSEvent WebSocket 事件类型
 type WSEvent struct {
@@ -49,7 +53,29 @@ type ReportEditContext struct {
 	SelectionText       string `json:"selectionText,omitempty"`
 	SelectionStart      int    `json:"selectionStart,omitempty"`
 	SelectionEnd        int    `json:"selectionEnd,omitempty"`
+	SelectionRangeSet   bool   `json:"selectionRangeSet,omitempty"`
 	PreserveOtherBlocks bool   `json:"preserveOtherBlocks,omitempty"`
+}
+
+func (c *ReportEditContext) UnmarshalJSON(data []byte) error {
+	type alias ReportEditContext
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if rawValue, ok := raw["selectionRangeSet"]; ok {
+		var rangeSet bool
+		if err := json.Unmarshal(rawValue, &rangeSet); err != nil {
+			return err
+		}
+		decoded.SelectionRangeSet = rangeSet
+	}
+	*c = ReportEditContext(decoded)
+	return nil
 }
 
 type TurnContext struct {

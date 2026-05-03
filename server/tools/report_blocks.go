@@ -73,17 +73,20 @@ func upsertReportBlock(state *ReportState, editState *ReportEditState, params re
 	if err != nil {
 		return reportBlockMutationResult{}, err
 	}
+	existingIndex := findReportBlockIndex(state.Blocks, block.ID)
+	if existingIndex >= 0 && len(block.Sources) == 0 && len(state.Blocks[existingIndex].Sources) > 0 {
+		block.Sources = state.Blocks[existingIndex].Sources
+	}
 	if editState != nil && !editState.BlockMutationAllowed(params.Action, block.ID) {
 		return reportBlockMutationResult{}, reportBlockScopeError{Action: params.Action, BlockID: block.ID}
 	}
+	if editState != nil && !editState.SelectionBlockMutationAllowed(block) {
+		return reportBlockMutationResult{}, reportBlockScopeError{Action: "partial_selection", BlockID: block.ID}
+	}
 
-	existingIndex := findReportBlockIndex(state.Blocks, block.ID)
 	insertHintIndex := -1
 	summaryText := fmt.Sprintf("block [%s] %s written to report state; delivery_state=draft", block.Kind, block.ID)
 	if existingIndex >= 0 {
-		if len(block.Sources) == 0 && len(state.Blocks[existingIndex].Sources) > 0 {
-			block.Sources = state.Blocks[existingIndex].Sources
-		}
 		state.Blocks = append(state.Blocks[:existingIndex], state.Blocks[existingIndex+1:]...)
 		insertHintIndex = existingIndex
 		summaryText = fmt.Sprintf("updated block [%s] %s in report state; delivery_state=draft", block.Kind, block.ID)

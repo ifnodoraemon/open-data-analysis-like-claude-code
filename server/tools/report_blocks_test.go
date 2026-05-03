@@ -47,6 +47,60 @@ func TestApplyReportBlockMutationPreservesExistingSourcesOnUpsert(t *testing.T) 
 	}
 }
 
+func TestApplyReportBlockMutationPartialSelectionKeepsMetadata(t *testing.T) {
+	t.Parallel()
+
+	state := &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "summary",
+				Kind:    "markdown",
+				Title:   "摘要",
+				Content: "前文。需要改写的句子。后文。",
+				Sources: []EvidenceRef{{Kind: "sql", SQL: "select 1"}},
+			},
+		},
+	}
+	editState := &ReportEditState{
+		Mode:                "regenerate_selection",
+		TargetBlockID:       "summary",
+		SelectionText:       "需要改写的句子",
+		SelectionStart:      3,
+		SelectionEnd:        10,
+		SelectionRangeSet:   true,
+		PreserveOtherBlocks: true,
+	}
+	editState.RefreshFromReportState(state)
+
+	_, err := applyReportBlockMutation(state, editState, reportBlockMutationParams{
+		Action:    "upsert",
+		BlockID:   "summary",
+		BlockKind: "markdown",
+		Title:     "改名",
+		Content:   "前文。新的句子。后文。",
+	})
+	if err == nil {
+		t.Fatal("expected title mutation outside partial selection to be rejected")
+	}
+
+	result, err := applyReportBlockMutation(state, editState, reportBlockMutationParams{
+		Action:    "upsert",
+		BlockID:   "summary",
+		BlockKind: "markdown",
+		Title:     "摘要",
+		Content:   "前文。新的句子。后文。",
+	})
+	if err != nil {
+		t.Fatalf("expected content-only selection mutation to succeed: %v", err)
+	}
+	if result.BlockID != "summary" || state.Blocks[0].Content != "前文。新的句子。后文。" {
+		t.Fatalf("unexpected mutation result=%#v state=%#v", result, state.Blocks)
+	}
+	if len(state.Blocks[0].Sources) != 1 || state.Blocks[0].Sources[0].SQL != "select 1" {
+		t.Fatalf("expected existing sources to be preserved before scope check, got %#v", state.Blocks[0].Sources)
+	}
+}
+
 func TestManageReportBlocksToolAcceptsStringifiedSources(t *testing.T) {
 	t.Parallel()
 

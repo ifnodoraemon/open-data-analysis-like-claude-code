@@ -1,8 +1,23 @@
 import os
 import requests
+import pytest
 
-BASE_URL = "http://localhost:8081"
+BASE_URL = os.environ.get("PYTHON_EXECUTOR_BASE_URL", "http://localhost:8081")
 PROXY_TOKEN = os.environ.get("PROXY_TOKEN", "test-token")
+
+
+def _executor_available():
+    try:
+        resp = requests.get(f"{BASE_URL}/health", timeout=1)
+        return resp.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _executor_available(),
+    reason="python executor integration service is not running",
+)
 
 
 def _headers():

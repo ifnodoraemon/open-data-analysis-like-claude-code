@@ -166,7 +166,7 @@ func New(id, workspaceID, userID, cacheRoot string, fileService *service.FileSer
 			_, err := sourceService.ConfirmProfile(context.Background(), profileID, workspaceID, id, confirmedBy, scope, overridesJSON)
 			return err
 		},
-		Now:         time.Now,
+		Now: time.Now,
 	}
 
 	masterReg := tools.NewRegistry()
@@ -419,6 +419,7 @@ func (s *Session) ConfigureEditState(edit *agent.ReportEditContext) {
 	s.EditState.SelectionText = strings.TrimSpace(edit.SelectionText)
 	s.EditState.SelectionStart = edit.SelectionStart
 	s.EditState.SelectionEnd = edit.SelectionEnd
+	s.EditState.SelectionRangeSet = edit.SelectionRangeSet
 	s.EditState.PreserveOtherBlocks = edit.PreserveOtherBlocks
 	s.EditState.RefreshFromReportState(s.ReportState)
 }
@@ -442,6 +443,7 @@ func (s *Session) CurrentEditContext() *agent.ReportEditContext {
 		SelectionText:       s.EditState.SelectionText,
 		SelectionStart:      s.EditState.SelectionStart,
 		SelectionEnd:        s.EditState.SelectionEnd,
+		SelectionRangeSet:   s.EditState.SelectionRangeSet,
 		PreserveOtherBlocks: s.EditState.PreserveOtherBlocks,
 	}
 }
@@ -464,6 +466,7 @@ func (s *Session) CurrentEditStateData() *agent.EditStateUpdatedData {
 			SelectionText:       s.EditState.SelectionText,
 			SelectionStart:      s.EditState.SelectionStart,
 			SelectionEnd:        s.EditState.SelectionEnd,
+			SelectionRangeSet:   s.EditState.SelectionRangeSet,
 			PreserveOtherBlocks: s.EditState.PreserveOtherBlocks,
 		},
 	}
@@ -483,6 +486,8 @@ func (s *Session) LoadReportSnapshot(snapshot *domain.ReportSnapshot) {
 		BodyClass: snapshot.Layout.BodyClass,
 	}
 	s.ReportState.NeedsFinalize = snapshot.NeedsFinalize
+	s.ReportState.FinalizeAttempts = 0
+	s.ReportState.LastFinalizeIssueSignature = ""
 	s.ReportState.Blocks = make([]tools.ReportBlock, 0, len(snapshot.Blocks))
 	for _, block := range snapshot.Blocks {
 		rb := tools.ReportBlock{
@@ -560,6 +565,8 @@ func (s *Session) Reset(keepFiles bool) error {
 	s.ReportState.FinalAuthor = ""
 	s.ReportState.Layout = tools.ReportLayout{}
 	s.ReportState.NeedsFinalize = false
+	s.ReportState.FinalizeAttempts = 0
+	s.ReportState.LastFinalizeIssueSignature = ""
 	s.ReportState.Unlock()
 	if s.EditState != nil {
 		s.EditState.Reset()
@@ -632,13 +639,13 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 		}
 		if s.EditState.SelectionText != "" {
 			content += fmt.Sprintf("SelectionText: %s\n", s.EditState.SelectionText)
-			if s.EditState.SelectionEnd > s.EditState.SelectionStart {
+			if s.EditState.SelectionRangeSet && s.EditState.SelectionEnd > s.EditState.SelectionStart {
 				content += fmt.Sprintf("SelectionRange: %d-%d\n", s.EditState.SelectionStart, s.EditState.SelectionEnd)
 			}
 		}
 		vars = append(vars, agent.RuntimeContextBlock{
 			Name:    "active_edit_scope",
-			Role:    "developer",
+			Role:    "user",
 			Content: strings.TrimSpace(content),
 		})
 	}

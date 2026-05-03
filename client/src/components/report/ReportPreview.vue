@@ -319,6 +319,7 @@ function quoteSelection() {
     selectionText: selectedBlockText.value,
     selectionStart: selectedSelectionStart.value,
     selectionEnd: selectedSelectionEnd.value,
+    selectionRangeSet: selectedByText.value && Number.isInteger(selectedSelectionStart.value) && Number.isInteger(selectedSelectionEnd.value),
     preserveOtherBlocks: true,
   });
 }

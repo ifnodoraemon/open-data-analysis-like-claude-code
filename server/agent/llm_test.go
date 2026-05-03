@@ -133,7 +133,7 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	client := &LLMClient{model: "gpt-4o"}
 	bundle := &PromptBundle{
 		RuntimeContext: []RuntimeContextBlock{
-			{Name: "active_subgoals", Role: "developer", Content: "[g1] test_goal (pending)"},
+			{Name: "active_subgoals", Role: "user", Content: "[g1] test_goal (pending)"},
 		},
 	}
 
@@ -145,10 +145,10 @@ func TestOpenAIBuildResponsesRequestFormatsRuntimeContext(t *testing.T) {
 	if len(req.Input) != 1 {
 		t.Fatalf("expected 1 input, got %d", len(req.Input))
 	}
-	if req.Input[0]["role"] != "developer" {
-		t.Fatalf("expected runtime context to preserve responses role=developer, got %#v", req.Input[0]["role"])
+	if req.Input[0]["role"] != "user" {
+		t.Fatalf("expected runtime context to use user role, got %#v", req.Input[0]["role"])
 	}
-	expected := "[runtime_context role=developer name=active_subgoals]\n[g1] test_goal (pending)"
+	expected := "[runtime_context role=user name=active_subgoals]\n[g1] test_goal (pending)"
 	contentStr := req.Input[0]["content"].(string)
 	if contentStr != expected {
 		t.Fatalf("expected explicitly prefixed runtime core, got %q", contentStr)
@@ -235,7 +235,7 @@ func TestBuildChatCompletionsRequestKeepsRuntimeContextInUserMessages(t *testing
 	req, err := client.buildChatCompletionsRequest(&PromptBundle{
 		Policy: "policy",
 		RuntimeContext: []RuntimeContextBlock{
-			{Name: "active_subgoals", Role: "developer", Content: "[g1] inspect data"},
+			{Name: "active_subgoals", Role: "user", Content: "[g1] inspect data"},
 		},
 		Task: "finish analysis",
 	}, nil)
@@ -257,7 +257,7 @@ func TestBuildChatCompletionsRequestKeepsRuntimeContextInUserMessages(t *testing
 	if req.Messages[1].Role != "user" {
 		t.Fatalf("expected runtime context as user message for chat completions compatibility, got %q", req.Messages[1].Role)
 	}
-	if !strings.Contains(req.Messages[1].Content, "[runtime_context role=developer name=active_subgoals]") {
+	if !strings.Contains(req.Messages[1].Content, "[runtime_context role=user name=active_subgoals]") {
 		t.Fatalf("expected runtime context prefix, got %q", req.Messages[1].Content)
 	}
 }
@@ -303,13 +303,13 @@ func TestConvertChatCompletionsResponseMapsToolCallsAndUsage(t *testing.T) {
 	}
 }
 
-func TestBuildAnthropicSystemPromptIncludesOnlyDeveloperRuntimeContext(t *testing.T) {
+func TestBuildAnthropicSystemPromptExcludesRuntimeContext(t *testing.T) {
 	t.Parallel()
 
 	bundle := &PromptBundle{
 		Policy: "policy",
 		RuntimeContext: []RuntimeContextBlock{
-			{Name: "active_edit_scope", Role: "developer", Content: "TargetBlockID: block-1"},
+			{Name: "active_edit_scope", Role: "user", Content: "TargetBlockID: block-1"},
 			{Name: "digest", Role: "user", Content: "- user: asked for update"},
 		},
 	}
@@ -328,7 +328,7 @@ func TestBuildAnthropicMessagesKeepsUserRuntimeContextInUserStream(t *testing.T)
 
 	bundle := &PromptBundle{
 		RuntimeContext: []RuntimeContextBlock{
-			{Name: "active_edit_scope", Role: "developer", Content: "TargetBlockID: block-1"},
+			{Name: "active_edit_scope", Role: "user", Content: "TargetBlockID: block-1"},
 			{Name: "digest", Role: "user", Content: "- user: asked for update"},
 		},
 		Task: "finish analysis",
@@ -342,9 +342,9 @@ func TestBuildAnthropicMessagesKeepsUserRuntimeContextInUserStream(t *testing.T)
 		t.Fatalf("expected user role, got %q", msgs[0].Role)
 	}
 	if len(msgs[0].Content) != 3 {
-		t.Fatalf("expected developer runtime, user runtime, and task content, got %#v", msgs[0].Content)
+		t.Fatalf("expected runtime context blocks and task content, got %#v", msgs[0].Content)
 	}
-	if msgs[0].Content[0].Text == nil || *msgs[0].Content[0].Text != "[runtime_context role=developer name=active_edit_scope]\nTargetBlockID: block-1" {
+	if msgs[0].Content[0].Text == nil || *msgs[0].Content[0].Text != "[runtime_context role=user name=active_edit_scope]\nTargetBlockID: block-1" {
 		t.Fatalf("unexpected first content block: %#v", msgs[0].Content[0])
 	}
 	if msgs[0].Content[1].Text == nil || *msgs[0].Content[1].Text != "[runtime_context role=user name=digest]\n- user: asked for update" {

@@ -286,7 +286,7 @@ func (t *InspectReportEditStateTool) Execute(args json.RawMessage) (string, erro
 		case "partial_chart":
 			payload["ui_summary"] = fmt.Sprintf("Active partial chart edit scope, target chart: %s.", t.EditState.TargetChartID)
 		case "partial_selection":
-			if t.EditState.SelectionEnd > t.EditState.SelectionStart {
+			if t.EditState.SelectionRangeSet && t.EditState.SelectionEnd > t.EditState.SelectionStart {
 				payload["ui_summary"] = fmt.Sprintf("Active partial selection edit scope inside block: %s, range %d-%d.", t.EditState.TargetBlockID, t.EditState.SelectionStart, t.EditState.SelectionEnd)
 			} else {
 				payload["ui_summary"] = fmt.Sprintf("Active partial selection edit scope inside block: %s.", t.EditState.TargetBlockID)

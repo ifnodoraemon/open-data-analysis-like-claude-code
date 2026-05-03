@@ -7,14 +7,15 @@ import (
 )
 
 type ReportState struct {
-	mu              sync.RWMutex  `json:"-"`
-	Blocks          []ReportBlock `json:"blocks"`
-	Charts          []ChartData   `json:"charts"`
-	FinalTitle      string        `json:"finalTitle,omitempty"`
-	FinalAuthor     string        `json:"finalAuthor,omitempty"`
-	Layout          ReportLayout  `json:"layout,omitempty"`
-	NeedsFinalize   bool          `json:"needsFinalize,omitempty"`
-	FinalizeAttempts int          `json:"-"`
+	mu                         sync.RWMutex  `json:"-"`
+	Blocks                     []ReportBlock `json:"blocks"`
+	Charts                     []ChartData   `json:"charts"`
+	FinalTitle                 string        `json:"finalTitle,omitempty"`
+	FinalAuthor                string        `json:"finalAuthor,omitempty"`
+	Layout                     ReportLayout  `json:"layout,omitempty"`
+	NeedsFinalize              bool          `json:"needsFinalize,omitempty"`
+	FinalizeAttempts           int           `json:"-"`
+	LastFinalizeIssueSignature string        `json:"-"`
 }
 
 func (s *ReportState) Lock()    { s.mu.Lock() }
@@ -56,8 +57,14 @@ type ReportEditState struct {
 	SelectionText       string              `json:"selectionText,omitempty"`
 	SelectionStart      int                 `json:"selectionStart,omitempty"`
 	SelectionEnd        int                 `json:"selectionEnd,omitempty"`
+	SelectionRangeSet   bool                `json:"selectionRangeSet,omitempty"`
 	PreserveOtherBlocks bool                `json:"preserveOtherBlocks,omitempty"`
 	AllowedChartIDs     map[string]struct{} `json:"-"`
+	TargetBlockContent  string              `json:"-"`
+	TargetBlockKind     string              `json:"-"`
+	TargetBlockTitle    string              `json:"-"`
+	TargetBlockChartID  string              `json:"-"`
+	TargetBlockSources  []EvidenceRef       `json:"-"`
 }
 
 type ReportDeliveryState struct {
@@ -85,8 +92,14 @@ func (s *ReportEditState) Reset() {
 	s.SelectionText = ""
 	s.SelectionStart = 0
 	s.SelectionEnd = 0
+	s.SelectionRangeSet = false
 	s.PreserveOtherBlocks = false
 	s.AllowedChartIDs = nil
+	s.TargetBlockContent = ""
+	s.TargetBlockKind = ""
+	s.TargetBlockTitle = ""
+	s.TargetBlockChartID = ""
+	s.TargetBlockSources = nil
 }
 
 func (s *ReportEditState) Active() bool {
@@ -171,6 +184,7 @@ func (s *ReportEditState) Snapshot() map[string]interface{} {
 		"selection_text":        s.SelectionText,
 		"selection_start":       s.SelectionStart,
 		"selection_end":         s.SelectionEnd,
+		"selection_range_set":   s.SelectionRangeSet,
 		"preserve_other_blocks": s.PreserveOtherBlocks,
 		"allowed_chart_ids":     charts,
 		"scope_kind":            s.ScopeKindLocked(),

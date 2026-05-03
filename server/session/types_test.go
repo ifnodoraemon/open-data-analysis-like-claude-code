@@ -223,6 +223,7 @@ func TestSessionRuntimeVarsSelectionScope(t *testing.T) {
 			SelectionText:       "其中这句需要改",
 			SelectionStart:      0,
 			SelectionEnd:        7,
+			SelectionRangeSet:   true,
 			PreserveOtherBlocks: true,
 		},
 	}
