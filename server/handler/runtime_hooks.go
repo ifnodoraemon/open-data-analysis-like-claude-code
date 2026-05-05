@@ -201,12 +201,16 @@ func runLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 			scope.setRunSummary(complete.Summary)
 		}
 	case agent.EventRunCancelled:
-		finishTerminalRun(scope, "cancelled")
+		if !finishTerminalRun(scope, "cancelled") {
+			return
+		}
 		if scope.setRunStatus != nil {
 			scope.setRunStatus(domain.RunStatusCancelled, nil)
 		}
 	case agent.EventError:
-		finishTerminalRun(scope, "failed")
+		if !finishTerminalRun(scope, "failed") {
+			return
+		}
 		if scope.setRunStatus == nil {
 			return
 		}
@@ -226,7 +230,7 @@ func finishTerminalRun(scope runtimeEventScope, status string) bool {
 	current := scope.session.CurrentEditStateData()
 	editWasActive := current != nil && current.Active
 	finished := scope.session.FinishRun(scope.runID, status)
-	if editWasActive && scope.emitEditState != nil {
+	if finished && editWasActive && scope.emitEditState != nil {
 		scope.emitEditState(agent.EditStateUpdatedData{Active: false})
 	}
 	return finished

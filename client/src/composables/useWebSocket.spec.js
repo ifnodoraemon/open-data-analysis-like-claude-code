@@ -579,6 +579,48 @@ describe("useWebSocket deduplication", () => {
     });
   });
 
+  it("returns false when websocket send throws without appending a user message", async () => {
+    const store = useAgentStore();
+    store.setToken("test-token");
+    store.setSession("sess-1");
+    store.setMessages([]);
+
+    global.location = { protocol: "http:", host: "localhost" };
+
+    class MockWebSocket {
+      constructor(url, protocols) {
+        this.url = url;
+        this.protocols = protocols;
+        this.readyState = 1;
+        setTimeout(() => {
+          this.onopen?.();
+        }, 1);
+      }
+      send() {
+        throw new Error("socket write failed");
+      }
+      close() {
+        this.onclose?.();
+      }
+    }
+    MockWebSocket.CONNECTING = 0;
+    MockWebSocket.OPEN = 1;
+    MockWebSocket.CLOSING = 2;
+    MockWebSocket.CLOSED = 3;
+    vi.stubGlobal("WebSocket", MockWebSocket);
+
+    const { sendMessage } = useWebSocket();
+    const result = await sendMessage("hello");
+
+    expect(result).toBe(false);
+    expect(store.isRunning).toBe(false);
+    expect(store.messages.some((msg) => msg.type === "user")).toBe(false);
+    expect(store.messages.at(-1)).toMatchObject({
+      type: "error",
+      content: "消息发送失败，请重试。",
+    });
+  });
+
   it("does not let report_update from another run overwrite the selected historical report", async () => {
     const store = useAgentStore();
     store.setToken("test-token");

@@ -175,6 +175,49 @@ func TestRunLifecycleHookUpdatesSessionStateAndPersistenceCallbacks(t *testing.T
 	}
 }
 
+func TestRunLifecycleHookIgnoresStaleTerminalEvents(t *testing.T) {
+	t.Parallel()
+
+	statuses := make([]domain.RunStatus, 0, 1)
+	editEvents := make([]agent.EditStateUpdatedData, 0, 1)
+	sess := &session.Session{
+		ActiveRun: &session.RunState{RunID: "run_new", Status: "running"},
+		EditState: &tools.ReportEditState{
+			Mode:          "regenerate_selection",
+			TargetBlockID: "blk_new",
+			SelectionText: "new selected text",
+		},
+	}
+	scope := runtimeEventScope{
+		session: sess,
+		runID:   "run_old",
+		emitEditState: func(data agent.EditStateUpdatedData) {
+			editEvents = append(editEvents, data)
+		},
+		setRunStatus: func(status domain.RunStatus, _ *string) {
+			statuses = append(statuses, status)
+		},
+	}
+
+	runLifecycleHook(scope, agent.WSEvent{
+		Type: agent.EventError,
+		Data: agent.ErrorData{Message: "stale failure"},
+	})
+
+	if sess.ActiveRun == nil || sess.ActiveRun.RunID != "run_new" || sess.ActiveRun.Status != "running" {
+		t.Fatalf("expected active run to remain untouched, got %#v", sess.ActiveRun)
+	}
+	if state := sess.CurrentEditStateData(); !state.Active || state.EditContext == nil || state.EditContext.BlockID != "blk_new" {
+		t.Fatalf("expected edit state to remain active, got %#v", state)
+	}
+	if len(editEvents) != 0 {
+		t.Fatalf("expected no edit-state event for stale terminal event, got %#v", editEvents)
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("expected no status persistence for stale terminal event, got %#v", statuses)
+	}
+}
+
 func TestRunLoggingHookWritesEventLogs(t *testing.T) {
 	var buf bytes.Buffer
 	originalWriter := log.Writer()

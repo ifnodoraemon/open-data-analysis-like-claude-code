@@ -575,9 +575,16 @@ export function useWebSocket() {
   function send(type, data = {}, runId = "") {
     const payload = { type, sessionId: store.sessionId, runId, data };
     if (wsInstance?.readyState === WebSocket.OPEN) {
-      wsInstance.send(JSON.stringify(payload));
+      try {
+        wsInstance.send(JSON.stringify(payload));
+        return true;
+      } catch (err) {
+        console.warn("websocket send failed:", err);
+        return false;
+      }
     } else {
       enqueueMessage(payload);
+      return true;
     }
   }
 
@@ -653,6 +660,14 @@ export function useWebSocket() {
     const waitingRun = waitingRunId ? store.getRun(waitingRunId) : null;
     const isAnsweringUserRequest = waitingRun?.status === "waiting_user_input";
 
+    const payload = { content: String(options.payloadContent || value).trim() };
+    if (!isAnsweringUserRequest && options.editContext) payload.editContext = options.editContext;
+    if (!isAnsweringUserRequest && options.turnContext) payload.turnContext = options.turnContext;
+    if (!send("user_message", payload)) {
+      store.addMessage({ type: "error", content: "消息发送失败，请重试。" });
+      return false;
+    }
+
     store.setRunning(true);
     if (isAnsweringUserRequest) {
       store.patchRun(waitingRunId, { status: "running", updatedAt: new Date().toISOString() });
@@ -660,16 +675,12 @@ export function useWebSocket() {
     if (!isAnsweringUserRequest && store.sessionId) {
       store.upsertSession({ id: store.sessionId, title: deriveSessionTitle(value), lastSeenAt: new Date().toISOString() });
     }
-    const payload = { content: String(options.payloadContent || value).trim() };
-    if (!isAnsweringUserRequest && options.editContext) payload.editContext = options.editContext;
-    if (!isAnsweringUserRequest && options.turnContext) payload.turnContext = options.turnContext;
     store.addMessage({
       type: "user",
       content: value,
       editContext: isAnsweringUserRequest ? null : options.editContext || null,
       turnContext: isAnsweringUserRequest ? null : options.turnContext || null,
     });
-    send("user_message", payload);
     return true;
   }
 

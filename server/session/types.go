@@ -287,12 +287,12 @@ func (s *Session) FinishRun(runID, status string) bool {
 		s.ActiveRun.Status = status
 		s.ActiveRun.Cancel = nil
 		s.ActiveRun = nil
+		if s.EditState != nil {
+			s.EditState.Reset()
+		}
+		s.LastSeenAt = time.Now()
 		finished = true
 	}
-	if s.EditState != nil {
-		s.EditState.Reset()
-	}
-	s.LastSeenAt = time.Now()
 	return finished
 }
 
