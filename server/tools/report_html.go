@@ -335,18 +335,21 @@ strong { color: var(--primary); font-weight: 600; }
   .chart-box {
     height: auto !important;
     min-height: 0;
-    margin: 10pt 0 14pt;
+    margin: 8pt 0 10pt;
     padding: 0;
     border: 0;
     box-shadow: none;
-    break-inside: avoid;
-    page-break-inside: avoid;
+    overflow: visible;
+    break-inside: auto;
+    page-break-inside: auto;
   }
   .chart-box img,
   .chart-box canvas {
     display: block;
+    width: auto !important;
     max-width: 100%%;
-    max-height: 96mm;
+    height: auto !important;
+    max-height: 76mm;
     object-fit: contain;
   }
   table {

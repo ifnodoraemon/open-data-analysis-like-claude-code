@@ -532,20 +532,29 @@ function optimizeSnapshotForPDF(documentNode) {
   body.querySelectorAll(".chart-box").forEach((node) => {
     node.style.height = "auto";
     node.style.minHeight = "0";
-    node.style.margin = "10pt 0 14pt 0";
+    node.style.margin = "8pt 0 10pt 0";
     node.style.padding = "0";
     node.style.border = "none";
     node.style.boxShadow = "none";
     node.style.background = "#ffffff";
-    node.style.breakInside = "avoid";
-    node.style.pageBreakInside = "avoid";
+    node.style.overflow = "visible";
+    node.style.breakInside = "auto";
+    node.style.pageBreakInside = "auto";
+  });
+  body.querySelectorAll(".chart-box div").forEach((node) => {
+    node.style.height = "auto";
+    node.style.minHeight = "0";
+    node.style.margin = "0";
+    node.style.padding = "0";
+    node.style.position = "static";
+    node.style.overflow = "visible";
   });
   body.querySelectorAll(".chart-box img").forEach((node) => {
     node.style.display = "block";
-    node.style.width = "100%";
+    node.style.width = "auto";
     node.style.maxWidth = "100%";
     node.style.height = "auto";
-    node.style.maxHeight = "96mm";
+    node.style.maxHeight = "76mm";
     node.style.objectFit = "contain";
     node.style.margin = "0 auto";
   });
@@ -608,8 +617,28 @@ function optimizeSnapshotForPDF(documentNode) {
     }
     .chart-box,
     .chart-box img {
-      break-inside: avoid !important;
-      page-break-inside: avoid !important;
+      break-inside: auto !important;
+      page-break-inside: auto !important;
+    }
+    .chart-box {
+      margin: 8pt 0 10pt 0 !important;
+      overflow: visible !important;
+    }
+    .chart-box div {
+      height: auto !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      position: static !important;
+      overflow: visible !important;
+    }
+    .chart-box img,
+    .chart-box canvas {
+      width: auto !important;
+      max-width: 100% !important;
+      height: auto !important;
+      max-height: 76mm !important;
+      object-fit: contain !important;
     }
     table {
       width: 100% !important;
