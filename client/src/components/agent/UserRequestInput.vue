@@ -13,7 +13,7 @@
       </div>
     </div>
 
-    <div v-if="hasOptions" class="ask-options" :class="{ 'multi-select': msg.allow_multiple }">
+    <div v-if="hasOptions" class="ask-options" :class="{ 'multi-select': isMultiple }">
       <button
         v-for="option in normalizedOptions"
         :key="option.id"
@@ -88,9 +88,10 @@ const normalizedOptions = computed(() =>
 const hasOptions = computed(() => normalizedOptions.value.length > 0);
 const allowCustom = computed(() => props.msg.allow_custom !== false);
 const customValue = computed(() => customText.value.trim());
+const isMultiple = computed(() => props.msg.selection_mode === "multiple");
 const label = computed(() => {
   if (!hasOptions.value) return "等待您描述";
-  return props.msg.allow_multiple ? "请选择一个或多个选项" : "请选择一个选项";
+  return isMultiple.value ? "请选择一个或多个选项" : "请选择一个选项";
 });
 const customLabel = computed(() => (hasOptions.value ? "自定义或补充说明" : "您的回复"));
 const customPlaceholder = computed(() => {
@@ -114,7 +115,7 @@ const submitHint = computed(() => {
 });
 
 function toggleOption(id) {
-  if (props.msg.allow_multiple) {
+  if (isMultiple.value) {
     selectedIds.value = selectedIds.value.includes(id)
       ? selectedIds.value.filter((item) => item !== id)
       : [...selectedIds.value, id];

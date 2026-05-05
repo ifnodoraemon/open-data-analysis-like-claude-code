@@ -44,7 +44,7 @@ func RenderReportHTML(title, author string, state *ReportState) string {
 	units := buildRenderUnits(state.Blocks, title)
 	safeTitle := escapeHTMLText(title)
 	titleHeaderHTML := renderReportTitleHeader(title, author)
-	tocHTML := renderReportTOC(units)
+	tocHTML := renderReportTOC(state.Blocks, title)
 
 	var bodyHTML strings.Builder
 	chapterNum := 0
@@ -368,24 +368,8 @@ type reportTOCItem struct {
 	Title  string
 }
 
-func renderReportTOC(units []reportRenderUnit) string {
-	items := make([]reportTOCItem, 0, len(units))
-	sectionNum := 0
-	for _, unit := range units {
-		block := unit.Block
-		if isTitleBlock(block) {
-			continue
-		}
-		sectionNum++
-		title := strings.TrimSpace(blockDisplayTitle(block))
-		if title == "" {
-			continue
-		}
-		items = append(items, reportTOCItem{
-			Anchor: fmt.Sprintf("section-%d", sectionNum),
-			Title:  title,
-		})
-	}
+func renderReportTOC(blocks []ReportBlock, reportTitle string) string {
+	items := buildReportTOCItems(blocks, reportTitle)
 	if len(items) < 2 {
 		return ""
 	}
@@ -398,6 +382,94 @@ func renderReportTOC(units []reportRenderUnit) string {
 	}
 	html.WriteString("</ol>\n</nav>")
 	return html.String()
+}
+
+func buildReportTOCItems(blocks []ReportBlock, reportTitle string) []reportTOCItem {
+	baseUnits := buildBaseRenderUnits(blocks, reportTitle)
+	items := make([]reportTOCItem, 0, len(baseUnits))
+	sectionNum := 0
+	for _, unit := range baseUnits {
+		block := unit.Block
+		if isTitleBlock(block) {
+			continue
+		}
+		splitUnits := splitRenderUnitSections(unit)
+		if len(splitUnits) == 0 {
+			continue
+		}
+		if title := structuredBlockTOCTitle(block, reportTitle); title != "" {
+			firstAnchor := ""
+			for range splitUnits {
+				sectionNum++
+				if firstAnchor == "" {
+					firstAnchor = fmt.Sprintf("section-%d", sectionNum)
+				}
+			}
+			items = append(items, reportTOCItem{
+				Anchor: firstAnchor,
+				Title:  title,
+			})
+			continue
+		}
+		for _, splitUnit := range splitUnits {
+			sectionNum++
+			title := documentTOCTitle(splitUnit.Block, reportTitle)
+			if title == "" {
+				continue
+			}
+			items = append(items, reportTOCItem{
+				Anchor: fmt.Sprintf("section-%d", sectionNum),
+				Title:  title,
+			})
+		}
+	}
+	return items
+}
+
+func structuredBlockTOCTitle(block ReportBlock, reportTitle string) string {
+	if title := strings.TrimSpace(block.Title); title != "" && !titlesReferToSameReport(title, reportTitle) {
+		if strings.EqualFold(strings.TrimSpace(block.Kind), "markdown") {
+			if _, level, ok := firstMarkdownHeading(block.Content); ok && level > 2 {
+				return ""
+			}
+		}
+		return title
+	}
+	return ""
+}
+
+func documentTOCTitle(block ReportBlock, reportTitle string) string {
+	if strings.EqualFold(strings.TrimSpace(block.Kind), "markdown") {
+		if heading, level, ok := firstMarkdownHeading(block.Content); ok {
+			if level <= 2 && !titlesReferToSameReport(heading, reportTitle) {
+				return heading
+			}
+			if level > 2 {
+				return ""
+			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(block.Kind), "html") {
+		if title := extractContentHeadingTitle(block.Content); title != "" && !titlesReferToSameReport(title, reportTitle) {
+			return title
+		}
+	}
+	if title := strings.TrimSpace(block.Title); title != "" && !titlesReferToSameReport(title, reportTitle) {
+		return title
+	}
+	return ""
+}
+
+func firstMarkdownHeading(content string) (string, int, bool) {
+	for _, line := range strings.Split(content, "\n") {
+		level, ok := markdownHeadingLevel(line)
+		if !ok {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimSpace(line)[level:])
+		return strings.TrimSpace(title), level, true
+	}
+	return "", 0, false
 }
 
 func buildChartScripts(charts []ChartData) string {
@@ -561,6 +633,15 @@ func renderAttachedChartsInline(attachedCharts []ReportBlock, charts []ChartData
 }
 
 func buildRenderUnits(blocks []ReportBlock, reportTitle string) []reportRenderUnit {
+	baseUnits := buildBaseRenderUnits(blocks, reportTitle)
+	units := make([]reportRenderUnit, 0, len(baseUnits))
+	for _, unit := range baseUnits {
+		units = append(units, splitRenderUnitSections(unit)...)
+	}
+	return units
+}
+
+func buildBaseRenderUnits(blocks []ReportBlock, reportTitle string) []reportRenderUnit {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -590,12 +671,7 @@ func buildRenderUnits(blocks []ReportBlock, reportTitle string) []reportRenderUn
 		}
 		baseUnits = append(baseUnits, unit)
 	}
-
-	units := make([]reportRenderUnit, 0, len(baseUnits))
-	for _, unit := range baseUnits {
-		units = append(units, splitRenderUnitSections(unit)...)
-	}
-	return units
+	return baseUnits
 }
 
 func normalizeReportBlocksForRendering(blocks []ReportBlock, reportTitle string) []ReportBlock {

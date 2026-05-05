@@ -152,7 +152,7 @@ type AskUserData struct {
 	ContextRef    string          `json:"context_ref,omitempty"` // 关联上下文（表名、列名等）
 	InputHint     string          `json:"input_hint,omitempty"`  // 可选的自定义描述提示
 	Required      bool            `json:"required"`
-	AllowMultiple bool            `json:"allow_multiple,omitempty"`
+	SelectionMode string          `json:"selection_mode,omitempty"`
 	AllowCustom   bool            `json:"allow_custom"`
 	Options       []AskUserOption `json:"options,omitempty"`
 }

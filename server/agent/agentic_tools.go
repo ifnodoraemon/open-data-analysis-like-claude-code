@@ -163,7 +163,7 @@ func (t *AskUserTool) Name() string {
 }
 
 func (t *AskUserTool) Description() string {
-	return "Send an input request to the user and suspend the current run as waiting_user_input. Supports optional selectable options, single or multiple selection, and optional custom text. Reads question, reason, scope, context_ref, input_hint, required, allow_multiple, allow_custom, and options. Does not directly return the user answer; the subsequent user reply is written back as the tool call result."
+	return "Send an input request to the user and suspend the current run as waiting_user_input. Supports optional selectable options, explicit selection_mode (single or multiple), and optional custom text. The model decides selection_mode; the runtime does not infer it from wording. Reads question, reason, scope, context_ref, input_hint, required, selection_mode, allow_custom, and options. Does not directly return the user answer; the subsequent user reply is written back as the tool call result."
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {
@@ -196,10 +196,11 @@ func (t *AskUserTool) Parameters() json.RawMessage {
 				"description": "Whether confirmation is required; if true, user cannot skip.",
 				"default": false
 			},
-			"allow_multiple": {
-				"type": "boolean",
-				"description": "Whether multiple option selections are allowed when options are provided.",
-				"default": false
+			"selection_mode": {
+				"type": "string",
+				"enum": ["single", "multiple"],
+				"description": "Whether options should be presented as a single-choice or multiple-choice control. Choose explicitly based on the user's decision surface.",
+				"default": "single"
 			},
 			"allow_custom": {
 				"type": "boolean",
@@ -231,7 +232,7 @@ type askUserToolCallArguments struct {
 	ContextRef    string          `json:"context_ref"`
 	InputHint     string          `json:"input_hint"`
 	Required      bool            `json:"required"`
-	AllowMultiple bool            `json:"allow_multiple"`
+	SelectionMode string          `json:"selection_mode"`
 	AllowCustom   *bool           `json:"allow_custom"`
 	Options       []AskUserOption `json:"options"`
 }
@@ -256,6 +257,10 @@ func parseAskUserToolCallArguments(rawArgs string) (AskUserData, error) {
 	if len(options) == 0 && !allowCustom {
 		return AskUserData{}, fmt.Errorf("user_request_input requires options when allow_custom is false")
 	}
+	selectionMode, err := normalizeAskUserSelectionMode(args.SelectionMode)
+	if err != nil {
+		return AskUserData{}, err
+	}
 	return AskUserData{
 		Question:      question,
 		Reason:        strings.TrimSpace(args.Reason),
@@ -263,10 +268,23 @@ func parseAskUserToolCallArguments(rawArgs string) (AskUserData, error) {
 		ContextRef:    strings.TrimSpace(args.ContextRef),
 		InputHint:     strings.TrimSpace(args.InputHint),
 		Required:      args.Required,
-		AllowMultiple: args.AllowMultiple,
+		SelectionMode: selectionMode,
 		AllowCustom:   allowCustom,
 		Options:       options,
 	}, nil
+}
+
+func normalizeAskUserSelectionMode(selectionMode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(selectionMode)) {
+	case "":
+		return "single", nil
+	case "single":
+		return "single", nil
+	case "multiple":
+		return "multiple", nil
+	default:
+		return "", fmt.Errorf("user_request_input selection_mode must be single or multiple")
+	}
 }
 
 func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
@@ -284,7 +302,7 @@ func (t *AskUserTool) Execute(args json.RawMessage) (string, error) {
 		"context_ref":    payload.ContextRef,
 		"input_hint":     payload.InputHint,
 		"required":       payload.Required,
-		"allow_multiple": payload.AllowMultiple,
+		"selection_mode": payload.SelectionMode,
 		"allow_custom":   payload.AllowCustom,
 		"options":        payload.Options,
 		"run_status":     "waiting_user_input",

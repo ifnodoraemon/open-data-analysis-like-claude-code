@@ -227,7 +227,7 @@ func deriveRuntimeStateFromMessages(messages []domain.RunMessage) (map[string]st
 		}
 	}
 
-	if strings.TrimSpace(reportHTML) == "" && reportSnapshot != nil {
+	if reportSnapshot != nil {
 		if html, ok := renderReportHTMLFromSnapshotData(reportSnapshot); ok {
 			reportHTML = html
 		}
@@ -253,7 +253,7 @@ func attachRuntimeState(ctx context.Context, resp map[string]interface{}, worksp
 }
 
 func attachRunRuntimeState(ctx context.Context, resp map[string]interface{}, run domain.AnalysisRun) {
-	memory, subgoals, reportSnapshot, reportHTML, editState := getSessionRuntimeState(ctx, run.WorkspaceID, run.UserID, run.SessionID)
+	memory, subgoals, reportSnapshot, reportHTML, editState := deriveRuntimeStateFromRun(ctx, run.ID)
 	resp["runtimeState"] = serializeRuntimeStateWithSnapshot(memory, subgoals, reportSnapshot, reportHTML, editState)
 }
 

@@ -16,7 +16,7 @@ import (
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
 )
 
-func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
+func TestAttachRunRuntimeStateUsesRunTreeState(t *testing.T) {
 	ctx := context.Background()
 	store, err := metadata.Open(t.TempDir() + "/metadata.db")
 	if err != nil {
@@ -215,7 +215,7 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 
 	resp := map[string]interface{}{}
 	attachRunRuntimeState(ctx, resp, domain.AnalysisRun{
-		ID:          childID,
+		ID:          rootID,
 		SessionID:   "sess_1",
 		WorkspaceID: "ws_1",
 		UserID:      "user_1",
@@ -231,7 +231,7 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 		t.Fatalf("expected memory map, got %#v", runtimeState["memory"])
 	}
 	if memory["confirmed_metric"] != "GMV uses settled orders" {
-		t.Fatalf("expected session-scoped memory fact from root run, got %#v", memory)
+		t.Fatalf("expected run-tree memory fact from root run, got %#v", memory)
 	}
 
 	subgoals, ok := runtimeState["subgoals"].([]agent.Subgoal)
@@ -239,7 +239,7 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 		t.Fatalf("expected subgoals slice, got %#v", runtimeState["subgoals"])
 	}
 	if len(subgoals) != 1 || subgoals[0].ID != "goal_123" {
-		t.Fatalf("expected child subgoal to be preserved in session runtime state, got %#v", subgoals)
+		t.Fatalf("expected child subgoal to be preserved in run-tree runtime state, got %#v", subgoals)
 	}
 
 	reportHTML, ok := runtimeState["report_html"].(string)
@@ -262,6 +262,41 @@ func TestAttachRunRuntimeStateUsesSessionScopedState(t *testing.T) {
 	}
 	if !editState.Active || editState.ScopeKind != "partial_selection" || editState.EditContext == nil || editState.EditContext.BlockID != "blk_1" {
 		t.Fatalf("expected grounded edit scope in runtime state, got %#v", editState)
+	}
+}
+
+func TestDeriveRuntimeStateRegeneratesReportHTMLFromSnapshot(t *testing.T) {
+	t.Parallel()
+
+	_, _, reportSnapshot, reportHTML, _ := deriveRuntimeStateFromMessages([]domain.RunMessage{
+		{
+			ID:          "msg_report_update",
+			RunID:       "run_1",
+			SessionID:   "sess_1",
+			WorkspaceID: "ws_1",
+			Type:        string(agent.EventReportFinal),
+			Content: `{
+				"html":"<p>stale rendered html</p>",
+				"report_snapshot":{
+					"title":"结构化报告标题",
+					"author":"AI",
+					"needsFinalize":false,
+					"blocks":[{"id":"blk_1","kind":"markdown","title":"执行摘要","content":"正文"}],
+					"charts":[]
+				}
+			}`,
+			CreatedAt: time.Now(),
+		},
+	})
+
+	if reportSnapshot == nil || reportSnapshot.Title != "结构化报告标题" {
+		t.Fatalf("expected structured report snapshot, got %#v", reportSnapshot)
+	}
+	if strings.Contains(reportHTML, "stale rendered html") {
+		t.Fatalf("expected runtime report html to be regenerated from snapshot, got %q", reportHTML)
+	}
+	if !strings.Contains(reportHTML, `<h1>结构化报告标题</h1>`) || !strings.Contains(reportHTML, "执行摘要") {
+		t.Fatalf("expected regenerated report html to include snapshot title and content, got %q", reportHTML)
 	}
 }
 

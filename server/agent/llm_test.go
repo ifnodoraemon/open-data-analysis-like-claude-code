@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ifnodoraemon/openDataAnalysis/config"
 	"github.com/ifnodoraemon/openDataAnalysis/tools"
@@ -31,6 +32,25 @@ func TestConvertResponsesResponseMapsUsage(t *testing.T) {
 	}
 	if resp.Usage.TotalTokens != 366 {
 		t.Fatalf("expected total tokens 366, got %d", resp.Usage.TotalTokens)
+	}
+}
+
+func TestNewLLMClientUsesConfigurableTimeouts(t *testing.T) {
+	previous := config.Cfg
+	defer func() { config.Cfg = previous }()
+	config.Cfg = &config.Config{
+		LLMProvider:       "openai",
+		LLMModel:          "gpt-4o",
+		LLMHTTPTimeoutSec: 123,
+		LLMRetryBudgetSec: 456,
+	}
+
+	client := NewLLMClient()
+	if client.httpClient.Timeout != 123*time.Second {
+		t.Fatalf("expected http timeout 123s, got %s", client.httpClient.Timeout)
+	}
+	if got := llmRetryBudget(); got != 456*time.Second {
+		t.Fatalf("expected retry budget 456s, got %s", got)
 	}
 }
 

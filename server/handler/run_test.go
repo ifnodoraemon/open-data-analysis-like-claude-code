@@ -63,12 +63,14 @@ func TestRenderReportHTMLFromSnapshotRegeneratesCurrentTemplate(t *testing.T) {
 	}
 }
 
-func TestAttachRunRuntimeStateIncludesLiveSessionReportDraft(t *testing.T) {
+func TestAttachRunRuntimeStateUsesSelectedRunFacts(t *testing.T) {
 	t.Parallel()
 
 	prevSessionManager := sessionManager
+	prevMessageRepo := messageRepo
 	t.Cleanup(func() {
 		sessionManager = prevSessionManager
+		messageRepo = prevMessageRepo
 	})
 
 	sessionManager = session.NewManager(t.TempDir(), nil, nil)
@@ -81,6 +83,7 @@ func TestAttachRunRuntimeStateIncludesLiveSessionReportDraft(t *testing.T) {
 	sess.ReportState.Blocks = []tools.ReportBlock{
 		{ID: "blk_1", Kind: "markdown", Title: "概览", Content: "这里是共享草稿内容"},
 	}
+	messageRepo = nil
 
 	resp := map[string]interface{}{}
 	attachRunRuntimeState(context.Background(), resp, domain.AnalysisRun{
@@ -96,11 +99,8 @@ func TestAttachRunRuntimeStateIncludesLiveSessionReportDraft(t *testing.T) {
 	}
 
 	reportHTML, ok := runtimeState["report_html"].(string)
-	if !ok || strings.TrimSpace(reportHTML) == "" {
-		t.Fatalf("expected live report HTML in runtimeState, got %#v", runtimeState["report_html"])
-	}
-	if !strings.Contains(reportHTML, "共享草稿内容") {
-		t.Fatalf("expected live draft content in report HTML, got: %s", reportHTML)
+	if !ok || strings.TrimSpace(reportHTML) != "" {
+		t.Fatalf("expected selected run state to ignore live session draft, got %#v", runtimeState["report_html"])
 	}
 
 	memory, ok := runtimeState["memory"].(map[string]string)

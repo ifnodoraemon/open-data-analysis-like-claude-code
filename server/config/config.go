@@ -20,6 +20,8 @@ type Config struct {
 	LLMReasoningEffort string
 	LLMTextVerbosity   string
 	LLMMaxTokens       int
+	LLMHTTPTimeoutSec  int
+	LLMRetryBudgetSec  int
 	LLMDebug           bool
 	LLMDebugDir        string
 
@@ -76,6 +78,8 @@ func Load() {
 		LLMReasoningEffort:   getEnv("LLM_REASONING_EFFORT", ""),
 		LLMTextVerbosity:     getEnv("LLM_TEXT_VERBOSITY", ""),
 		LLMMaxTokens:         getEnvInt("LLM_MAX_TOKENS", 0),
+		LLMHTTPTimeoutSec:    getEnvInt("LLM_HTTP_TIMEOUT_SECONDS", 240),
+		LLMRetryBudgetSec:    getEnvInt("LLM_RETRY_BUDGET_SECONDS", 360),
 		LLMDebug:             getEnvBool("LLM_DEBUG", false),
 		LLMDebugDir:          getEnv("LLM_DEBUG_DIR", "./data/llm-debug"),
 		ServerPort:           getEnv("SERVER_PORT", "8080"),

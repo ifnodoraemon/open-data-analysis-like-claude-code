@@ -54,6 +54,25 @@ func TestTrustedReportScriptURL(t *testing.T) {
 	}
 }
 
+func TestLoadLLMTimeoutConfig(t *testing.T) {
+	previous := Cfg
+	defer func() { Cfg = previous }()
+
+	t.Setenv("LLM_API_KEY", "test-key")
+	t.Setenv("AUTH_SECRET", "abcdefghijklmnopqrstuvwxyz123456")
+	t.Setenv("LLM_HTTP_TIMEOUT_SECONDS", "321")
+	t.Setenv("LLM_RETRY_BUDGET_SECONDS", "654")
+
+	Load()
+
+	if Cfg.LLMHTTPTimeoutSec != 321 {
+		t.Fatalf("expected LLMHTTPTimeoutSec=321, got %d", Cfg.LLMHTTPTimeoutSec)
+	}
+	if Cfg.LLMRetryBudgetSec != 654 {
+		t.Fatalf("expected LLMRetryBudgetSec=654, got %d", Cfg.LLMRetryBudgetSec)
+	}
+}
+
 func TestGetEnv(t *testing.T) {
 	os.Unsetenv("TEST_GETENV_KEY")
 

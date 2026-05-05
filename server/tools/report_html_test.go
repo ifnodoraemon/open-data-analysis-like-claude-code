@@ -104,6 +104,86 @@ func TestRenderReportHTMLBuildsDerivedTOC(t *testing.T) {
 	}
 }
 
+func TestRenderReportHTMLTOCUsesDocumentLevelSections(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("三表全维度深度对比分析报告（2025H1）", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "summary",
+				Kind:    "markdown",
+				Title:   "执行摘要",
+				Content: "## 📊 三表全维度深度对比分析报告\n\n### 核心发现\n\n正文",
+			},
+			{ID: "channel", Kind: "markdown", Title: "一、营销渠道深度对比", Content: "## 一、营销渠道深度对比分析\n\n正文"},
+			{ID: "channel-trend", Kind: "markdown", Title: "1.3 月度趋势与渠道波动", Content: "### 1.3 月度趋势与渠道波动\n\n正文"},
+			{ID: "region", Kind: "markdown", Title: "二、区域销售深度对比", Content: "## 二、区域销售深度对比分析\n\n正文"},
+		},
+	})
+
+	for _, expected := range []string{
+		`<a href="#section-1">执行摘要</a>`,
+		`<a href="#section-2">一、营销渠道深度对比</a>`,
+		`<a href="#section-4">二、区域销售深度对比</a>`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("expected toc item %s, got: %s", expected, html)
+		}
+	}
+	if strings.Contains(html, `1.3 月度趋势与渠道波动</a>`) {
+		t.Fatalf("expected h3 subsection block to be excluded from document toc, got: %s", html)
+	}
+	if strings.Contains(html, `三表全维度深度对比分析报告</a>`) {
+		t.Fatalf("expected duplicate report title heading to be excluded from toc, got: %s", html)
+	}
+}
+
+func TestRenderReportHTMLTOCPrefersStructuredBlockTitles(t *testing.T) {
+	t.Parallel()
+
+	html := RenderReportHTML("全面深度对比分析报告", "AI", &ReportState{
+		Blocks: []ReportBlock{
+			{
+				ID:      "summary",
+				Kind:    "markdown",
+				Title:   "执行摘要",
+				Content: "正文\n\n## 核心发现\n\n发现正文",
+			},
+			{
+				ID:      "channel",
+				Kind:    "markdown",
+				Title:   "一、营销渠道深度对比",
+				Content: "## 1.1 渠道ROI与营收总览\n\n正文\n\n## 1.2 营销漏斗效率对比\n\n正文",
+			},
+			{
+				ID:      "region",
+				Kind:    "markdown",
+				Title:   "二、区域销售深度对比",
+				Content: "## 2.1 区域营收与利润对比\n\n正文",
+			},
+		},
+	})
+
+	for _, expected := range []string{
+		`<a href="#section-1">执行摘要</a>`,
+		`<a href="#section-2">一、营销渠道深度对比</a>`,
+		`<a href="#section-4">二、区域销售深度对比</a>`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("expected toc item %s, got: %s", expected, html)
+		}
+	}
+	for _, unexpected := range []string{
+		`核心发现</a>`,
+		`1.1 渠道ROI与营收总览</a>`,
+		`1.2 营销漏斗效率对比</a>`,
+	} {
+		if strings.Contains(html, unexpected) {
+			t.Fatalf("expected structured block title to suppress subsection %s, got: %s", unexpected, html)
+		}
+	}
+}
+
 func TestRenderReportHTMLStripsDuplicateLeadingReportTitle(t *testing.T) {
 	t.Parallel()
 

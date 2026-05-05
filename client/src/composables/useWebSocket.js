@@ -316,7 +316,7 @@ export function useWebSocket() {
               context_ref: msg.type === "user_request_input" ? parsedArgs?.context_ref : undefined,
               input_hint: msg.type === "user_request_input" ? parsedArgs?.input_hint : undefined,
               required: msg.type === "user_request_input" ? parsedArgs?.required || false : undefined,
-              allow_multiple: msg.type === "user_request_input" ? parsedArgs?.allow_multiple || false : undefined,
+              selection_mode: msg.type === "user_request_input" ? parsedArgs?.selection_mode || "single" : undefined,
               allow_custom: msg.type === "user_request_input" ? parsedArgs?.allow_custom !== false : undefined,
               options: msg.type === "user_request_input" ? parsedArgs?.options || [] : undefined,
               result: msg.type === "tool_result" ? msg.content : undefined,
@@ -552,7 +552,7 @@ export function useWebSocket() {
           context_ref: event.data.context_ref,
           input_hint: event.data.input_hint,
           required: event.data.required || false,
-          allow_multiple: event.data.allow_multiple || false,
+          selection_mode: event.data.selection_mode || "single",
           allow_custom: event.data.allow_custom !== false,
           options: event.data.options || [],
         });

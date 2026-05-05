@@ -32,7 +32,7 @@ func NewLLMClient() *LLMClient {
 		provider: config.Cfg.LLMProvider,
 		model:    config.Cfg.LLMModel,
 		httpClient: &http.Client{
-			Timeout: 90 * time.Second,
+			Timeout: llmHTTPTimeout(),
 		},
 	}
 
@@ -41,6 +41,22 @@ func NewLLMClient() *LLMClient {
 	}
 
 	return client
+}
+
+func llmHTTPTimeout() time.Duration {
+	seconds := 240
+	if config.Cfg != nil && config.Cfg.LLMHTTPTimeoutSec > 0 {
+		seconds = config.Cfg.LLMHTTPTimeoutSec
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func llmRetryBudget() time.Duration {
+	seconds := 360
+	if config.Cfg != nil && config.Cfg.LLMRetryBudgetSec > 0 {
+		seconds = config.Cfg.LLMRetryBudgetSec
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func (l *LLMClient) initAnthropic() {
@@ -109,7 +125,7 @@ func isRetryableLLMError(err error) bool {
 
 // ChatWithTools 统一的调用接口，包含对底层网络不稳定的重试逻辑（指数退避，区分可重试错误）
 func (l *LLMClient) ChatWithTools(ctx context.Context, bundle *PromptBundle, toolSpecs []tools.ToolSpec) (*LLMResponse, error) {
-	retryCtx, retryCancel := context.WithTimeout(ctx, 120*time.Second)
+	retryCtx, retryCancel := context.WithTimeout(ctx, llmRetryBudget())
 	defer retryCancel()
 
 	var resp *LLMResponse

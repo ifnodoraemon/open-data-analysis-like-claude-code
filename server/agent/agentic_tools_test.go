@@ -11,7 +11,7 @@ func TestAskUserToolSupportsOptionsAndCustomAnswer(t *testing.T) {
 
 	tool := &AskUserTool{}
 	params := string(tool.Parameters())
-	for _, want := range []string{"options", "allow_multiple", "allow_custom", "input_hint"} {
+	for _, want := range []string{"options", "selection_mode", "allow_custom", "input_hint"} {
 		if !strings.Contains(params, want) {
 			t.Fatalf("expected %s in user input contract, got %s", want, params)
 		}
@@ -23,7 +23,7 @@ func TestAskUserToolSupportsOptionsAndCustomAnswer(t *testing.T) {
 		"input_hint":"直接输入要采用的口径",
 		"required":true,
 		"options":[{"id":"gross","label":"Gross"}],
-		"allow_multiple":true
+		"selection_mode":"multiple"
 	}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -36,7 +36,7 @@ func TestAskUserToolSupportsOptionsAndCustomAnswer(t *testing.T) {
 	if payload["ok"] != true || payload["tool"] != "user_request_input" {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
-	if payload["allow_multiple"] != true || payload["allow_custom"] != true {
+	if payload["selection_mode"] != "multiple" || payload["allow_custom"] != true {
 		t.Fatalf("unexpected selection flags: %#v", payload)
 	}
 	if payload["input_hint"] != "直接输入要采用的口径" {
@@ -101,7 +101,7 @@ func TestParseAskUserToolCallArgumentsUsesCurrentProtocol(t *testing.T) {
 		"context_ref":"orders.amount",
 		"input_hint":"补充口径说明",
 		"required":true,
-		"allow_multiple":true,
+		"selection_mode":"multiple",
 		"options":[{"id":"gross","label":"Gross","hint":"含税"}]
 	}`)
 	if err != nil {
@@ -110,11 +110,77 @@ func TestParseAskUserToolCallArgumentsUsesCurrentProtocol(t *testing.T) {
 	if payload.Question != "请选择口径" || payload.Scope != "metric" || payload.ContextRef != "orders.amount" {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
-	if !payload.Required || !payload.AllowMultiple || !payload.AllowCustom {
+	if !payload.Required || payload.SelectionMode != "multiple" || !payload.AllowCustom {
 		t.Fatalf("unexpected flags: %#v", payload)
 	}
 	if len(payload.Options) != 1 || payload.Options[0].ID != "gross" || payload.Options[0].Label != "Gross" {
 		t.Fatalf("unexpected options: %#v", payload.Options)
+	}
+}
+
+func TestParseAskUserToolCallArgumentsSelectionModeSingle(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseAskUserToolCallArguments(`{
+		"question":"您希望从哪个维度进行深度对比分析？",
+		"selection_mode":"single",
+		"options":[
+			{"id":"channel_compare","label":"营销渠道全面对比"},
+			{"id":"region_compare","label":"区域销售全面对比"},
+			{"id":"inventory_compare","label":"库存品类/仓库对比"}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("parse single selection mode: %v", err)
+	}
+	if payload.SelectionMode != "single" {
+		t.Fatalf("expected explicit selection_mode=single to render single-select: %#v", payload)
+	}
+}
+
+func TestParseAskUserToolCallArgumentsSelectionModeMultipleEnablesMultiSelect(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseAskUserToolCallArguments(`{
+		"question":"请选择一个或多个需要补充分析的维度",
+		"selection_mode":"multiple",
+		"options":[
+			{"id":"channel_compare","label":"营销渠道"},
+			{"id":"region_compare","label":"区域销售"}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("parse multi-select question: %v", err)
+	}
+	if payload.SelectionMode != "multiple" {
+		t.Fatalf("expected selection_mode=multiple to render multi-select: %#v", payload)
+	}
+}
+
+func TestParseAskUserToolCallArgumentsDefaultsToSingleSelectionMode(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseAskUserToolCallArguments(`{
+		"question":"请选择需要分析的维度",
+		"options":[
+			{"id":"channel_compare","label":"营销渠道"},
+			{"id":"region_compare","label":"区域销售"}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("parse default selection mode: %v", err)
+	}
+	if payload.SelectionMode != "single" {
+		t.Fatalf("expected omitted selection_mode to default to single: %#v", payload)
+	}
+}
+
+func TestParseAskUserToolCallArgumentsRejectsInvalidSelectionMode(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseAskUserToolCallArguments(`{"question":"请选择口径","selection_mode":"combo"}`)
+	if err == nil {
+		t.Fatal("expected invalid selection_mode to be rejected")
 	}
 }
 
