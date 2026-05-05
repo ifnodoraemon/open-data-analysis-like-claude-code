@@ -1,8 +1,13 @@
 package handler
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestSanitizeExportHTMLRemovesActiveContentAndRemoteResources(t *testing.T) {
@@ -52,5 +57,38 @@ func TestSanitizeExportHTMLPreservesSafeDataImage(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(out), "data:text/html") {
 		t.Fatalf("expected non-image data URL to be stripped, got: %s", out)
+	}
+}
+
+func TestRegisterReportExportRoutesAllowsRequestsAboveDefaultAPILimit(t *testing.T) {
+	t.Parallel()
+
+	r := chi.NewRouter()
+	RegisterReportExportRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/report-exports/docx", strings.NewReader(strings.Repeat("x", (1<<20)+1)))
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	if rr.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected DOCX export route not to inherit 1MB API body limit, got status %d", rr.Code)
+	}
+}
+
+func TestRegisterReportExportRoutesRejectsRequestsAboveExportLimit(t *testing.T) {
+	t.Parallel()
+
+	r := chi.NewRouter()
+	RegisterReportExportRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/report-exports/docx", io.NopCloser(strings.NewReader("x")))
+	req.ContentLength = ReportExportMaxBodyBytes + 1
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected DOCX export route to enforce export body limit, got status %d", rr.Code)
 	}
 }

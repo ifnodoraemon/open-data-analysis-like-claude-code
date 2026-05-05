@@ -47,6 +47,8 @@ func main() {
 			upload.Post("/api/upload", handler.UploadHandler)
 		})
 
+		handler.RegisterReportExportRoutes(protected)
+
 		protected.Group(func(api chi.Router) {
 			api.Use(handler.MaxBodySizeMiddleware(1 << 20))
 			api.Post("/api/auth/switch-workspace", handler.SwitchWorkspaceHandler)
@@ -59,7 +61,6 @@ func main() {
 			api.Get("/api/runs", handler.ListRunsHandler)
 			api.Get("/api/runs/{runID}", handler.GetRunHandler)
 			api.Get("/api/runs/{runID}/report", handler.GetRunReportHandler)
-			api.Post("/api/report-exports/docx", handler.ConvertReportDOCXHandler)
 			api.Get("/api/python-files/{filename}", handler.ProxyPythonFileHandler)
 
 			api.Get("/api/sessions/{sessionID}/sources", handler.SessionSourcesHandler)

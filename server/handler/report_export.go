@@ -8,8 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ifnodoraemon/openDataAnalysis/auth"
 )
+
+const ReportExportMaxBodyBytes int64 = 50 * 1024 * 1024
 
 var (
 	exportScriptBlockRe   = regexp.MustCompile(`(?is)<\s*script\b[^>]*>.*?<\s*/\s*script\s*>`)
@@ -18,6 +21,13 @@ var (
 	exportRemoteSrcHrefRe = regexp.MustCompile(`(?i)\s+(src|href)\s*=\s*(?:"[^"]*(?:https?|file|data|blob|javascript|vbscript)\s*:[^"]*"|'[^']*(?:https?|file|data|blob|javascript|vbscript)\s*:[^']*'|(?:https?|file|data|blob|javascript|vbscript)\s*:[^\s>]+)`)
 	exportSafeDataImageRe = regexp.MustCompile(`(?i)\s+src\s*=\s*("data:image/(?:png|jpe?g);base64,[a-z0-9+/=]+")`)
 )
+
+func RegisterReportExportRoutes(r chi.Router) {
+	r.Group(func(exports chi.Router) {
+		exports.Use(MaxBodySizeMiddleware(ReportExportMaxBodyBytes))
+		exports.Post("/api/report-exports/docx", ConvertReportDOCXHandler)
+	})
+}
 
 func sanitizeExportHTML(html string) string {
 	protectedImages := map[string]string{}
@@ -49,7 +59,7 @@ func ConvertReportDOCXHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req request
 
-	r.Body = http.MaxBytesReader(w, r.Body, 50*1024*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, ReportExportMaxBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid export request or body too large", http.StatusBadRequest)
 		return
