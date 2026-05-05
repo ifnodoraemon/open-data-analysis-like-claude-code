@@ -299,15 +299,31 @@ strong { color: var(--primary); font-weight: 600; }
 
 /* === Print === */
 @media print {
-  @page { margin: 18mm 16mm; }
+  @page { size: A4; margin: 15mm 14mm; }
   body { background: white; }
-  .report-titlebar { box-shadow: none; page-break-after: avoid; }
-  .report-toc { box-shadow: none; page-break-after: avoid; }
+  .report-titlebar,
+  .report-toc,
   .section {
+    max-width: none;
     box-shadow: none;
+    border-radius: 0;
+    background: white;
+  }
+  .report-titlebar {
+    margin: 0 0 12pt;
+    padding: 0 0 12pt;
+    page-break-after: avoid;
+  }
+  .report-toc {
+    margin: 0 0 14pt;
+    padding: 0 0 12pt;
+    page-break-after: avoid;
+  }
+  .section {
     break-inside: auto;
     page-break-inside: auto;
-    margin: 0.75rem auto;
+    margin: 0 0 14pt;
+    padding: 0;
   }
   .section h2,
   .content h3,
@@ -317,9 +333,21 @@ strong { color: var(--primary); font-weight: 600; }
     page-break-after: avoid;
   }
   .chart-box {
+    height: auto !important;
+    min-height: 0;
+    margin: 10pt 0 14pt;
+    padding: 0;
+    border: 0;
     box-shadow: none;
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+  .chart-box img,
+  .chart-box canvas {
+    display: block;
+    max-width: 100%%;
+    max-height: 96mm;
+    object-fit: contain;
   }
   table {
     box-shadow: none;

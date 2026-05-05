@@ -241,6 +241,12 @@ func TestSessionRuntimeVarsSelectionScope(t *testing.T) {
 	if !strings.Contains(vars[0].Content, "SelectionRange: 0-7") {
 		t.Fatalf("missing selection range fact: %s", vars[0].Content)
 	}
+	if !strings.Contains(vars[0].Content, "PreserveOtherBlocks: true") {
+		t.Fatalf("missing preserve-other-blocks fact: %s", vars[0].Content)
+	}
+	if !strings.Contains(vars[0].Content, "MutationContract: only the target block content may change") {
+		t.Fatalf("missing mutation contract fact: %s", vars[0].Content)
+	}
 }
 
 func TestSessionRuntimeVarsLayoutScope(t *testing.T) {

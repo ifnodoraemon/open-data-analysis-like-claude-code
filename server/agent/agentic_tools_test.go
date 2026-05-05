@@ -52,6 +52,21 @@ func TestAskUserToolSupportsOptionsAndCustomAnswer(t *testing.T) {
 	}
 }
 
+func TestAskUserToolDescriptionStatesSuspendBoundary(t *testing.T) {
+	t.Parallel()
+
+	description := (&AskUserTool{}).Description()
+	for _, want := range []string{
+		"suspend the current run as waiting_user_input",
+		"normal assistant text response that asks a question is final output",
+		"does not suspend the run",
+	} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("expected description to contain %q, got %q", want, description)
+		}
+	}
+}
+
 func TestProvideAskUserResultStoresStructuredToolResult(t *testing.T) {
 	t.Parallel()
 

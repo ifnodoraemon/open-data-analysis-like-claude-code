@@ -199,12 +199,13 @@ async function handleSend() {
         preserveOtherBlocks: quote.preserveOtherBlocks !== false,
       }
     : null;
-  await sendMessage(input.value.trim(), {
+  const message = input.value.trim();
+  input.value = "";
+  if (quote) store.clearReportQuote();
+  await sendMessage(message, {
     ...(editContext ? { editContext } : {}),
     ...(turnContext ? { turnContext } : {}),
   });
-  input.value = "";
-  if (quote) store.clearReportQuote();
 }
 
 function handleStop() {

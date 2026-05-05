@@ -408,7 +408,7 @@ async function exportWord() {
 }
 
 async function exportPDF() {
-  const snapshotHTML = await buildRenderedSnapshotHTML();
+  const snapshotHTML = await buildRenderedSnapshotHTML({ forPDF: true });
   const url = URL.createObjectURL(
     new Blob([snapshotHTML], { type: "text/html;charset=utf-8" }),
   );
@@ -457,7 +457,7 @@ function waitForPrintWindow(targetWindow) {
 }
 
 async function buildRenderedSnapshotHTML(options = {}) {
-  const { forWord = false } = options;
+  const { forPDF = false, forWord = false } = options;
   const frameWindow = reportFrame.value?.contentWindow;
   const frameDocument = frameWindow?.document;
   if (!frameDocument?.documentElement) {
@@ -496,11 +496,132 @@ async function buildRenderedSnapshotHTML(options = {}) {
     image.style.margin = "0 auto";
     canvasNode.replaceWith(image);
   });
+  if (forPDF) {
+    optimizeSnapshotForPDF(clonedDocument);
+  }
   if (forWord) {
     optimizeSnapshotForWord(clonedDocument);
   }
   clonedDocument.querySelectorAll("script").forEach((node) => node.remove());
   return `<!DOCTYPE html>\n${clonedDocument.outerHTML}`;
+}
+
+function optimizeSnapshotForPDF(documentNode) {
+  const doc = documentNode.ownerDocument;
+  const head = documentNode.querySelector("head");
+  const body = documentNode.querySelector("body");
+  if (!head || !body) return;
+
+  body
+    .querySelectorAll(".report-titlebar, .report-toc, .section")
+    .forEach((node) => {
+      node.style.maxWidth = "none";
+      node.style.boxShadow = "none";
+      node.style.borderRadius = "0";
+      node.style.margin = node.classList.contains("report-titlebar")
+        ? "0 0 12pt 0"
+        : "0 0 14pt 0";
+      node.style.padding = node.classList.contains("section")
+        ? "0"
+        : "0 0 12pt 0";
+      node.style.background = "#ffffff";
+      node.style.border = "none";
+      node.style.breakInside = "auto";
+      node.style.pageBreakInside = "auto";
+    });
+  body.querySelectorAll(".chart-box").forEach((node) => {
+    node.style.height = "auto";
+    node.style.minHeight = "0";
+    node.style.margin = "10pt 0 14pt 0";
+    node.style.padding = "0";
+    node.style.border = "none";
+    node.style.boxShadow = "none";
+    node.style.background = "#ffffff";
+    node.style.breakInside = "avoid";
+    node.style.pageBreakInside = "avoid";
+  });
+  body.querySelectorAll(".chart-box img").forEach((node) => {
+    node.style.display = "block";
+    node.style.width = "100%";
+    node.style.maxWidth = "100%";
+    node.style.height = "auto";
+    node.style.maxHeight = "96mm";
+    node.style.objectFit = "contain";
+    node.style.margin = "0 auto";
+  });
+
+  const exportStyle = doc.createElement("style");
+  exportStyle.id = "report-pdf-export-style";
+  exportStyle.textContent = `
+    @page { size: A4; margin: 15mm 14mm; }
+    html, body {
+      background: #ffffff !important;
+    }
+    body {
+      color: #111827 !important;
+      font-size: 11pt !important;
+      line-height: 1.62 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
+    * {
+      animation: none !important;
+      transition: none !important;
+      text-shadow: none !important;
+    }
+    .report-titlebar h1 {
+      font-size: 22pt !important;
+      line-height: 1.25 !important;
+      margin: 0 0 6pt 0 !important;
+    }
+    .report-titlebar .meta,
+    .report-toc li,
+    .content p,
+    .content li {
+      font-size: 10.5pt !important;
+    }
+    .report-toc {
+      break-after: avoid !important;
+      page-break-after: avoid !important;
+    }
+    .report-block-wrapper,
+    .section,
+    .content {
+      break-inside: auto !important;
+      page-break-inside: auto !important;
+    }
+    .section h2,
+    .content h3,
+    .content h4,
+    .content h5 {
+      break-after: avoid !important;
+      page-break-after: avoid !important;
+      margin-top: 0 !important;
+    }
+    .content p {
+      text-indent: 0 !important;
+      margin: 0 0 7pt 0 !important;
+      orphans: 3;
+      widows: 3;
+    }
+    .chart-box,
+    .chart-box img {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+    table {
+      width: 100% !important;
+      break-inside: auto !important;
+      page-break-inside: auto !important;
+    }
+    tr {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+  `;
+  head.appendChild(exportStyle);
 }
 
 function optimizeSnapshotForWord(documentNode) {

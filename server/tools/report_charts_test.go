@@ -69,4 +69,11 @@ func TestCreateChartToolRejectsEditScopeViolation(t *testing.T) {
 	if payload["ok"] != false || payload["error_code"] != "edit_scope_violation" {
 		t.Fatalf("unexpected scope payload: %#v", payload)
 	}
+	if payload["active_edit_scope"] == nil {
+		t.Fatalf("expected active edit scope facts in payload: %#v", payload)
+	}
+	allowed, ok := payload["allowed_chart_ids"].([]interface{})
+	if !ok || len(allowed) != 1 || allowed[0] != "chart_allowed" {
+		t.Fatalf("expected allowed chart facts in payload, got %#v", payload["allowed_chart_ids"])
+	}
 }

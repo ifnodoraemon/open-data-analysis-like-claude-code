@@ -137,7 +137,7 @@ func (t *CreateChartTool) Execute(args json.RawMessage) (string, error) {
 		}
 		var scopeErr reportChartScopeError
 		if errors.As(err, &scopeErr) {
-			return reportEditScopeFailure("report_create_chart", "chart_id", scopeErr.ChartID, "chart", fmt.Sprintf("chart %s is outside current partial edit scope", scopeErr.ChartID), nil), nil
+			return reportEditScopeFailure("report_create_chart", "chart_id", scopeErr.ChartID, "chart", fmt.Sprintf("chart %s is outside current partial edit scope", scopeErr.ChartID), nil, t.EditState), nil
 		}
 		return "", err
 	}
@@ -252,17 +252,30 @@ func buildAxisChartOption(params createChartParams, defaultType string) (json.Ra
 	}
 
 	option := map[string]interface{}{
-		"title": map[string]interface{}{"text": params.Title},
+		"title": map[string]interface{}{
+			"text": params.Title,
+			"left": "center",
+			"top":  8,
+			"textStyle": map[string]interface{}{
+				"fontSize":   18,
+				"fontWeight": 700,
+				"color":      "#374151",
+			},
+		},
 		"tooltip": map[string]interface{}{
 			"trigger": "axis",
 		},
 		"legend": map[string]interface{}{
 			"data": legend,
+			"left": "center",
+			"top":  42,
+			"type": "scroll",
 		},
 		"grid": map[string]interface{}{
-			"left":         "3%",
-			"right":        "4%",
-			"bottom":       "3%",
+			"left":         "7%",
+			"right":        "7%",
+			"bottom":       "8%",
+			"top":          88,
 			"containLabel": true,
 		},
 		"xAxis": map[string]interface{}{
@@ -305,12 +318,24 @@ func buildPieOption(params createChartParams) (json.RawMessage, error) {
 	}
 
 	option := map[string]interface{}{
-		"title": map[string]interface{}{"text": params.Title},
+		"title": map[string]interface{}{
+			"text": params.Title,
+			"left": "center",
+			"top":  8,
+			"textStyle": map[string]interface{}{
+				"fontSize":   18,
+				"fontWeight": 700,
+				"color":      "#374151",
+			},
+		},
 		"tooltip": map[string]interface{}{
 			"trigger": "item",
 		},
 		"legend": map[string]interface{}{
 			"data": legend,
+			"left": "center",
+			"top":  42,
+			"type": "scroll",
 		},
 		"series": []map[string]interface{}{
 			{

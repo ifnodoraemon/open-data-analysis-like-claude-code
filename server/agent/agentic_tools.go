@@ -163,7 +163,7 @@ func (t *AskUserTool) Name() string {
 }
 
 func (t *AskUserTool) Description() string {
-	return "Send an input request to the user and suspend the current run as waiting_user_input. Supports optional selectable options, explicit selection_mode (single or multiple), and optional custom text. The model decides selection_mode; the runtime does not infer it from wording. Reads question, reason, scope, context_ref, input_hint, required, selection_mode, allow_custom, and options. Does not directly return the user answer; the subsequent user reply is written back as the tool call result."
+	return "Send an input request to the user and suspend the current run as waiting_user_input. Applies when the current run needs a user decision or clarification before continuing; a normal assistant text response that asks a question is final output and does not suspend the run. Supports optional selectable options, explicit selection_mode (single or multiple), and optional custom text. The model decides selection_mode; the runtime does not infer it from wording. Reads question, reason, scope, context_ref, input_hint, required, selection_mode, allow_custom, and options. Does not directly return the user answer; the subsequent user reply is written back as the tool call result."
 }
 
 func (t *AskUserTool) Parameters() json.RawMessage {

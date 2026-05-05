@@ -643,6 +643,12 @@ func (s *Session) RuntimeVars() []agent.RuntimeContextBlock {
 				content += fmt.Sprintf("SelectionRange: %d-%d\n", s.EditState.SelectionStart, s.EditState.SelectionEnd)
 			}
 		}
+		if s.EditState.PreserveOtherBlocks {
+			content += "PreserveOtherBlocks: true\n"
+		}
+		if s.EditState.ScopeKindLocked() == "partial_selection" {
+			content += "MutationContract: only the target block content may change; content outside the selected range, block title, block kind, chart_id, and sources remain protected.\n"
+		}
 		vars = append(vars, agent.RuntimeContextBlock{
 			Name:    "active_edit_scope",
 			Role:    "user",

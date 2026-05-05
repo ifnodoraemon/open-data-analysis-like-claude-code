@@ -1,6 +1,9 @@
 package tools
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 const reportDraftMessage = "delivery_state=draft; no finalized report file yet."
 
@@ -22,11 +25,42 @@ func reportDraftPayload(state *ReportState, fields map[string]interface{}) map[s
 	return payload
 }
 
-func reportEditScopeFailure(toolName, targetKey, targetID, targetLabel, uiSummary string, fields map[string]interface{}) string {
+func reportEditScopeFailure(toolName, targetKey, targetID, targetLabel, uiSummary string, fields map[string]interface{}, editState *ReportEditState) string {
 	payload := clonePayload(fields)
 	payload[targetKey] = targetID
 	payload["ui_summary"] = uiSummary
+	addEditScopeFailureFacts(payload, editState)
 	return toolFailure(toolName, "edit_scope_violation", "current edit scope does not allow modifying this "+targetLabel, payload)
+}
+
+func addEditScopeFailureFacts(payload map[string]interface{}, editState *ReportEditState) {
+	if editState == nil || !editState.Active() {
+		return
+	}
+	scope := editState.Snapshot()
+	payload["active_edit_scope"] = scope
+	if scopeKind, ok := scope["scope_kind"].(string); ok && scopeKind != "" {
+		payload["scope_kind"] = scopeKind
+	}
+	if preserve, ok := scope["preserve_other_blocks"].(bool); ok {
+		payload["preserve_other_blocks"] = preserve
+	}
+	targetBlockID, _ := scope["target_block_id"].(string)
+	if strings.TrimSpace(targetBlockID) != "" {
+		payload["target_block_id"] = targetBlockID
+		payload["allowed_block_ids"] = []string{targetBlockID}
+	}
+	targetChartID, _ := scope["target_chart_id"].(string)
+	if strings.TrimSpace(targetChartID) != "" {
+		payload["target_chart_id"] = targetChartID
+	}
+	if allowedCharts, ok := scope["allowed_chart_ids"].([]string); ok {
+		payload["allowed_chart_ids"] = allowedCharts
+	}
+	if scope["scope_kind"] == "partial_selection" {
+		payload["allowed_block_actions"] = []string{"upsert"}
+		payload["selection_mutation_contract"] = "Only the target block content may change; content outside the selected range, block title, block kind, chart_id, and sources remain protected."
+	}
 }
 
 func reportFinalizeBlockedFailure(state *ReportState, blockers []string) string {

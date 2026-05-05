@@ -117,6 +117,18 @@ func TestCreateChartToolBuildsOptionFromDSL(t *testing.T) {
 	if option["tooltip"] == nil {
 		t.Fatalf("expected default tooltip in option: %#v", option)
 	}
+	title := option["title"].(map[string]interface{})
+	if title["top"] == nil || title["left"] != "center" {
+		t.Fatalf("expected chart title to reserve top space, got %#v", title)
+	}
+	legend := option["legend"].(map[string]interface{})
+	if legend["top"] == nil || legend["left"] != "center" {
+		t.Fatalf("expected chart legend to sit below title, got %#v", legend)
+	}
+	grid := option["grid"].(map[string]interface{})
+	if grid["top"] == nil {
+		t.Fatalf("expected grid top padding for title/legend, got %#v", grid)
+	}
 }
 
 func TestCreateChartToolAcceptsStringifiedDSLFields(t *testing.T) {

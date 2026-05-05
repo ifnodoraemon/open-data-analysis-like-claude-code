@@ -156,7 +156,7 @@ func (t *ManageReportBlocksTool) Execute(args json.RawMessage) (string, error) {
 		if errors.As(err, &scopeErr) {
 			return reportEditScopeFailure("report_manage_blocks", "block_id", scopeErr.BlockID, " block", fmt.Sprintf("block %s is outside current partial edit scope", scopeErr.BlockID), map[string]interface{}{
 				"action": scopeErr.Action,
-			}), nil
+			}, t.EditState), nil
 		}
 		return "", err
 	}

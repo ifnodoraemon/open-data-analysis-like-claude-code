@@ -145,7 +145,11 @@ let _msgSeq = 0;
       scopeKind: state.scopeKind || "",
       editContext: { ...state.editContext },
     };
-    if (state.scopeKind === "partial_selection" && String(state.editContext.selectionText || "").trim()) {
+    if (
+      !isRunning.value &&
+      state.scopeKind === "partial_selection" &&
+      String(state.editContext.selectionText || "").trim()
+    ) {
       setReportQuote(state.editContext);
       return;
     }
