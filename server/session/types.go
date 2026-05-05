@@ -312,13 +312,15 @@ func (s *Session) RUnlockQuery() {
 	s.uploadMu.RUnlock()
 }
 
-func (s *Session) SuspendRun(runID string) {
+func (s *Session) SuspendRun(runID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ActiveRun != nil && s.ActiveRun.RunID == runID {
 		s.ActiveRun.Status = "waiting_user_input"
+		s.LastSeenAt = time.Now()
+		return true
 	}
-	s.LastSeenAt = time.Now()
+	return false
 }
 
 func (s *Session) ResumeRun(runID string) {

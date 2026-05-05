@@ -147,9 +147,9 @@ func reportLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 		if err := scope.finalizeReport(); err != nil {
 			rollbackFinalizeDraft(scope, result.Result)
 			if scope.session != nil {
-				scope.session.FinishRun(scope.runID, "failed")
+				scope.session.CancelRun(scope.runID)
 			}
-			if scope.setRunStatus != nil {
+			if finishTerminalRun(scope, "failed") && scope.setRunStatus != nil {
 				msg := "report saved but binding failed: " + err.Error()
 				scope.setRunStatus(domain.RunStatusFailed, &msg)
 			}
@@ -186,7 +186,9 @@ func runLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 
 	switch ev.Type {
 	case agent.EventUserRequestInput:
-		scope.session.SuspendRun(scope.runID)
+		if !scope.session.SuspendRun(scope.runID) {
+			return
+		}
 		if scope.setRunStatus != nil {
 			scope.setRunStatus(domain.RunStatusWaitingUserInput, nil)
 		}

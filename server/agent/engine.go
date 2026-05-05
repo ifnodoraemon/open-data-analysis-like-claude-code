@@ -612,6 +612,9 @@ func (e *Engine) Run(ctx context.Context, userInput string, getRuntimeVars func(
 						Success:  success,
 					},
 				})
+				if ctx.Err() != nil {
+					return
+				}
 
 				// 将工具结果加入消息历史
 				e.mu.Lock()

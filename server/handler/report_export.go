@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/ifnodoraemon/openDataAnalysis/auth"
@@ -15,13 +16,23 @@ var (
 	exportDangerousTagRe  = regexp.MustCompile(`(?is)<\s*/?\s*(iframe|object|embed|link|meta|base)\b[^>]*>`)
 	exportEventAttrRe     = regexp.MustCompile(`(?i)\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)`)
 	exportRemoteSrcHrefRe = regexp.MustCompile(`(?i)\s+(src|href)\s*=\s*(?:"[^"]*(?:https?|file|data|blob|javascript|vbscript)\s*:[^"]*"|'[^']*(?:https?|file|data|blob|javascript|vbscript)\s*:[^']*'|(?:https?|file|data|blob|javascript|vbscript)\s*:[^\s>]+)`)
+	exportSafeDataImageRe = regexp.MustCompile(`(?i)\s+src\s*=\s*("data:image/(?:png|jpe?g);base64,[a-z0-9+/=]+")`)
 )
 
 func sanitizeExportHTML(html string) string {
+	protectedImages := map[string]string{}
+	html = exportSafeDataImageRe.ReplaceAllStringFunc(html, func(match string) string {
+		key := "__ODA_SAFE_EXPORT_IMAGE_" + strconv.Itoa(len(protectedImages)) + "__"
+		protectedImages[key] = match
+		return " " + key
+	})
 	html = exportScriptBlockRe.ReplaceAllString(html, "")
 	html = exportDangerousTagRe.ReplaceAllString(html, "")
 	html = exportEventAttrRe.ReplaceAllString(html, "")
 	html = exportRemoteSrcHrefRe.ReplaceAllString(html, "")
+	for key, src := range protectedImages {
+		html = strings.ReplaceAll(html, key, strings.TrimSpace(src))
+	}
 	return strings.TrimSpace(html)
 }
 
@@ -33,11 +44,12 @@ func ConvertReportDOCXHandler(w http.ResponseWriter, r *http.Request) {
 	type request struct {
 		Title string `json:"title"`
 		RunID string `json:"runId"`
+		HTML  string `json:"html"`
 	}
 
 	var req request
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, 50*1024*1024)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid export request or body too large", http.StatusBadRequest)
 		return
@@ -61,19 +73,23 @@ func ConvertReportDOCXHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reader, _, err := fileService.OpenForDownload(r.Context(), userID, workspaceID, *run.ReportFileID)
-	if err != nil {
-		http.Error(w, "failed to read report file", http.StatusInternalServerError)
-		return
-	}
-	defer reader.Close()
-	htmlBytes, err := io.ReadAll(reader)
-	if err != nil {
-		http.Error(w, "failed to read report content", http.StatusInternalServerError)
-		return
+	html := strings.TrimSpace(req.HTML)
+	if html == "" {
+		reader, _, err := fileService.OpenForDownload(r.Context(), userID, workspaceID, *run.ReportFileID)
+		if err != nil {
+			http.Error(w, "failed to read report file", http.StatusInternalServerError)
+			return
+		}
+		defer reader.Close()
+		htmlBytes, err := io.ReadAll(reader)
+		if err != nil {
+			http.Error(w, "failed to read report content", http.StatusInternalServerError)
+			return
+		}
+		html = string(htmlBytes)
 	}
 
-	html := sanitizeExportHTML(string(htmlBytes))
+	html = sanitizeExportHTML(html)
 	if strings.TrimSpace(html) == "" {
 		http.Error(w, "report content is empty or invalid", http.StatusBadRequest)
 		return

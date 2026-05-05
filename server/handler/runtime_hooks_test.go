@@ -77,17 +77,27 @@ func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
 	t.Parallel()
 
 	boom := errors.New("storage offline")
+	cancelCalled := false
 	sess := &session.Session{
-		ActiveRun:   &session.RunState{RunID: "run_99", Status: "running"},
+		ActiveRun:   &session.RunState{RunID: "run_99", Status: "running", Cancel: func() { cancelCalled = true }},
 		ReportState: &tools.ReportState{NeedsFinalize: false},
+		EditState: &tools.ReportEditState{
+			Mode:          "regenerate_selection",
+			TargetBlockID: "blk_99",
+			SelectionText: "selected text",
+		},
 	}
 
 	var updatedStatus domain.RunStatus
 	var updatedMsg string
+	editEvents := make([]agent.EditStateUpdatedData, 0, 1)
 	scope := runtimeEventScope{
 		session:        sess,
 		runID:          "run_99",
 		finalizeReport: func() error { return boom },
+		emitEditState: func(data agent.EditStateUpdatedData) {
+			editEvents = append(editEvents, data)
+		},
 		setRunStatus: func(status domain.RunStatus, msg *string) {
 			updatedStatus = status
 			if msg != nil {
@@ -101,11 +111,17 @@ func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
 		Data: agent.ToolResultData{Name: "report_finalize", Success: true, Result: `{"report_title":"零售分析","author":"AI"}`},
 	})
 
-	if sess.ActiveRun != nil && sess.ActiveRun.Status != "failed" {
-		t.Fatalf("expected session run status to be marked failed in memory, got %v", sess.ActiveRun.Status)
+	if sess.ActiveRun != nil {
+		t.Fatalf("expected session run to be cleared after finalize persistence failure, got %#v", sess.ActiveRun)
 	}
 	if updatedStatus != domain.RunStatusFailed {
 		t.Fatalf("expected persistence status to be Failed, got %v", updatedStatus)
+	}
+	if !cancelCalled {
+		t.Fatal("expected finalize persistence failure to cancel engine context")
+	}
+	if len(editEvents) != 1 || editEvents[0].Active {
+		t.Fatalf("expected inactive edit-state event after finalize persistence failure, got %#v", editEvents)
 	}
 	if !strings.Contains(updatedMsg, "storage offline") {
 		t.Fatalf("expected error message to contain 'storage offline', got %q", updatedMsg)
@@ -115,6 +131,34 @@ func TestReportLifecycleHookFailsRunOnFinalizeError(t *testing.T) {
 	}
 	if sess.ReportState.FinalTitle != "零售分析" || sess.ReportState.FinalAuthor != "AI" {
 		t.Fatalf("expected finalize metadata to be preserved for retry, got %#v", sess.ReportState)
+	}
+}
+
+func TestRunLifecycleHookIgnoresStaleUserRequestInput(t *testing.T) {
+	t.Parallel()
+
+	statuses := make([]domain.RunStatus, 0, 1)
+	sess := &session.Session{
+		ActiveRun: &session.RunState{RunID: "run_new", Status: "running"},
+	}
+	scope := runtimeEventScope{
+		session: sess,
+		runID:   "run_old",
+		setRunStatus: func(status domain.RunStatus, _ *string) {
+			statuses = append(statuses, status)
+		},
+	}
+
+	runLifecycleHook(scope, agent.WSEvent{
+		Type: agent.EventUserRequestInput,
+		Data: agent.AskUserData{Question: "stale?"},
+	})
+
+	if sess.ActiveRun == nil || sess.ActiveRun.RunID != "run_new" || sess.ActiveRun.Status != "running" {
+		t.Fatalf("expected active run to stay running, got %#v", sess.ActiveRun)
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("expected no waiting status persistence for stale user request input, got %#v", statuses)
 	}
 }
 

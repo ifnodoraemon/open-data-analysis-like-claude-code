@@ -36,3 +36,21 @@ func TestSanitizeExportHTMLRemovesActiveContentAndRemoteResources(t *testing.T) 
 		t.Fatalf("expected safe text to remain, got: %s", out)
 	}
 }
+
+func TestSanitizeExportHTMLPreservesSafeDataImage(t *testing.T) {
+	t.Parallel()
+
+	input := `<html><body>
+	<img src="data:image/png;base64,aGVsbG8=">
+	<img src="data:text/html;base64,PHNjcmlwdD5iYWQoKTwvc2NyaXB0Pg==">
+	</body></html>`
+
+	out := sanitizeExportHTML(input)
+
+	if !strings.Contains(out, `src="data:image/png;base64,aGVsbG8="`) {
+		t.Fatalf("expected safe data image to remain, got: %s", out)
+	}
+	if strings.Contains(strings.ToLower(out), "data:text/html") {
+		t.Fatalf("expected non-image data URL to be stripped, got: %s", out)
+	}
+}
