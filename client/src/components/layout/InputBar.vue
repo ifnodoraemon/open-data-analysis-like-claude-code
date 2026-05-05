@@ -202,10 +202,14 @@ async function handleSend() {
   const message = input.value.trim();
   input.value = "";
   if (quote) store.clearReportQuote();
-  await sendMessage(message, {
+  const sent = await sendMessage(message, {
     ...(editContext ? { editContext } : {}),
     ...(turnContext ? { turnContext } : {}),
   });
+  if (!sent) {
+    input.value = message;
+    if (quote) store.setReportQuote(quote);
+  }
 }
 
 function handleStop() {

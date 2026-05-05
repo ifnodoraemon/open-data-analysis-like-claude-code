@@ -123,13 +123,21 @@ func TestRunLifecycleHookUpdatesSessionStateAndPersistenceCallbacks(t *testing.T
 
 	statuses := make([]domain.RunStatus, 0, 2)
 	summaries := make([]string, 0, 1)
+	editEvents := make([]agent.EditStateUpdatedData, 0, 1)
 	sess := &session.Session{
 		ActiveRun: &session.RunState{RunID: "run_1", Status: "running"},
-		EditState: &tools.ReportEditState{},
+		EditState: &tools.ReportEditState{
+			Mode:          "regenerate_selection",
+			TargetBlockID: "blk_1",
+			SelectionText: "selected text",
+		},
 	}
 	scope := runtimeEventScope{
 		session: sess,
 		runID:   "run_1",
+		emitEditState: func(data agent.EditStateUpdatedData) {
+			editEvents = append(editEvents, data)
+		},
 		setRunStatus: func(status domain.RunStatus, _ *string) {
 			statuses = append(statuses, status)
 		},
@@ -158,6 +166,12 @@ func TestRunLifecycleHookUpdatesSessionStateAndPersistenceCallbacks(t *testing.T
 	}
 	if sess.ActiveRun != nil {
 		t.Fatalf("expected run to be cleared after completion, got %#v", sess.ActiveRun)
+	}
+	if state := sess.CurrentEditStateData(); state.Active {
+		t.Fatalf("expected edit state to be cleared after completion, got %#v", state)
+	}
+	if len(editEvents) != 1 || editEvents[0].Active {
+		t.Fatalf("expected inactive edit-state event after completion, got %#v", editEvents)
 	}
 }
 

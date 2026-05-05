@@ -546,7 +546,6 @@ function optimizeSnapshotForPDF(documentNode) {
     node.style.minHeight = "0";
     node.style.margin = "0";
     node.style.padding = "0";
-    node.style.position = "static";
     node.style.overflow = "visible";
   });
   body.querySelectorAll(".chart-box img").forEach((node) => {
@@ -629,7 +628,6 @@ function optimizeSnapshotForPDF(documentNode) {
       min-height: 0 !important;
       margin: 0 !important;
       padding: 0 !important;
-      position: static !important;
       overflow: visible !important;
     }
     .chart-box img,

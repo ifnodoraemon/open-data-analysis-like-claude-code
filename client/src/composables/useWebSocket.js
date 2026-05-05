@@ -638,7 +638,7 @@ export function useWebSocket() {
 
   async function sendMessage(content, options = {}) {
     const value = String(content || "").trim();
-    if (!value) return;
+    if (!value) return false;
 
     try {
       await ensureSession();
@@ -646,7 +646,7 @@ export function useWebSocket() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "连接尚未建立，请稍后重试。";
       store.addMessage({ type: "error", content: message });
-      return;
+      return false;
     }
 
     const waitingRunId = store.activeRunId;
@@ -670,6 +670,7 @@ export function useWebSocket() {
       turnContext: isAnsweringUserRequest ? null : options.turnContext || null,
     });
     send("user_message", payload);
+    return true;
   }
 
   function stop() {

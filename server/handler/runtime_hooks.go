@@ -40,6 +40,7 @@ type runtimeEventScope struct {
 	session           *session.Session
 	runID             string
 	emitReportPreview func()
+	emitEditState     func(agent.EditStateUpdatedData)
 	finalizeReport    func() error
 	setRunStatus      func(domain.RunStatus, *string)
 	setRunSummary     func(string)
@@ -65,6 +66,9 @@ func newRuntimeEventDispatcher(ctx context.Context, conn *websocket.Conn, writeM
 		runID:   runID,
 		emitReportPreview: func() {
 			emitReportPreviewUpdate(ctx, conn, writeMu, sess.ID, sess.WorkspaceID, runID, sess.ReportState)
+		},
+		emitEditState: func(data agent.EditStateUpdatedData) {
+			deliverToRun(runID, agent.WSEvent{Type: agent.EventStateReportEditUpdated, Data: data})
 		},
 		finalizeReport: func() error {
 			return finalizeAndPersistReport(ctx, conn, writeMu, sess, identity, runID)
@@ -187,7 +191,7 @@ func runLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 			scope.setRunStatus(domain.RunStatusWaitingUserInput, nil)
 		}
 	case agent.EventRunCompleted:
-		if !scope.session.FinishRun(scope.runID, "completed") {
+		if !finishTerminalRun(scope, "completed") {
 			return
 		}
 		if scope.setRunStatus != nil {
@@ -197,12 +201,12 @@ func runLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 			scope.setRunSummary(complete.Summary)
 		}
 	case agent.EventRunCancelled:
-		scope.session.FinishRun(scope.runID, "cancelled")
+		finishTerminalRun(scope, "cancelled")
 		if scope.setRunStatus != nil {
 			scope.setRunStatus(domain.RunStatusCancelled, nil)
 		}
 	case agent.EventError:
-		scope.session.FinishRun(scope.runID, "failed")
+		finishTerminalRun(scope, "failed")
 		if scope.setRunStatus == nil {
 			return
 		}
@@ -213,6 +217,19 @@ func runLifecycleHook(scope runtimeEventScope, ev agent.WSEvent) {
 		}
 		scope.setRunStatus(domain.RunStatusFailed, nil)
 	}
+}
+
+func finishTerminalRun(scope runtimeEventScope, status string) bool {
+	if scope.session == nil {
+		return false
+	}
+	current := scope.session.CurrentEditStateData()
+	editWasActive := current != nil && current.Active
+	finished := scope.session.FinishRun(scope.runID, status)
+	if editWasActive && scope.emitEditState != nil {
+		scope.emitEditState(agent.EditStateUpdatedData{Active: false})
+	}
+	return finished
 }
 
 func runLoggingHook(scope runtimeEventScope, ev agent.WSEvent) {

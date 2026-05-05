@@ -157,9 +157,10 @@ async function submit() {
     selected_options: options,
     custom_response: custom,
   };
-  await sendMessage(buildDisplayText(options, custom), {
+  const sent = await sendMessage(buildDisplayText(options, custom), {
     payloadContent: JSON.stringify(payload),
   });
+  if (!sent) submitted.value = false;
 }
 </script>
 

@@ -540,12 +540,13 @@ describe("useWebSocket deduplication", () => {
       selected_options: [{ id: "gross", label: "Gross amount" }],
       custom_response: "",
     });
-    await sendMessage("选择：Gross amount", {
+    const result = await sendMessage("选择：Gross amount", {
       payloadContent: answerPayload,
       editContext: { mode: "regenerate_selection", blockId: "b1" },
       turnContext: { reportTargetRunId: "run-old" },
     });
 
+    expect(result).toBe(true);
     expect(sent).toHaveLength(1);
     expect(sent[0].type).toBe("user_message");
     expect(sent[0].data).toEqual({ content: answerPayload });
@@ -560,6 +561,22 @@ describe("useWebSocket deduplication", () => {
 
     disconnect();
     global.fetch = undefined;
+  });
+
+  it("returns false when a message cannot be sent", async () => {
+    const store = useAgentStore();
+    store.setToken("test-token");
+
+    global.fetch = vi.fn().mockRejectedValue(new Error("offline"));
+
+    const { sendMessage } = useWebSocket();
+    const result = await sendMessage("hello");
+
+    expect(result).toBe(false);
+    expect(store.messages.at(-1)).toMatchObject({
+      type: "error",
+      content: "offline",
+    });
   });
 
   it("does not let report_update from another run overwrite the selected historical report", async () => {
